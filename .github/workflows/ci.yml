@@ -1,0 +1,240 @@
+# EKA CI — runs the canonical quality gates through the anvil CLI.
+#
+# The pipeline definition lives in .anvil/pipelines/ci.yaml (format,
+# vet, unit tests, self-validation); this workflow only triggers the
+# execution. Anvil is installed from its GitHub Release asset registry
+# via the curl installer, matching the EKA installer pattern.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Anvil
+        run: curl -fsSL https://github.com/maleolabs/anvil/releases/latest/download/install.sh | sh
+
+      - name: Run CI pipeline
+        run: anvil pipeline ci
+
+  # Linux installer e2e: exercises install.sh against a locally served
+  # release structure (real binary, real SHA256SUMS.txt). Covers the
+  # non-interactive path (CI has no TTY → auto-register), the
+  # interactive menu (via a pty), idempotent completion registration,
+  # the --completion/--no-completion overrides, and fail-closed
+  # checksum verification.
+  linux-installer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Linux binary
+        run: |
+          go build -ldflags="-X github.com/maleolabs/eka-cli/cmd.version=ci-test" -o eka-linux-amd64 ./cmd/eka
+
+      - name: Stage fake release
+        run: |
+          mkdir -p "$RUNNER_TEMP/fakerelease/latest/download"
+          cp eka-linux-amd64 "$RUNNER_TEMP/fakerelease/latest/download/"
+          cp install.sh "$RUNNER_TEMP/fakerelease/latest/download/"
+          cd "$RUNNER_TEMP/fakerelease/latest/download"
+          sha256sum eka-linux-amd64 | sed 's|  eka-linux-amd64|  binaries/eka-linux-amd64|' > SHA256SUMS.txt
+
+      - name: Start fake release server (TLS)
+        run: |
+          cd "$RUNNER_TEMP"
+          # openssl.cnf via printf: a YAML block scalar cannot carry a
+          # bash heredoc (the delimiter must sit in column 0, which
+          # would break the YAML indentation).
+          printf '%s\n' \
+            '[req]' \
+            'distinguished_name = dn' \
+            'x509_extensions = v3' \
+            'prompt = no' \
+            '[dn]' \
+            'CN = localhost' \
+            '[v3]' \
+            'subjectAltName = IP:127.0.0.1, DNS:localhost' \
+            'basicConstraints = CA:TRUE' > openssl.cnf
+          openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 1 -nodes -config openssl.cnf >/dev/null 2>&1
+          printf '%s\n' \
+            'import http.server, ssl, os' \
+            "os.chdir('$RUNNER_TEMP/fakerelease')" \
+            'httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 8899), http.server.SimpleHTTPRequestHandler)' \
+            'ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)' \
+            "ctx.load_cert_chain('$RUNNER_TEMP/cert.pem', '$RUNNER_TEMP/key.pem')" \
+            'httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)' \
+            'httpd.serve_forever()' > serve.py
+          python3 serve.py >/dev/null 2>&1 &
+          sleep 3
+
+      - name: Test installer (non-interactive auto + idempotent)
+        env:
+          HOME: ${{ runner.temp }}/fakehome
+          CURL_CA_BUNDLE: ${{ runner.temp }}/cert.pem
+        run: |
+          set -eu
+          mkdir -p "$HOME"
+          # TLS server on localhost: the installer's https-only rule
+          # (--proto =https) stays satisfied via CURL_CA_BUNDLE.
+          sed -i 's|https://github.com/\$REPO/releases/latest/download|https://127.0.0.1:8899/latest/download|; s|https://github.com/\$REPO/releases/download/\$VERSION|https://127.0.0.1:8899/download/\$VERSION|' install.sh
+
+          # Non-interactive: the runner has no TTY, so the installer
+          # auto-registers the detected default shell (runner user's
+          # login shell — bash) instead of prompting.
+          sh install.sh --to "$RUNNER_TEMP/eka-install"
+          "$RUNNER_TEMP/eka-install/eka" version | grep -q 'ci-test'
+          grep -q '# eka shell completion' "$HOME/.bashrc"
+
+          # Idempotent: a second run must not duplicate the marker.
+          sh install.sh --to "$RUNNER_TEMP/eka-install"
+          test "$(grep -c '# eka shell completion' "$HOME/.bashrc")" -eq 1
+
+      - name: Test installer (overrides + interactive menu)
+        env:
+          HOME: ${{ runner.temp }}/fakehome
+          CURL_CA_BUNDLE: ${{ runner.temp }}/cert.pem
+        run: |
+          set -eu
+          mkdir -p "$HOME"
+
+          # --completion fish forces the target without a prompt.
+          sh install.sh --to "$RUNNER_TEMP/eka-install" --completion fish
+          test -f "$HOME/.config/fish/completions/eka.fish"
+
+          # --no-completion skips completion setup entirely.
+          sh install.sh --to "$RUNNER_TEMP/eka-install" --no-completion
+          test "$(grep -c '# eka shell completion' "$HOME/.bashrc")" -eq 1
+
+          # Interactive menu via a pty (script): answer "3" → fish.
+          printf '3\n' | script -qec "sh install.sh --to '$RUNNER_TEMP/eka-install'" /dev/null >/dev/null
+          test -f "$HOME/.config/fish/completions/eka.fish"
+
+      - name: Test installer (fail-closed)
+        env:
+          CURL_CA_BUNDLE: ${{ runner.temp }}/cert.pem
+        run: |
+          set -eu
+          sed -i 's|https://github.com/\$REPO/releases/latest/download|https://127.0.0.1:8899/latest/download|; s|https://github.com/\$REPO/releases/download/\$VERSION|https://127.0.0.1:8899/download/\$VERSION|' install.sh
+          # Corrupt checksum must abort with non-zero exit.
+          echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  binaries/eka-linux-amd64" > "$RUNNER_TEMP/fakerelease/latest/download/SHA256SUMS.txt"
+          if sh install.sh --to "$RUNNER_TEMP/eka-install-bad"; then
+            echo "corrupt checksum install should have failed" >&2
+            exit 1
+          fi
+          echo "fail-closed verified"
+
+  # Windows installer e2e: exercises install.ps1 against a locally
+  # served release structure (real binary, real SHA256SUMS.txt) — the
+  # only environment where the PowerShell installer can be validated.
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Windows binary
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build -ldflags="-X github.com/maleolabs/eka-cli/cmd.version=ci-test" -o eka-windows-amd64.exe ./cmd/eka
+
+      - name: Stage fake release
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fakerelease/latest/download"
+          cp eka-windows-amd64.exe "$RUNNER_TEMP/fakerelease/latest/download/"
+          cp install.ps1 "$RUNNER_TEMP/fakerelease/latest/download/"
+          cd "$RUNNER_TEMP/fakerelease/latest/download"
+          sha256sum eka-windows-amd64.exe | sed 's|  eka-windows-amd64.exe|  binaries/eka-windows-amd64.exe|' > SHA256SUMS.txt
+
+      - name: Start fake release server
+        shell: bash
+        run: |
+          python -m http.server 8899 --directory "$RUNNER_TEMP/fakerelease" &
+          sleep 3
+
+      - name: Test installer (happy path + fail-closed)
+        shell: pwsh
+        run: |
+          $content = Get-Content -Raw install.ps1
+          $content = $content.Replace('https://github.com/$Repo/releases/latest/download', 'http://127.0.0.1:8899/latest/download')
+          $content = $content.Replace('https://github.com/$Repo/releases/download/$Version', 'http://127.0.0.1:8899/download/$Version')
+          Set-Content -Path "$env:RUNNER_TEMP/install-test.ps1" -Value $content
+
+          # Happy path: install + version stamp
+          & pwsh -File "$env:RUNNER_TEMP/install-test.ps1" -To "$env:RUNNER_TEMP/eka-install"
+          if ($LASTEXITCODE -ne 0) { throw "installer failed on happy path" }
+          $v = & "$env:RUNNER_TEMP/eka-install/eka.exe" version
+          if ($LASTEXITCODE -ne 0) { throw "installed eka.exe failed to run" }
+          Write-Host "installed eka output: $v"
+          # $v is a multi-line array; join to a string so -notmatch
+          # performs a substring search instead of element equality.
+          if (($v -join "`n") -notmatch 'ci-test') { throw "version stamp missing: $v" }
+
+          # Non-interactive runs register PowerShell completion in the
+          # current user's profile by default.
+          $profilePath = $PROFILE.CurrentUserAllHosts
+          if (-not (Test-Path $profilePath)) { throw "profile was not created by the installer" }
+          if (-not (Select-String -Path $profilePath -SimpleMatch "eka.exe" -Quiet)) { throw "completion line missing from profile" }
+
+          # Idempotent: a second install must not duplicate the marker.
+          & pwsh -File "$env:RUNNER_TEMP/install-test.ps1" -To "$env:RUNNER_TEMP/eka-install-2"
+          if ($LASTEXITCODE -ne 0) { throw "installer failed on second run" }
+          $markers = (Select-String -Path $profilePath -SimpleMatch "eka shell completion").Count
+          if ($markers -ne 1) { throw "completion marker duplicated: $markers" }
+
+          # -NoCompletion skips profile modification.
+          & pwsh -File "$env:RUNNER_TEMP/install-test.ps1" -To "$env:RUNNER_TEMP/eka-install-3" -NoCompletion
+          if ($LASTEXITCODE -ne 0) { throw "installer failed with -NoCompletion" }
+          $markers = (Select-String -Path $profilePath -SimpleMatch "eka shell completion").Count
+          if ($markers -ne 1) { throw "-NoCompletion must not touch the profile: $markers" }
+
+          # Fail-closed: corrupt checksum must abort with non-zero exit
+          Set-Content -Path "$env:RUNNER_TEMP/fakerelease/latest/download/SHA256SUMS.txt" -Value ("deadbeef" * 8 + "  binaries/eka-windows-amd64.exe")
+          & pwsh -File "$env:RUNNER_TEMP/install-test.ps1" -To "$env:RUNNER_TEMP/eka-install-bad"
+          if ($LASTEXITCODE -eq 0) { throw "corrupt checksum install should have failed" }
+          Write-Host "fail-closed verified"
+
+          # pwsh -Command propagates the LAST native exit code (1 from the
+          # fail-closed test above) as the process exit code; end explicitly.
+          exit 0

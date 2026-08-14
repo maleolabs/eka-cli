@@ -1,0 +1,43 @@
+pipeline:
+    name: ci
+    stages:
+        - name: quality
+          tasks:
+            # Canonical format gate: `gofmt -l .` must produce no output.
+            # Fail-closed: any unformatted file fails the pipeline.
+            - name: format
+              command: sh
+              args:
+                - -c
+                - |
+                  UNFORMATTED=$(gofmt -l .)
+                  if [ -n "$UNFORMATTED" ]; then
+                    echo "Unformatted files:"
+                    echo "$UNFORMATTED"
+                    exit 1
+                  fi
+            - name: vet
+              command: go
+              args:
+                - vet
+                - ./...
+            # Windows cross-compile gate: the release pipeline builds
+            # windows binaries only at tag time; this check keeps the
+            # windows asset set (build.yaml) compiling on every push/PR.
+            - name: windows-cross-compile
+              command: go
+              args:
+                - build
+                - ./cmd/eka
+              env:
+                GOOS: windows
+                GOARCH: amd64
+        - name: test
+          tasks:
+            - name: unit-tests
+              command: go
+              args:
+                - test
+                - -race
+                - -count=1
+                - ./...

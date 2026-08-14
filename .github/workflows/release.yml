@@ -1,0 +1,108 @@
+# Automates EKA releases using Anvil.
+#
+# Triggered by pushing a git tag matching v* (e.g., v1.2.0).
+# The workflow:
+#   1. Extracts the version from the tag
+#   2. Detects pre-release from tag suffix (-alpha, -beta, -rc)
+#   3. Runs the CI pipeline (quality + tests) via anvil
+#   4. Builds the CLI binaries for multiple platforms via anvil
+#   5. Packages the source artifact via anvil artifact package
+#   6. Stages the install scripts (install.sh, install.ps1) as release assets
+#   7. Creates a GitHub Release (stable or pre-release) with all assets
+#
+# The version is determined by the git tag — the developer's decision.
+# Anvil executes the build and packaging; it does not decide the version.
+#
+# Version in anvil.yaml must match the tag before tagging.
+# Use scripts/bump.sh to manage version bumping, committing, and tagging.
+# The release asset naming contract (eka-<os>-<arch>[.exe] + SHA256SUMS.txt)
+# is what install.sh / install.ps1 resolve and verify.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Anvil
+        run: curl -fsSL https://github.com/maleolabs/anvil/releases/latest/download/install.sh | sh
+
+      - name: Extract version and detect release type
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+          # Detect pre-release by tag convention: alpha/beta/rc suffix
+          if [[ "$VERSION" == *-alpha* || "$VERSION" == *-beta* || "$VERSION" == *-rc* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run CI pipeline
+        run: |
+          anvil pipeline ci
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist/binaries
+          anvil pipeline build --output dist/binaries
+        env:
+          FEEDBACK_ISSUE_TOKEN: ${{ secrets.FEEDBACK_ISSUE_TOKEN }}
+
+      - name: Package source artifact
+        run: |
+          anvil artifact package --output dist/artifacts
+
+      - name: Stage install scripts
+        run: |
+          cp install.sh dist/binaries/install.sh
+          chmod +x dist/binaries/install.sh
+          cp install.ps1 dist/binaries/install.ps1
+
+      - name: Generate checksums
+        working-directory: dist
+        run: |
+          sha256sum binaries/* > SHA256SUMS.txt
+          sha256sum artifacts/* >> SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PRERELEASE="${{ steps.version.outputs.prerelease }}"
+
+          PRERELEASE_FLAG=""
+          if [[ "$PRERELEASE" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            dist/binaries/* \
+            dist/artifacts/* \
+            dist/SHA256SUMS.txt
