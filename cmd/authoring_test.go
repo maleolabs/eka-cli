@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,81 @@ func TestNewScaffoldsDraft(t *testing.T) {
 	}
 	if strings.Contains(text, "\x1b") {
 		t.Errorf("non-TTY output must stay ANSI-free:\n%s", text)
+	}
+}
+
+// TestNewRelationshipFlagsAccumulate: repeated --depends-on /
+// --derives-from flags accumulate instead of silently overriding (the
+// last occurrence no longer wins). Comma-joined values and repeated
+// occurrences mix freely; every target lands in the draft's
+// relationships object.
+func TestNewRelationshipFlagsAccumulate(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	project := projectOf(t, w, mustAbs(t, "."))
+
+	// Repeated flags accumulate: --depends-on a --depends-on b must
+	// record BOTH edges (the acceptance criterion).
+	if code, _, errText := runIn([]string{"new", "sto:rep",
+		"--depends-on", "sto:a", "--depends-on", "sto:b"}); code != 0 {
+		t.Fatalf("new repeated --depends-on: exit = %d\nstderr: %s", code, errText)
+	}
+	assertDraftRelationships(t, w, project, "sto", "rep", map[string][]string{
+		"dependsOn": {"sto:a", "sto:b"},
+	})
+
+	// Comma-joined values: --derives-from a,b records both targets.
+	if code, _, errText := runIn([]string{"new", "sto:comma",
+		"--derives-from", "sto:a,sto:b"}); code != 0 {
+		t.Fatalf("new comma-joined --derives-from: exit = %d\nstderr: %s", code, errText)
+	}
+	assertDraftRelationships(t, w, project, "sto", "comma", map[string][]string{
+		"derivesFrom": {"sto:a", "sto:b"},
+	})
+
+	// Mixed forms: comma-joined and repeated occurrences accumulate
+	// across fields, in one invocation.
+	if code, _, errText := runIn([]string{"new", "sto:mixed",
+		"--depends-on", "sto:a,sto:b", "--depends-on", "sto:c",
+		"--derives-from", "ctr:x", "--derives-from", "ctr:y"}); code != 0 {
+		t.Fatalf("new mixed forms: exit = %d\nstderr: %s", code, errText)
+	}
+	assertDraftRelationships(t, w, project, "sto", "mixed", map[string][]string{
+		"dependsOn":   {"sto:a", "sto:b", "sto:c"},
+		"derivesFrom": {"ctr:x", "ctr:y"},
+	})
+
+	// A single occurrence keeps its existing behavior.
+	if code, _, errText := runIn([]string{"new", "sto:single",
+		"--depends-on", "sto:only"}); code != 0 {
+		t.Fatalf("new single --depends-on: exit = %d\nstderr: %s", code, errText)
+	}
+	assertDraftRelationships(t, w, project, "sto", "single", map[string][]string{
+		"dependsOn": {"sto:only"},
+	})
+}
+
+// assertDraftRelationships parses the scaffolded draft and asserts its
+// relationships object: camelCase field keys, targets sorted and
+// deduplicated by the core template (byte-deterministic).
+func assertDraftRelationships(t *testing.T, w *workspace.Workspace, project, typeToken, id string, want map[string][]string) {
+	t.Helper()
+	data, err := os.ReadFile(draftFile(t, w, project, typeToken, id))
+	if err != nil {
+		t.Fatalf("draft file missing: %v", err)
+	}
+	var doc struct {
+		Relationships map[string][]string `json:"relationships"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("draft is not valid JSON: %v\n%s", err, data)
+	}
+	if len(doc.Relationships) != len(want) {
+		t.Fatalf("relationships = %v, want %v", doc.Relationships, want)
+	}
+	for field, targets := range want {
+		if got := strings.Join(doc.Relationships[field], ","); got != strings.Join(targets, ",") {
+			t.Errorf("relationships[%q] = %v, want %v", field, doc.Relationships[field], targets)
+		}
 	}
 }
 

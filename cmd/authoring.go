@@ -170,8 +170,9 @@ Flags:
   --dimension <token>    primary knowledge dimension (knowledge types)
   --phase <value>        phase context (scp-/plan- only)
   --depends-on <ref>[,<ref>...]   relationship targets (also
-  --derives-from, --validates, --supersedes, --amends); ctr- drafts
-                         require a plan- depends-on reference
+  --derives-from, --validates, --supersedes, --amends); comma-joined
+                         values and repeated flags accumulate; ctr-
+                         drafts require a plan- depends-on reference
   --content-file <path>  prepopulate the draft content from a JSON
                          object file (agents); the object is merged
                          into the draft's content (raw text is
@@ -263,11 +264,13 @@ Exit codes:
 	}
 	cmd.Flags().String(flagNewDimension, "", "primary knowledge dimension (knowledge types)")
 	cmd.Flags().String(flagNewPhase, "", "phase context (scp-/plan- only)")
-	cmd.Flags().String(flagNewDependsOn, "", "depends-on relationship targets, comma-separated (containers require a plan- reference)")
-	cmd.Flags().String(flagNewDerivesFrom, "", "derives-from relationship targets, comma-separated")
-	cmd.Flags().String(flagNewValidates, "", "validates relationship targets, comma-separated")
-	cmd.Flags().String(flagNewSupersedes, "", "supersedes relationship targets, comma-separated")
-	cmd.Flags().String(flagNewAmends, "", "amends relationship targets, comma-separated")
+	// Relationship targets: StringSlice — repeated occurrences and
+	// comma-joined values accumulate (never silently override).
+	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets, comma-separated and repeatable (containers require a plan- reference)")
+	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets, comma-separated and repeatable")
+	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets, comma-separated and repeatable")
+	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
+	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
 	cmd.Flags().Bool(flagNewEdit, false, "TTY only: open $EDITOR (fallback vi) on the draft, then re-validate")
 	return cmd
@@ -335,6 +338,8 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns
 // collectRelationships gathers the relationship targets of the five
 // --<field> flags into exchange.Relationships, in canonical field
 // order, each target stored verbatim (publish-time validation applies).
+// The flags are StringSlice: repeated occurrences and comma-joined
+// values both accumulate, so no target is silently dropped.
 func collectRelationships(cmd *cobra.Command) []exchange.Relationship {
 	var out []exchange.Relationship
 	for _, f := range []struct{ flag, rel string }{
@@ -344,8 +349,8 @@ func collectRelationships(cmd *cobra.Command) []exchange.Relationship {
 		{flagNewSupersedes, "supersedes"},
 		{flagNewAmends, "amends"},
 	} {
-		raw, _ := cmd.Flags().GetString(f.flag)
-		for _, part := range strings.Split(raw, ",") {
+		values, _ := cmd.Flags().GetStringSlice(f.flag)
+		for _, part := range values {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
