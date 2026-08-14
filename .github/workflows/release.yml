@@ -1,22 +1,29 @@
 # Automates EKA releases using Anvil.
 #
-# Triggered by pushing a git tag matching v* (e.g., v1.2.0).
+# Triggered by pushing a git tag matching v* (e.g., v1.2.0), or manually via
+# workflow_dispatch (Actions UI / `gh workflow run`) with the `version` input —
+# useful to re-run or release without deleting and re-pushing the tag.
 # The workflow:
-#   1. Extracts the version from the tag
-#   2. Detects pre-release from tag suffix (-alpha, -beta, -rc)
+#   1. Extracts the version (from the tag, or the workflow_dispatch input)
+#   2. Detects pre-release from the version suffix (-alpha, -beta, -rc)
 #   3. Runs the CI pipeline (quality + tests) via anvil
 #   4. Builds the CLI binaries for multiple platforms via anvil
 #   5. Packages the source artifact via anvil artifact package
 #   6. Stages the install scripts (install.sh, install.ps1) as release assets
 #   7. Creates a GitHub Release (stable or pre-release) with all assets
 #
-# The version is determined by the git tag — the developer's decision.
-# Anvil executes the build and packaging; it does not decide the version.
+# The version is the developer's decision — set via the git tag or the
+# workflow_dispatch version input. Anvil executes the build and packaging;
+# it does not decide the version.
 #
 # Version in anvil.yaml must match the tag before tagging.
 # Use scripts/bump.sh to manage version bumping, committing, and tagging.
 # The release asset naming contract (eka-<os>-<arch>[.exe] + SHA256SUMS.txt)
 # is what install.sh / install.ps1 resolve and verify.
+#
+# Guardrails: the input version is validated against a semver pattern and
+# against anvil.yaml before anything expensive runs; an already-existing
+# release for the version fails fast before the build.
 
 name: Release
 
@@ -24,6 +31,15 @@ on:
   push:
     tags:
       - "v*"
+  # Manual trigger: run a release from the Actions UI / `gh workflow run`
+  # without deleting and re-pushing the tag. The version input replaces the
+  # tag as the version source; it must match the version in anvil.yaml.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without 'v' prefix (e.g. 1.2.3). Must match the version in anvil.yaml. Ignored on tag push, where the version is derived from the tag."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -48,17 +64,78 @@ jobs:
 
       - name: Extract version and detect release type
         id: version
+        env:
+          # Passed via env, not template substitution, so a dispatch value
+          # cannot inject shell into the script.
+          VERSION_INPUT: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Version comes from the workflow_dispatch input, falling back to the
+          # git tag (push trigger).
+          VERSION="${VERSION_INPUT#v}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          VERSION="${VERSION#v}"
+
+          # Guard against garbage versions (e.g. an empty dispatch input
+          # falling back to the branch name): require a semver shape,
+          # anchored so no shell metacharacters can pass through.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid version: $VERSION (expected semver like 1.2.3)"
+            exit 1
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-          # Detect pre-release by tag convention: alpha/beta/rc suffix
+          # Detect pre-release by version convention: alpha/beta/rc suffix
           if [[ "$VERSION" == *-alpha* || "$VERSION" == *-beta* || "$VERSION" == *-rc* ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Validate version against anvil.yaml
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ANVIL_VERSION="$(grep -E '^[[:space:]]*version:' anvil.yaml | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+          if [[ -z "$ANVIL_VERSION" ]]; then
+            echo "::error::Could not read version from anvil.yaml"
+            exit 1
+          fi
+          if [[ "$VERSION" != "$ANVIL_VERSION" ]]; then
+            echo "::error::Version $VERSION does not match anvil.yaml ($ANVIL_VERSION). Bump anvil.yaml first (scripts/bump.sh)."
+            exit 1
+          fi
+          echo "anvil.yaml version matches: $ANVIL_VERSION"
+
+      - name: Create local release tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The build stamps cmd.version via `git describe --tags --always`.
+          # On tag push the checkout already is the tag; on workflow_dispatch
+          # the server-side tag is only created by `gh release create` at the
+          # end, so the local tag is created up front to make describe
+          # resolve it (git describe only sees local refs).
+          if ! git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            git tag "v$VERSION"
+            echo "Created local tag v$VERSION"
+          else
+            echo "Tag v$VERSION already present (tag-push path)"
+          fi
+
+      - name: Check release does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release v$VERSION already exists; delete it or pick a new version."
+            exit 1
+          fi
+          echo "Release v$VERSION does not exist yet"
 
       - name: Run CI pipeline
         run: |
@@ -99,9 +176,13 @@ jobs:
             PRERELEASE_FLAG="--prerelease"
           fi
 
+          # --target pins the server-side tag to this commit when the tag
+          # does not exist yet (workflow_dispatch path); it is ignored when
+          # the tag already exists (tag-push path).
           gh release create "v$VERSION" \
             --title "v$VERSION" \
             --generate-notes \
+            --target "$GITHUB_SHA" \
             $PRERELEASE_FLAG \
             dist/binaries/* \
             dist/artifacts/* \
