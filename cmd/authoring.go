@@ -208,6 +208,13 @@ namespace. The batch is all-or-nothing: when any target cannot be
 scaffolded (a collision, an unknown type, a guard violation), the
 run refuses and removes the drafts it created — no partial set.
 
+--file is mutually exclusive with the single-target flags: combining
+it with --dimension, --phase, any relationship flag
+(--depends-on/--derives-from/--validates/--supersedes/--amends),
+--content-file or --edit is a usage error — per-target values belong
+in the batch file (--by/--by-kind stay legal: the batch-wide
+change-log authority).
+
 Flags:
   --file <path>         scaffold the batch in <path> instead of a
                         single target
@@ -249,10 +256,17 @@ Exit codes:
 			// Batch authoring: --file scaffolds a set of drafts in one
 			// invocation (no positional target). --edit is TTY-bound
 			// and single-draft only — a batch is authored through its
-			// content and edited individually afterwards.
+			// content and edited individually afterwards. The
+			// single-target flags (--dimension, --phase, the
+			// relationship flags, --content-file) are meaningless on
+			// the batch path and are refused instead of silently
+			// dropped: per-target values belong in the batch file.
 			if file, _ := cmd.Flags().GetString(flagNewBatchFile); file != "" {
 				if edit, _ := cmd.Flags().GetBool(flagNewEdit); edit {
 					return newUsage(cmd, "new: --edit is not available with --file; author batch drafts through the batch content, then edit individually")
+				}
+				if conflict := batchFlagConflict(cmd); conflict != "" {
+					return newUsage(cmd, fmt.Sprintf("new: --%s is a single-target flag and is not available with --file; per-target values belong in the batch file", conflict))
 				}
 				byFlag, _ := cmd.Flags().GetString(flagNewBy)
 				byKindFlag, _ := cmd.Flags().GetString(flagNewByKind)
@@ -361,7 +375,7 @@ Exit codes:
 	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
-	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above)")
+	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above; exclusive with the single-target flags)")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
 	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
 	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
@@ -846,7 +860,10 @@ the command is refused).
 The instance version is auto-assigned as the line's highest + 1
 (1 for a new line), honoring an instance-version in the draft
 frontmatter when present; --instance-version overrides both and must
-exceed the line's highest (forward-only).
+exceed the line's highest (forward-only). --instance-version is a
+single-target flag: with --all/--pending versions are auto-assigned
+per draft, and the combination is a usage error instead of a silent
+drop.
 
 Publish never auto-syncs: published objects are workspace-native and
 have no repository to push. 'eka sync' remains the explicit transport
@@ -873,10 +890,19 @@ Exit codes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Batch publishing: --all / --pending (synonyms) publish
 			// every pending draft of the project in topological order.
+			// --instance-version is single-target only (versions are
+			// auto-assigned per draft in the batch) and is refused
+			// instead of silently dropped.
 			if all, _ := cmd.Flags().GetBool(flagPublishAll); all {
+				if cmd.Flags().Changed(flagPublishVersion) {
+					return fmt.Errorf("publish: --instance-version is a single-target flag and is not available with --all/--pending; versions are auto-assigned per draft")
+				}
 				return runPublishBatch(cmd)
 			}
 			if pending, _ := cmd.Flags().GetBool(flagPublishPending); pending {
+				if cmd.Flags().Changed(flagPublishVersion) {
+					return fmt.Errorf("publish: --instance-version is a single-target flag and is not available with --all/--pending; versions are auto-assigned per draft")
+				}
 				return runPublishBatch(cmd)
 			}
 			target := args[0]
@@ -958,7 +984,7 @@ Exit codes:
 			return nil
 		},
 	}
-	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign)")
+	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign; not available with --all/--pending)")
 	cmd.Flags().Bool(flagPublishAll, false, "publish every pending draft of the project in topological order (referenced drafts first)")
 	cmd.Flags().Bool(flagPublishPending, false, "synonym of --all: publish every pending draft of the project in topological order")
 	return cmd

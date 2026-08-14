@@ -228,8 +228,11 @@ func TestNewBatchEmptyDraftsRefused(t *testing.T) {
 	}
 }
 
-// TestNewBatchUsageErrors: mixing --file with a positional target (and
-// --file with --edit) is a usage error (exit 2).
+// TestNewBatchUsageErrors: mixing --file with a positional target, with
+// --edit, or with any single-target flag (--dimension, --phase, a
+// relationship flag, --content-file) is a usage error (exit 2) — the
+// batch path refuses instead of silently dropping them. --by/--by-kind
+// stay legal (the batch-wide change-log authority).
 func TestNewBatchUsageErrors(t *testing.T) {
 	authoringEnv(t, "atrium-api")
 	path := writeBatchFile(t, []map[string]any{{"type": "sto", "id": "a"}})
@@ -240,6 +243,26 @@ func TestNewBatchUsageErrors(t *testing.T) {
 	code, _, errText = runIn([]string{"new", "--file", path, "--edit"})
 	if code != 2 {
 		t.Errorf("--file + --edit: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	for _, args := range [][]string{
+		{"new", "--file", path, "--dimension", "planning"},
+		{"new", "--file", path, "--phase", "mvp"},
+		{"new", "--file", path, "--depends-on", "ctr:x"},
+		{"new", "--file", path, "--derives-from", "sto:y"},
+		{"new", "--file", path, "--content-file", "body.json"},
+	} {
+		code, _, errText = runIn(args)
+		if code != 2 {
+			t.Errorf("args %v: exit = %d, want 2 (usage error, not a silent drop)\nstderr: %s", args, code, errText)
+		}
+		if !strings.Contains(errText, "single-target flag") {
+			t.Errorf("args %v: stderr missing the single-target-flag refusal:\n%s", args, errText)
+		}
+	}
+	// --by/--by-kind are batch-meaningful and stay legal.
+	code, _, errText = runIn([]string{"new", "--file", path, "--by", "agent-x", "--by-kind", "agent"})
+	if code != 0 {
+		t.Errorf("--file + --by: exit = %d, want 0\nstderr: %s", code, errText)
 	}
 }
 
@@ -415,7 +438,10 @@ func TestPublishAllPartialFailure(t *testing.T) {
 	}
 }
 
-// TestPublishAllUsageErrors: a target with --all is a usage error.
+// TestPublishAllUsageErrors: a target with --all/--pending, and
+// --all/--pending with --instance-version (a single-target flag), are
+// usage errors (exit 2) — the batch path refuses instead of silently
+// dropping the override.
 func TestPublishAllUsageErrors(t *testing.T) {
 	authoringEnv(t, "atrium-api")
 	code, _, errText := runIn([]string{"publish", "sto:x", "--all"})
@@ -425,5 +451,57 @@ func TestPublishAllUsageErrors(t *testing.T) {
 	code, _, errText = runIn([]string{"publish", "sto:x", "--pending"})
 	if code != 2 {
 		t.Errorf("target + --pending: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	for _, args := range [][]string{
+		{"publish", "--all", "--instance-version", "3"},
+		{"publish", "--pending", "--instance-version", "3"},
+	} {
+		code, _, errText = runIn(args)
+		if code != 2 {
+			t.Errorf("args %v: exit = %d, want 2 (usage error, not a silent drop)\nstderr: %s", args, code, errText)
+		}
+		if !strings.Contains(errText, "single-target flag") {
+			t.Errorf("args %v: stderr missing the single-target-flag refusal:\n%s", args, errText)
+		}
+	}
+}
+
+// TestPublishAllDraftNotFoundSummary: when a draft vanishes between the
+// graph build and its turn (here: a draft whose file name no longer
+// matches its frontmatter identity), the mid-loop failure renders the
+// same "Published N / Remaining M" summary as the validation paths.
+func TestPublishAllDraftNotFoundSummary(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "sto", "id": "ok"},
+		{"type": "sto", "id": "renamed"},
+	})
+	if code, _, errText := runIn([]string{"new", "--file", path}); code != 0 {
+		t.Fatalf("new --file: exit = %d\nstderr: %s", code, errText)
+	}
+	project := projectOf(t, w, mustAbs(t, "."))
+	// Rename the second draft file without touching its frontmatter:
+	// the graph keys it by frontmatter identity (sto:renamed), but the
+	// publish lookup by that identity no longer finds a file.
+	if err := os.Rename(draftFile(t, w, project, "sto", "renamed"), draftFile(t, w, project, "sto", "other")); err != nil {
+		t.Fatal(err)
+	}
+
+	code, text, errText := runIn([]string{"publish", "--all"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	// The first draft published; the summary names both counts.
+	if !strings.Contains(text, "sto:ok ->") {
+		t.Errorf("the draft ordered before the failure must be published:\n%s", text)
+	}
+	if !strings.Contains(text, "sto:renamed") || !strings.Contains(text, "not found") {
+		t.Errorf("the failing row must be marked not found:\n%s", text)
+	}
+	if !strings.Contains(text, "Published") || !strings.Contains(text, "1") || !strings.Contains(text, "Remaining") {
+		t.Errorf("the failure summary must be rendered:\n%s", text)
+	}
+	if !strings.Contains(errText, "sto:renamed") {
+		t.Errorf("stderr must name the failing draft:\n%s", errText)
 	}
 }

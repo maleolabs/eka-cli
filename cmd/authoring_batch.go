@@ -126,6 +126,26 @@ func containsString(values []string, v string) bool {
 	return false
 }
 
+// batchFlagConflict reports the first single-target flag of `eka new`
+// that was explicitly set alongside --file ("" when none): the batch
+// path cannot honor --dimension/--phase/the relationship flags/
+// --content-file — per-target values live in the batch file — so a
+// combined invocation is a usage error instead of a silent drop.
+// --by/--by-kind stay legal (the batch-wide change-log authority) and
+// --edit is refused separately with its own message.
+func batchFlagConflict(cmd *cobra.Command) string {
+	for _, flag := range []string{
+		flagNewDimension, flagNewPhase,
+		flagNewDependsOn, flagNewDerivesFrom, flagNewValidates, flagNewSupersedes, flagNewAmends,
+		flagNewContentFile,
+	} {
+		if cmd.Flags().Changed(flag) {
+			return flag
+		}
+	}
+	return ""
+}
+
 // resolveBatchScope resolves the project and namespace of the batch
 // commands from the repository alone (the same resolution `eka new`
 // uses for an unqualified target, spec §3.2 + ADR-018): the project is
@@ -435,7 +455,8 @@ func runPublishBatch(cmd *cobra.Command) error {
 			}
 			var dne *runtime.DraftNotFoundError
 			if errors.As(perr, &dne) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "eka: %v\n", perr)
+				fmt.Fprintf(s.W, "  %s %s %s\n", ui.IconBullet, s.Error(target), s.Dim("not found"))
+				renderPublishBatchFailure(cmd, s, project, published, order, nodes, key, perr)
 				return &exitError{code: exitFail}
 			}
 			return fmt.Errorf("publish: %w", perr)
