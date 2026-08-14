@@ -156,7 +156,8 @@ outside an EKA repository the command is refused).
 The template carries the full §3.2 schema (namespace, type, id,
 revision 1, the type's owned state fields with their initial values,
 dimension/phase when given, the relationship fields when given, the
-change-log covering every owned domain) plus the type's required
+change-log covering every owned domain and the phase context when
+given) plus the type's required
 content keys as empty placeholders. instanceVersion is deliberately
 absent — it is assigned at publish time.
 
