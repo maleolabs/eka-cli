@@ -65,10 +65,13 @@ const (
 	flagNewSupersedes    = "supersedes"
 	flagNewAmends        = "amends"
 	flagNewContentFile   = "content-file"
+	flagNewBatchFile     = "file"
 	flagNewEdit          = "edit"
 	flagNewBy            = "by"
 	flagNewByKind        = "by-kind"
 	flagPublishVersion   = "instance-version"
+	flagPublishAll       = "all"
+	flagPublishPending   = "pending"
 	flagDiscardForce     = "force"
 	flagDraftListProject = "project"
 )
@@ -138,8 +141,8 @@ func openAuthoringRuntime(cmd *cobra.Command) (*runtime.Runtime, error) {
 // "<type>:<id>".
 func newNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "new <target>",
-		Short: "Scaffold a draft",
+		Use:   "new <target> | --file <batch.json>",
+		Short: "Scaffold a draft (or a batch of drafts)",
 		Long: `Scaffold a draft: the deterministic JSON authoring template written to
 <workspace>/drafts/<project>/<type>-<id>.json (spec-standard-v2 §8).
 
@@ -169,7 +172,45 @@ reference: activating the container locks its depends-on plan
 (protocol §4), so a container without a plan can never publish or
 activate.
 
+Batch authoring (--file <batch.json>): scaffold a SET of related
+drafts in one invocation — the batch form of the same scaffold. The
+file is a JSON object:
+
+  {
+    "drafts": [
+      {"type": "plan", "id": "roadmap-v2", "dimension": "planning",
+       "phase": "mvp",
+       "relationships": {"derivesFrom": ["scp:product-v1"],
+                         "dependsOn": ["scp:product-v1"]},
+       "content": {"objective": "...", "scope": "...", "outOfScope": "..."}},
+      {"type": "ctr", "id": "wave-7",
+       "relationships": {"dependsOn": ["plan:roadmap-v2"]}},
+      {"type": "sto", "id": "item-1",
+       "relationships": {"dependsOn": ["ctr:wave-7"]}},
+      {"type": "tkt", "id": "ticket-1",
+       "relationships": {"derivesFrom": ["ctr:wave-7", "sto:item-1"]}}
+    ]
+  }
+
+Per target: "type" and "id" are required; "dimension" and "phase"
+are optional (phase is scp-/plan- only, the same rule as --phase);
+"relationships" maps the five relationship keys — dependsOn,
+derivesFrom, validates, supersedes, amends — each to an array of
+target references (the same targets the single-target flags accept;
+a tkt- target must derive from a ctr-, a ctr- target must depend on
+a plan-); "content" is an object merged over the type's required-
+section placeholders (the per-target form of --content-file).
+contentState is not a batch field: every draft scaffolds at its
+type's default state.
+
+All targets are scaffolded in the repository's project and
+namespace. The batch is all-or-nothing: when any target cannot be
+scaffolded (a collision, an unknown type, a guard violation), the
+run refuses and removes the drafts it created — no partial set.
+
 Flags:
+  --file <path>         scaffold the batch in <path> instead of a
+                        single target
   --dimension <token>    primary knowledge dimension (knowledge types)
   --phase <value>        phase context (scp-/plan- only)
   --depends-on <ref>[,<ref>...]   relationship targets (also
@@ -187,16 +228,46 @@ Flags:
                          draft after scaffolding, then re-validate
 
 Exit codes:
-  0  draft created
+  0  draft(s) created
   1  refused (collision, unresolvable namespace, invalid target,
-     --edit without a terminal, not an EKA repository)
+     malformed batch file, --edit without a terminal, not an EKA
+     repository)
   2  usage or internal error`,
 		Example: `  eka new feather/sto:my-item
   eka new tkt:wave-7-item-1 --derives-from ctr:wave-7,sto:my-item
   eka new adr:001 --content-file proposal.json
-  eka new plan:roadmap-v2 --phase milestone`,
-		Args: cobra.ExactArgs(1),
+  eka new plan:roadmap-v2 --phase milestone
+  eka new --file batch.json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			file, _ := cmd.Flags().GetString(flagNewBatchFile)
+			if file != "" {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Batch authoring: --file scaffolds a set of drafts in one
+			// invocation (no positional target). --edit is TTY-bound
+			// and single-draft only — a batch is authored through its
+			// content and edited individually afterwards.
+			if file, _ := cmd.Flags().GetString(flagNewBatchFile); file != "" {
+				if edit, _ := cmd.Flags().GetBool(flagNewEdit); edit {
+					return newUsage(cmd, "new: --edit is not available with --file; author batch drafts through the batch content, then edit individually")
+				}
+				byFlag, _ := cmd.Flags().GetString(flagNewBy)
+				byKindFlag, _ := cmd.Flags().GetString(flagNewByKind)
+				by, err := runtime.BySource(byFlag, byKindFlag, ".")
+				if err != nil {
+					return newUsage(cmd, err.Error())
+				}
+				r, err := openAuthoringRuntime(cmd)
+				if err != nil {
+					return err
+				}
+				defer r.Close()
+				return runNewBatch(cmd, r, by, file)
+			}
+
 			ref, err := parseDraftTarget(args[0])
 			if err != nil {
 				return refuse(cmd, "new: %v", err)
@@ -290,6 +361,7 @@ Exit codes:
 	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
+	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above)")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
 	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
 	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
@@ -731,8 +803,8 @@ Exit codes:
 // knowledge.
 func newPublishCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "publish <target>",
-		Short: "Publish a draft as an immutable knowledge object",
+		Use:   "publish <target> | --all | --pending",
+		Short: "Publish a draft (or all pending drafts) as immutable knowledge objects",
 		Long: `Validate one draft at CKO level and persist it as an immutable
 Canonical Knowledge Object in the workspace database, then remove the
 draft file (all-or-nothing: a failed validation or insert keeps the
@@ -743,6 +815,29 @@ The target is a draft identity: <type>:<id> or <ns>/<type>:<id>. The
 project is the repository registered at the current directory; a
 target namespace, when present, must equal the draft's frontmatter
 namespace.
+
+Batch publishing (--all | --pending — the two flags are synonyms):
+publish EVERY pending draft of the repository's project in topological
+order: a draft is published only after every draft it references
+(depends-on/derives-from/validates/supersedes/amends/discusses/
+replies-to targets that are pending drafts) is published, so the
+published set satisfies the resolution rules (rule 8's tkt -> ctr
+chain among them). Ties are broken by identity, so the order is
+deterministic for a given backlog.
+
+The batch run refuses BEFORE publishing anything when:
+  - the pending draft graph contains a cycle (the refusal names the
+    drafts that cannot be ordered; a self-reference is a cycle);
+  - a draft references a target that is neither a pending draft nor an
+    object already in the canonical store (the refusal names the draft
+    and the target) — stricter than rule 5's draft tolerance, because
+    the published set must be coherent.
+
+The publish loop is per-draft atomic: a draft failing CKO-level
+validation stops the run — the objects already published stay
+(immutability), the failing draft and everything ordered after it stay
+pending, and the failure report names them. An empty backlog is
+informational: nothing to publish, exit 0.
 
 The command requires an EKA repository: a directory tree carrying
 eka.yaml (run 'eka init' to create one — outside an EKA repository
@@ -758,14 +853,32 @@ have no repository to push. 'eka sync' remains the explicit transport
 step for repository-attributed knowledge.
 
 Exit codes:
-  0  published (form + instance version + object hash)
-  1  validation failure, malformed draft, draft not found, or not an
-     EKA repository
+  0  published (form + instance version + object hash); --all with an
+     empty backlog (informational)
+  1  validation failure, malformed draft, draft not found, batch cycle
+     or unresolved-reference refusal, or not an EKA repository
   2  usage or internal error`,
 		Example: `  eka publish feather/sto:my-item
-  eka publish feather/sto:my-item --instance-version 2`,
-		Args: cobra.ExactArgs(1),
+  eka publish feather/sto:my-item --instance-version 2
+  eka publish --all
+  eka publish --pending`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool(flagPublishAll)
+			pending, _ := cmd.Flags().GetBool(flagPublishPending)
+			if all || pending {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Batch publishing: --all / --pending (synonyms) publish
+			// every pending draft of the project in topological order.
+			if all, _ := cmd.Flags().GetBool(flagPublishAll); all {
+				return runPublishBatch(cmd)
+			}
+			if pending, _ := cmd.Flags().GetBool(flagPublishPending); pending {
+				return runPublishBatch(cmd)
+			}
 			target := args[0]
 			if _, err := parseDraftTarget(target); err != nil {
 				return fmt.Errorf("publish: %w", err) // Exit 2: usage.
@@ -846,6 +959,8 @@ Exit codes:
 		},
 	}
 	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign)")
+	cmd.Flags().Bool(flagPublishAll, false, "publish every pending draft of the project in topological order (referenced drafts first)")
+	cmd.Flags().Bool(flagPublishPending, false, "synonym of --all: publish every pending draft of the project in topological order")
 	return cmd
 }
 
