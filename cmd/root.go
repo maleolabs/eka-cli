@@ -176,7 +176,7 @@ Exit codes:
 		"verbose output: additional detail lines (per-unit lists, plan actions)")
 	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
-		newStatusCommand(), newIntegrityCommand(), newInstallCommand(), newUpdateCommand(), newVersionCommand(),
+		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand())
 	root.AddCommand(newAuthoringCommands()...)
 	// The output container wraps the help text of EVERY command
