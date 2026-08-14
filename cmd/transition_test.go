@@ -490,9 +490,9 @@ func TestTransitionRefusals(t *testing.T) {
 	if code, _, errText := runIn([]string{"transition", "sto:missing", "--forward"}); code != 1 || !strings.Contains(errText, "run 'eka sync' first") {
 		t.Errorf("missing work item: exit = %d, stderr = %q, want 1 + sync hint", code, errText)
 	}
-	// Non-transitionable target (neither work item, plan nor
-	// container): exit 2.
-	if code, _, errText := runIn([]string{"transition", "cmt:one-implementation", "todo"}); code != 2 || !strings.Contains(errText, "not transitionable") {
+	// Non-transitionable target (neither work item, plan, container nor
+	// a content-state-owning artifact): exit 2.
+	if code, _, errText := runIn([]string{"transition", "tkt:t1", "todo"}); code != 2 || !strings.Contains(errText, "not transitionable") {
 		t.Errorf("non-transitionable target: exit = %d, stderr = %q, want 2", code, errText)
 	}
 	// Malformed target: exit 2.
@@ -649,6 +649,94 @@ func openPTY(t *testing.T) (*os.File, *os.File) {
 		t.Fatalf("cannot open the pty slave: %v", err)
 	}
 	return master, slave
+}
+
+// storeContentState reads the current content-state of a knowledge
+// artifact line from the workspace store and its change-log length.
+func storeContentState(t *testing.T, w *workspace.Workspace, typ, id string) (string, int) {
+	t.Helper()
+	units, err := w.Store().UnitsByLine("test-ns", typ, id)
+	if err != nil || len(units) == 0 {
+		t.Fatalf("UnitsByLine(%s:%s) = %d units (err %v)", typ, id, len(units), err)
+	}
+	u := units[0]
+	for _, cand := range units {
+		if cand.Identity.InstanceVersion > u.Identity.InstanceVersion {
+			u = cand
+		}
+	}
+	return u.StateVector.ContentState, len(u.ChangeLog)
+}
+
+// TestTransitionContentStateCLI: the content-state lifecycle at CLI
+// level — the acceptance example (eka new adr:x --dimension
+// architecture, publish, then eka transition adr:x accepted, with the
+// machine document and the store line), the standard-variant steps for
+// a living-type artifact, the steps-not-skips refusal and the R9
+// supersede gate. The dispatch lives in the linked eka-core engine: the
+// test requires the content-state transition support (eka-core v1.1.0+,
+// the release-chain decision — eka-core ships the feature first, then
+// this CLI bumps the dependency); against the v1.0.0 engine the
+// transition is refused as "not transitionable" and the test skips.
+func TestTransitionContentStateCLI(t *testing.T) {
+	w, _ := transitionEnv(t)
+
+	// The acceptance example: new (the adr- template initializes
+	// content-state to proposed) -> publish -> transition, without
+	// hand-editing the draft JSON.
+	if code, _, errText := runIn([]string{"new", "adr:x", "--dimension", "architecture"}); code != 0 {
+		t.Fatalf("new adr:x: exit = %d, stderr %q", code, errText)
+	}
+	if code, _, errText := runIn([]string{"publish", "adr:x"}); code != 0 {
+		t.Fatalf("publish adr:x: exit = %d, stderr %q", code, errText)
+	}
+	code, out, errText := runIn([]string{"transition", "adr:x", "accepted", "--json"})
+	if code == 2 && strings.Contains(errText, "not transitionable") {
+		t.Skip("the linked eka-core does not support content-state transitions yet (v1.0.0); activates with the eka-core release + dependency bump")
+	}
+	if code != 0 {
+		t.Fatalf("transition adr:x accepted: exit = %d, stderr %q", code, errText)
+	}
+	if !strings.Contains(out, `"ok":true`) || !strings.Contains(out, `"from":"proposed"`) || !strings.Contains(out, `"to":"accepted"`) {
+		t.Errorf("--json = %q, want the content-state proposed -> accepted document", out)
+	}
+	if state, logLen := storeContentState(t, w, "adr", "x"); state != "accepted" || logLen != 3 {
+		t.Errorf("store content-state = %q with %d entries, want accepted with 3", state, logLen)
+	}
+
+	// The R9 supersede gate: accepted -> superseded refuses without a
+	// published replacement referencing the ADR via supersedes.
+	code, out, errText = runIn([]string{"transition", "adr:x", "superseded", "--json"})
+	if code != 1 || !strings.Contains(out, `"ok":false`) || !strings.Contains(out, "transition gate R9") {
+		t.Errorf("superseded without replacement: exit = %d, stdout = %q, want 1 + the R9 refusal document", code, out)
+	}
+	if state, _ := storeContentState(t, w, "adr", "x"); state != "accepted" {
+		t.Errorf("refused supersession must not publish: content-state = %q, want accepted", state)
+	}
+
+	// The standard variant for a living-type artifact: draft -> review
+	// (--forward) -> approved (explicit <to>); a direct draft ->
+	// approved skip refuses (steps, not skips).
+	if code, _, errText := runIn([]string{"new", "spec:api", "--dimension", "specifications"}); code != 0 {
+		t.Fatalf("new spec:api: exit = %d, stderr %q", code, errText)
+	}
+	if code, _, errText := runIn([]string{"publish", "spec:api"}); code != 0 {
+		t.Fatalf("publish spec:api: exit = %d, stderr %q", code, errText)
+	}
+	if code, _, errText := runIn([]string{"transition", "spec:api", "approved", "--json"}); code != 1 || !strings.Contains(errText, "is not in the content-state table") {
+		t.Errorf("draft -> approved skip: exit = %d, stderr = %q, want 1 + the table refusal", code, errText)
+	}
+	if code, _, errText := runIn([]string{"transition", "spec:api", "--forward"}); code != 0 {
+		t.Fatalf("spec:api --forward: exit = %d, stderr %q", code, errText)
+	}
+	if state, _ := storeContentState(t, w, "spec", "api"); state != "review" {
+		t.Errorf("content-state = %q, want review", state)
+	}
+	if code, out, errText := runIn([]string{"transition", "spec:api", "approved", "--json"}); code != 0 {
+		t.Fatalf("review -> approved: exit = %d, stderr %q", code, errText)
+	} else if !strings.Contains(out, `"to":"approved"`) {
+		t.Errorf("--json = %q, want the review -> approved document", out)
+	}
 }
 
 // storePlanningState reads the current planning-state of a plan line
