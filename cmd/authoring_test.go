@@ -28,6 +28,11 @@ import (
 // returns the workspace and the repository path.
 func authoringEnv(t *testing.T, ns string) (*workspace.Workspace, string) {
 	t.Helper()
+	// Pin the git identity: `eka new` resolves the change-log authority
+	// from `git config user.name` (BySource), so every test invocation
+	// without --by needs a deterministic identity (a machine without a
+	// global git config would otherwise fail with exit 2).
+	gitIdentityEnv(t, "test-agent")
 	t.Setenv("EKA_HOME", t.TempDir())
 	w, err := workspace.Ensure()
 	if err != nil {
@@ -1028,6 +1033,7 @@ func TestPublishIdentityMismatchCLI(t *testing.T) {
 // still empty until the first sync.
 func TestNewUnsyncedRepoHint(t *testing.T) {
 	// Register WITHOUT setting the namespace (no SetRepoNamespace).
+	gitIdentityEnv(t, "test-agent")
 	t.Setenv("EKA_HOME", t.TempDir())
 	w, err := workspace.Ensure()
 	if err != nil {
@@ -1073,7 +1079,10 @@ func TestAuthoringRefuseOutsideEKA(t *testing.T) {
 		word string
 	}{
 		// new renders through the refuse() helper: "eka: new: refused: …".
-		{[]string{"new", "sto:x"}, 1, "new: refused"},
+		// --by pins the change-log authority (like the note/transition
+		// no-repo cases): this test targets the ADR-018 gate, not the
+		// BySource resolution.
+		{[]string{"new", "sto:x", "--by", "a"}, 1, "new: refused"},
 		{[]string{"publish", "sto:x"}, 1, "publish refused"},
 		{[]string{"edit", "sto:x"}, 2, "edit refused"},
 		{[]string{"discard", "sto:x", "--force"}, 2, "discard refused"},
