@@ -1,0 +1,458 @@
+package cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestProjectHelpExitsZero(t *testing.T) {
+	for _, args := range [][]string{{"project", "-h"}, {"project", "register", "-h"}, {"project", "list", "-h"}} {
+		code, text, _ := runIn(args)
+		if code != 0 {
+			t.Errorf("args %v: exit = %d, want 0", args, code)
+		}
+		if !strings.Contains(text, "eka project") {
+			t.Errorf("args %v: help must mention eka project", args)
+		}
+	}
+}
+
+// TestProjectRegisterHappyPath: registering a repository exits 0 and
+// reports the project/repository/status. The fixture carries eka.yaml,
+// so the identity comes from the file (project and repository name =
+// eka-sync-fixture, never the temp-dir basename).
+func TestProjectRegisterHappyPath(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	code, text, errText := runIn([]string{"project", "register", repo})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{"Project", "Repository", "Path", "Status", "registered", "eka-sync-fixture"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output must contain %q:\n%s", want, text)
+		}
+	}
+	// The identity comes from eka.yaml: the repository NAME is
+	// eka-sync-fixture, never the temp-dir basename (the Path field
+	// legitimately shows the temp dir).
+	if strings.Contains(text, "Repository   "+filepath.Base(repo)) {
+		t.Errorf("repository name must come from eka.yaml, not the basename %q:\n%s", filepath.Base(repo), text)
+	}
+}
+
+// TestProjectRegisterTwiceReportsAlreadyRegistered.
+func TestProjectRegisterTwiceReportsAlreadyRegistered(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("first register: exit %d\n%s", code, errText)
+	}
+	code, text, errText := runIn([]string{"project", "register", repo})
+	if code != 0 {
+		t.Fatalf("second register: exit = %d\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "already registered") {
+		t.Errorf("second register must report already registered:\n%s", text)
+	}
+}
+
+// TestProjectRegisterCustomProject: the project name comes from
+// eka.yaml — a repository whose file records project "myproject" is
+// registered under it (the metadata is the identity authority).
+func TestProjectRegisterCustomProject(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeEkaYAML(t, repo, "myproject", "myrepo", "my-namespace")
+	code, text, errText := runIn([]string{"project", "register", repo})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "myproject") || !strings.Contains(text, "myrepo") {
+		t.Errorf("output must carry the metadata project and repository:\n%s", text)
+	}
+}
+
+// TestProjectListEmpty: an empty workspace lists no projects and exits
+// 0 with the informational message.
+func TestProjectListEmpty(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	code, text, errText := runIn([]string{"project", "list"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "No projects registered yet") {
+		t.Errorf("empty list must be informational:\n%s", text)
+	}
+}
+
+// TestProjectListSorted: projects and repositories render sorted, with
+// the workspace path in the header. Both fixtures carry eka.yaml; the
+// second one records project "zproject" so the list carries two
+// projects.
+func TestProjectListSorted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("EKA_HOME", home)
+	repoA := copySyncFixture(t)
+	repoB := copySyncFixture(t)
+	writeEkaYAML(t, repoB, "zproject", "zrepo", "eka-sync-fixture")
+	for _, args := range [][]string{
+		{"project", "register", repoA},
+		{"project", "register", repoB},
+	} {
+		if code, _, errText := runIn(args); code != 0 {
+			t.Fatalf("register %v: exit %d\n%s", args, code, errText)
+		}
+	}
+	code, text, errText := runIn([]string{"project", "list"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, home) {
+		t.Errorf("list must show the workspace path:\n%s", text)
+	}
+	// Both project names present; the repository names from eka.yaml
+	// present (the fixture identity eka-sync-fixture and the second
+	// repo's zrepo).
+	for _, want := range []string{"eka-sync-fixture", "zrepo", "zproject"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("list missing %q:\n%s", want, text)
+		}
+	}
+	// Deterministic: same state, same bytes.
+	_, text2, _ := runIn([]string{"project", "list"})
+	if text != text2 {
+		t.Error("project list output differs between runs")
+	}
+}
+
+// TestProjectRegisterRejectsMissingPath: an unreadable path is a usage
+// error (exit 2).
+func TestProjectRegisterRejectsMissingPath(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	code, _, errText := runIn([]string{"project", "register", filepath.Join(t.TempDir(), "nope")})
+	if code != 2 {
+		t.Errorf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if errText == "" {
+		t.Error("stderr must not be empty")
+	}
+}
+
+// TestProjectRegisterRefusesWithoutEKA (ADR-018): registration requires
+// an EKA repository — a directory without eka.yaml is refused with the
+// pinned gate sentence, exit 2. There is no legacy registration path.
+func TestProjectRegisterRefusesWithoutEKA(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	dir := t.TempDir()
+	code, _, errText := runIn([]string{"project", "register", dir})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "is not an EKA repository (no eka.yaml)") ||
+		!strings.Contains(errText, "run 'eka init' first") {
+		t.Errorf("stderr must carry the pinned ADR-018 refusal, got %q", errText)
+	}
+	// Nothing was registered.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos(filepath.Base(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 0 {
+		t.Errorf("a refused register must not register anything, got %+v", repos)
+	}
+}
+
+// TestProjectRegisterSubdirectoryRegistersRoot (BLOCKER regression):
+// registering a SUBDIRECTORY of a metadata repository registers the
+// walk-up repository root — the stored path is the root, never the
+// argument subdir.
+func TestProjectRegisterSubdirectoryRegistersRoot(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	subdir := filepath.Join(repo, "docs")
+	code, text, errText := runIn([]string{"project", "register", subdir})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{"Project", "Repository", "Path", "registered", "eka-sync-fixture"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output must contain %q:\n%s", want, text)
+		}
+	}
+	// The registry carries the ROOT path, never the subdir argument.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repository under eka-sync-fixture, got %d", len(repos))
+	}
+	if repos[0].Path != repo {
+		t.Errorf("registered path = %q, want the repository root %q (never the subdir %q)", repos[0].Path, repo, subdir)
+	}
+}
+
+// writeEkaYAML writes a repository identity file into dir.
+func writeEkaYAML(t *testing.T, dir, project, name, ns string) {
+	t.Helper()
+	content := "version: 1\nproject: " + project + "\nname: " + name + "\nnamespace: " + ns + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "eka.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProjectRegisterFromMetadata (ADR-017 §5.3): inside a repository
+// with eka.yaml the identity comes from the file — project and
+// repository name are the metadata values (never the basename), and
+// repos.namespace is written immediately.
+func TestProjectRegisterFromMetadata(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeEkaYAML(t, repo, "atrium", "api", "atrium-api")
+	code, text, errText := runIn([]string{"project", "register", repo})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{"atrium", "api", "registered"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output must contain %q:\n%s", want, text)
+		}
+	}
+	// The registry carries the metadata identity: project atrium,
+	// repository name api (not the temp-dir basename), namespace
+	// atrium-api.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("atrium")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repository under atrium, got %d", len(repos))
+	}
+	if repos[0].Name != "api" {
+		t.Errorf("repo name = %q, want api (from eka.yaml, never the basename)", repos[0].Name)
+	}
+	if repos[0].Namespace != "atrium-api" {
+		t.Errorf("repo namespace = %q, want atrium-api (written at registration)", repos[0].Namespace)
+	}
+}
+
+// TestProjectRegisterMetadataNameConflict (ADR-017 §5.3): an explicit
+// --name conflicting with the project recorded in eka.yaml is refused
+// with a deterministic hint (exit 2).
+func TestProjectRegisterMetadataNameConflict(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeEkaYAML(t, repo, "atrium", "api", "atrium-api")
+	code, _, errText := runIn([]string{"project", "register", repo, "--name", "other"})
+	if code != 2 {
+		t.Errorf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "conflicts with the project atrium recorded in eka.yaml") ||
+		!strings.Contains(errText, "the metadata is the identity authority") {
+		t.Errorf("stderr must carry the conflict hint, got %q", errText)
+	}
+}
+
+// TestProjectRegisterMetadataNameMatch: --name equal to the metadata
+// project is accepted (the metadata identity applies).
+func TestProjectRegisterMetadataNameMatch(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeEkaYAML(t, repo, "atrium", "api", "atrium-api")
+	code, text, errText := runIn([]string{"project", "register", repo, "--name", "atrium"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "atrium") {
+		t.Errorf("output must carry the metadata project:\n%s", text)
+	}
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("atrium")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].Name != "api" {
+		t.Errorf("metadata identity must win even with a matching --name, got %+v", repos)
+	}
+}
+
+// TestStatusAfterRegisterNoObjects: status renders workspace, schema,
+// project and zero counts.
+func TestStatusAfterRegisterNoObjects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("EKA_HOME", home)
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	code, text, errText := runIn([]string{"status"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{"Runtime", home, "Schema", "Objects", "Payloads", "Attachments", "Projects"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "pull at") || strings.Contains(text, "push at") {
+		t.Error("no sync log entries expected before any sync")
+	}
+}
+
+// TestStatusAfterSyncShowsLastSync: after a sync the status reports
+// the last pull/push per repository.
+func TestStatusAfterSyncShowsLastSync(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("EKA_HOME", home)
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"sync", repo}); code != 0 {
+		t.Fatalf("sync: exit %d\n%s", code, errText)
+	}
+	code, text, errText := runIn([]string{"status"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "Objects") {
+		t.Errorf("status must show counts:\n%s", text)
+	}
+	// The sync log renders the most recent entry (the push after a
+	// full sync cycle).
+	if !strings.Contains(text, "push") {
+		t.Errorf("status must show the last sync entry:\n%s", text)
+	}
+	if !strings.Contains(text, "at 20") {
+		t.Errorf("status must show the sync timestamp:\n%s", text)
+	}
+	// Deterministic output.
+	_, text2, _ := runIn([]string{"status"})
+	if text != text2 {
+		t.Error("status output differs between runs")
+	}
+}
+
+// TestProjectRegisterContentNamespaceMismatch (ADR-020): a non-TTY
+// register whose docs content resolves to exactly ONE namespace
+// differing from the declared eka.yaml namespace is refused with the
+// pinned byte-exact sentence, exit 2 — nothing registered.
+func TestProjectRegisterContentNamespaceMismatch(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	writeEkaYAML(t, repo, "eka-sync-fixture", "eka-sync-fixture", "other")
+
+	code, _, errText := runIn([]string{"project", "register", repo})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	want := "eka: project register failed: the repository content namespace eka-sync-fixture differs from the registered repository namespace other; run 'eka project register --override' to align the repository identity to eka-sync-fixture"
+	if !strings.Contains(errText, want) {
+		t.Errorf("stderr must carry the pinned byte-exact refusal, got %q", errText)
+	}
+	// Nothing was registered.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 0 {
+		t.Errorf("a refused register must not register anything, got %+v", repos)
+	}
+}
+
+// TestProjectRegisterOverrideAlignsIdentity (ADR-020): register
+// --override aligns the identity to the content — exit 0, eka.yaml
+// rewritten, repos.namespace aligned, the aligned note printed.
+func TestProjectRegisterOverrideAlignsIdentity(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	writeEkaYAML(t, repo, "eka-sync-fixture", "eka-sync-fixture", "other")
+
+	code, text, errText := runIn([]string{"project", "register", "--override", repo})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	note := "repository namespace aligned: other → eka-sync-fixture (eka.yaml updated; identity frozen again)"
+	if !strings.Contains(text, note) {
+		t.Errorf("output must carry the aligned note, got:\n%s", text)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, "eka.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "namespace: eka-sync-fixture") {
+		t.Errorf("eka.yaml must be rewritten to the content namespace:\n%s", data)
+	}
+	if strings.Contains(string(data), "namespace: other") {
+		t.Errorf("eka.yaml must not keep the old namespace:\n%s", data)
+	}
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].Namespace != "eka-sync-fixture" {
+		t.Errorf("repos.namespace = %+v, want the aligned eka-sync-fixture", repos)
+	}
+}
+
+// TestProjectRegisterContentNamespaceMulti (ADR-020): docs content
+// spanning MULTIPLE distinct namespaces is refused WITHOUT override —
+// a repository is one platform, consolidate the content first.
+func TestProjectRegisterContentNamespaceMulti(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	// A second conformant artifact with a DIFFERENT namespace (see the
+	// sync engine test for the same trick): the depends-on is dropped
+	// because `sto:login-email` resolves within the artifact's own
+	// namespace, which changed — an unresolved reference (R5) would
+	// fail before the reconciliation.
+	adr, err := os.ReadFile(filepath.Join(repo, "docs", "decisions", "adr-001-runtime.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(string(adr),
+		"namespace: eka-sync-fixture", "namespace: eka-sync-fixture-b"),
+		"id: 001-runtime", "id: 002-extra"),
+		"depends-on:\n  - sto:login-email", "depends-on: []")
+	if err := os.WriteFile(filepath.Join(repo, "docs", "decisions", "adr-002-extra.md"), []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeEkaYAML(t, repo, "eka-sync-fixture", "eka-sync-fixture", "other")
+
+	code, _, errText := runIn([]string{"project", "register", "--override", repo})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	want := "eka: project register failed: the repository content spans multiple namespaces (eka-sync-fixture, eka-sync-fixture-b); a repository is one platform — consolidate the content"
+	if !strings.Contains(errText, want) {
+		t.Errorf("stderr must carry the pinned byte-exact multi-ns refusal, got %q", errText)
+	}
+	// Nothing was registered; eka.yaml untouched.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 0 {
+		t.Errorf("a refused register must not register anything, got %+v", repos)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, "eka.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "namespace: other") {
+		t.Errorf("eka.yaml must stay untouched after the refusal:\n%s", data)
+	}
+}

@@ -1,0 +1,161 @@
+package plugin
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The plugin package tests are hermetic: a fake plugin executable (a
+// shell script implementing the contract) is written into a temporary
+// bin directory, and PATH/EKA_PLUGIN_DIR are pinned to controlled
+// directories so no ambient eka-* executable interferes.
+
+const fakeExe = `#!/bin/sh
+case "$1" in
+  manifest)
+    cat <<'EOF'
+{"contract":"v1","name":"mcp","version":"2.3.4","description":"fake","artifacts":[{"kind":"skills","entries":["eka-a","eka-b"]}]}
+EOF
+    ;;
+    install)
+    shift 2
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --dry-run) dry=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s' '{"installed":["eka-a","eka-b"],"version":"2.3.4"}'
+    ;;
+esac
+`
+
+// writeFakeExe writes the fake plugin executable into bin, pins
+// EKA_PLUGIN_DIR to it, and prepends bin to PATH so discovery finds
+// the fake before anything ambient, returning the plugin's path.
+func writeFakeExe(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(fakeExe), 0o755); err != nil {
+		t.Fatalf("write fake plugin: %v", err)
+	}
+	t.Setenv("EKA_PLUGIN_DIR", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return exe
+}
+
+func TestDiscoverFindsPluginInPluginDir(t *testing.T) {
+	writeFakeExe(t)
+	plugins, err := Discover("/nonexistent-home")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("plugins = %d, want 1: %+v", len(plugins), plugins)
+	}
+	if got := filepath.Base(plugins[0].Exe); got != "eka-mcp" {
+		t.Errorf("exe = %q, want eka-mcp", got)
+	}
+}
+
+func TestDiscoverSkipsNonPluginNames(t *testing.T) {
+	bin := t.TempDir()
+	// An "eka" binary (the CLI itself) and a non-eka binary must be
+	// skipped; only eka-* siblings count.
+	for _, name := range []string{"eka", "not-a-plugin", "eka-mcp"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Setenv("EKA_PLUGIN_DIR", bin)
+	t.Setenv("PATH", t.TempDir())
+	plugins, err := Discover("")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(plugins) != 1 || filepath.Base(plugins[0].Exe) != "eka-mcp" {
+		t.Fatalf("plugins = %+v, want only eka-mcp", plugins)
+	}
+}
+
+func TestDiscoverEmpty(t *testing.T) {
+	t.Setenv("EKA_PLUGIN_DIR", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	plugins, err := Discover("")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(plugins) != 0 {
+		t.Errorf("plugins = %+v, want none", plugins)
+	}
+}
+
+func TestManifestParsesJSON(t *testing.T) {
+	writeFakeExe(t)
+	plugins, err := Discover("")
+	if err != nil || len(plugins) != 1 {
+		t.Fatalf("Discover: plugins = %+v, err = %v", plugins, err)
+	}
+	m, err := plugins[0].Manifest()
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if m.Contract != ContractVersion || m.Name != "mcp" || m.Version != "2.3.4" {
+		t.Errorf("manifest = %+v", m)
+	}
+	if len(m.Artifacts) != 1 || m.Artifacts[0].Kind != "skills" {
+		t.Errorf("artifacts = %+v", m.Artifacts)
+	}
+	if len(m.Artifacts[0].Entries) != 2 || m.Artifacts[0].Entries[0] != "eka-a" {
+		t.Errorf("entries = %+v", m.Artifacts[0].Entries)
+	}
+}
+
+func TestManifestContractMismatchRefused(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+printf '%s' '{"contract":"v9","name":"mcp","version":"1.0.0"}'
+`
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("EKA_PLUGIN_DIR", bin)
+	t.Setenv("PATH", t.TempDir())
+	p := Plugin{Exe: exe}
+	if _, err := p.Manifest(); err == nil || !strings.Contains(err.Error(), "contract") {
+		t.Errorf("contract mismatch must refuse, got err = %v", err)
+	}
+}
+
+func TestInstallRunsPluginAndParsesResult(t *testing.T) {
+	exe := writeFakeExe(t)
+	p := Plugin{Exe: exe}
+	res, err := p.Install(InstallOptions{Kind: "skills", Dir: "/target/dir"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Version != "2.3.4" || len(res.Installed) != 2 {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestInstallFailureSurfacesStderr(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+echo "plugin exploded" >&2
+exit 3
+`
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	p := Plugin{Exe: exe}
+	_, err := p.Install(InstallOptions{Kind: "skills", Dir: "/x"})
+	if err == nil || !strings.Contains(err.Error(), "plugin exploded") {
+		t.Errorf("failure must surface stderr, got err = %v", err)
+	}
+}
