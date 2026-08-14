@@ -66,6 +66,8 @@ const (
 	flagNewAmends        = "amends"
 	flagNewContentFile   = "content-file"
 	flagNewEdit          = "edit"
+	flagNewBy            = "by"
+	flagNewByKind        = "by-kind"
 	flagPublishVersion   = "instance-version"
 	flagDiscardForce     = "force"
 	flagDraftListProject = "project"
@@ -178,6 +180,9 @@ Flags:
                          object file (agents); the object is merged
                          into the draft's content (raw text is
                          rejected for JSON drafts)
+  --by <name>            change-log authority name (default: ` + "`git config user.name`" + `)
+  --by-kind <kind>       author identity kind: user, agent, or worker
+                         (default: user)
   --edit                 TTY only: open $EDITOR (fallback vi) on the
                          draft after scaffolding, then re-validate
 
@@ -210,6 +215,18 @@ Exit codes:
 				return refuse(cmd, "new: --edit requires a terminal; use --content-file for non-interactive authoring")
 			}
 
+			// The change-log authority (by): --by, else `git config
+			// user.name` — the same BySource resolution `eka note` and
+			// `eka transition` use, so every authoring command defaults
+			// to the same identity (an unresolved source is a usage
+			// error, never a silent fallback).
+			byFlag, _ := cmd.Flags().GetString(flagNewBy)
+			byKindFlag, _ := cmd.Flags().GetString(flagNewByKind)
+			by, err := runtime.BySource(byFlag, byKindFlag, ".")
+			if err != nil {
+				return newUsage(cmd, err.Error())
+			}
+
 			project, ns, err := resolveNewScope(r, ref)
 			if err != nil {
 				return refuse(cmd, "new: %v", err)
@@ -224,6 +241,7 @@ Exit codes:
 				ID:            ref.ID,
 				Dimension:     dimension,
 				Phase:         phase,
+				By:            by,
 				Relationships: collectRelationships(cmd),
 				ContentFile:   contentFile,
 			})
@@ -273,8 +291,18 @@ Exit codes:
 	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
+	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
+	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
 	cmd.Flags().Bool(flagNewEdit, false, "TTY only: open $EDITOR (fallback vi) on the draft, then re-validate")
 	return cmd
+}
+
+// newUsage renders a usage-class failure (exit 2) of `eka new`: the
+// deterministic "eka: <message>" line on stderr (the same class the
+// note/transition commands use for an unresolved --by source).
+func newUsage(cmd *cobra.Command, message string) error {
+	fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", message)
+	return &exitError{code: exitUsage}
 }
 
 // resolveNewScope resolves the project and namespace of `eka new` per

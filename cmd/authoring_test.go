@@ -28,6 +28,11 @@ import (
 // returns the workspace and the repository path.
 func authoringEnv(t *testing.T, ns string) (*workspace.Workspace, string) {
 	t.Helper()
+	// Pin the git identity: `eka new` resolves the change-log authority
+	// from `git config user.name` (BySource), so every test invocation
+	// without --by needs a deterministic identity (a machine without a
+	// global git config would otherwise fail with exit 2).
+	gitIdentityEnv(t, "test-agent")
 	t.Setenv("EKA_HOME", t.TempDir())
 	w, err := workspace.Ensure()
 	if err != nil {
@@ -123,6 +128,72 @@ func TestNewScaffoldsDraft(t *testing.T) {
 	}
 	if strings.Contains(text, "\x1b") {
 		t.Errorf("non-TTY output must stay ANSI-free:\n%s", text)
+	}
+}
+
+// TestNewByDefaultsToGitIdentity: the change-log authority of a
+// scaffolded draft defaults to `git config user.name` — the same
+// BySource resolution `eka note` and `eka transition` use, so every
+// authoring command defaults to the same identity (the author-identity
+// consistency fix). --by overrides the default; an unresolved git
+// identity is a usage error (exit 2), never a silent fallback to a
+// placeholder.
+func TestNewByDefaultsToGitIdentity(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	project := projectOf(t, w, mustAbs(t, "."))
+	gitIdentityEnv(t, "test-agent")
+
+	// Without --by the draft carries the git identity: the change-log
+	// entries AND the author field.
+	if code, _, errText := runIn([]string{"new", "sto:by-default"}); code != 0 {
+		t.Fatalf("new without --by: exit = %d, stderr %q", code, errText)
+	}
+	raw, err := os.ReadFile(draftFile(t, w, project, "sto", "by-default"))
+	if err != nil {
+		t.Fatalf("draft file missing: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("draft is not valid JSON: %v", err)
+	}
+	if doc["author"] != "test-agent" {
+		t.Errorf("draft author = %v, want the git default identity", doc["author"])
+	}
+	cl := doc["changeLog"].([]any)
+	for _, e := range cl {
+		if e.(map[string]any)["by"] != "test-agent" {
+			t.Errorf("changeLog entry by = %v, want the git default identity", e.(map[string]any)["by"])
+		}
+	}
+
+	// --by overrides the git identity (change-log and author alike).
+	if code, _, errText := runIn([]string{"new", "sto:by-flag", "--by", "Foo"}); code != 0 {
+		t.Fatalf("new --by Foo: exit = %d, stderr %q", code, errText)
+	}
+	raw, err = os.ReadFile(draftFile(t, w, project, "sto", "by-flag"))
+	if err != nil {
+		t.Fatalf("draft file missing: %v", err)
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("draft is not valid JSON: %v", err)
+	}
+	if doc["author"] != "Foo" {
+		t.Errorf("draft author = %v, want the --by override", doc["author"])
+	}
+	for _, e := range doc["changeLog"].([]any) {
+		if e.(map[string]any)["by"] != "Foo" {
+			t.Errorf("changeLog entry by = %v, want the --by override", e.(map[string]any)["by"])
+		}
+	}
+
+	// An unresolved git identity refuses (exit 2, usage class) with
+	// the --by hint; nothing scaffolds.
+	gitIdentityEnv(t, "")
+	if code, _, errText := runIn([]string{"new", "sto:no-by"}); code != 2 || !strings.Contains(errText, "pass --by <name>") {
+		t.Errorf("missing git identity: exit = %d, stderr = %q, want 2 + --by hint", code, errText)
+	}
+	if _, err := os.Stat(draftFile(t, w, project, "sto", "no-by")); !os.IsNotExist(err) {
+		t.Errorf("a refused run must not leave a draft file behind")
 	}
 }
 
@@ -962,6 +1033,7 @@ func TestPublishIdentityMismatchCLI(t *testing.T) {
 // still empty until the first sync.
 func TestNewUnsyncedRepoHint(t *testing.T) {
 	// Register WITHOUT setting the namespace (no SetRepoNamespace).
+	gitIdentityEnv(t, "test-agent")
 	t.Setenv("EKA_HOME", t.TempDir())
 	w, err := workspace.Ensure()
 	if err != nil {
@@ -1007,7 +1079,10 @@ func TestAuthoringRefuseOutsideEKA(t *testing.T) {
 		word string
 	}{
 		// new renders through the refuse() helper: "eka: new: refused: …".
-		{[]string{"new", "sto:x"}, 1, "new: refused"},
+		// --by pins the change-log authority (like the note/transition
+		// no-repo cases): this test targets the ADR-018 gate, not the
+		// BySource resolution.
+		{[]string{"new", "sto:x", "--by", "a"}, 1, "new: refused"},
 		{[]string{"publish", "sto:x"}, 1, "publish refused"},
 		{[]string{"edit", "sto:x"}, 2, "edit refused"},
 		{[]string{"discard", "sto:x", "--force"}, 2, "discard refused"},
