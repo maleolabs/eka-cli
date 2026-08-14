@@ -13,7 +13,7 @@ import "fmt"
 //	Repository
 //	Name        myproj
 //	Namespace   eka-cli
-//	Knowledge   EKA v1.0.0
+//	Knowledge   EKA v1.0
 //	↓ Bootstrap
 //
 // The object kind line is rendered in the accent color on a TTY; the

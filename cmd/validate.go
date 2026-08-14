@@ -69,7 +69,7 @@ the exit code; blocking violations exit 1. Usage or internal errors
 //	└── Artifacts: 6
 //	└── Errors: 0
 //	└── Warnings: 0
-//	└── Status: Repository conforms to EKA v1.0.0
+//	└── Status: Repository conforms to EKA v1.0
 //
 // The scanned count includes .json authoring files, so the label is
 // "authoring files" (was ".md files").
