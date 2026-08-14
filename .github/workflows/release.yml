@@ -99,7 +99,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          ANVIL_VERSION="$(grep -E '^version:' anvil.yaml | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+          ANVIL_VERSION="$(grep -E '^[[:space:]]*version:' anvil.yaml | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
           if [[ -z "$ANVIL_VERSION" ]]; then
             echo "::error::Could not read version from anvil.yaml"
             exit 1
