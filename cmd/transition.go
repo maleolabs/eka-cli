@@ -65,10 +65,11 @@ const transitionSchema = "eka-transition-v1"
 func newTransitionCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transition <target> [<to>]",
-		Short: "Transition a work item, plan or container state",
+		Short: "Transition a work item, plan, container or artifact state",
 		Long: `Transition a work item along the execution-state table (ADR-019
-D1), a plan along the planning-state table, or a container along the
-container-state table, and publish the result to the workspace store.
+D1), a plan along the planning-state table, a container along the
+container-state table, or a knowledge artifact along the content-state
+lifecycle, and publish the result to the workspace store.
 
 The destination is the explicit <to> value, or the derived step of
 --forward / --backward. For work items: --forward is the next
@@ -88,15 +89,28 @@ on the depends-on plan being approved; the activation LOCKS the plan
 (planning-state -> immutable) atomically with the activation. The
 three destination flags are mutually exclusive.
 
+For knowledge artifacts (vis/str/req/scp/epc/adr/dec/arc/spec/std/run/
+rel/gls/trc/fnd, plus rvw- and cmt-) the content-state lifecycle of
+the type's variant applies, forward-only, one step at a time: the
+standard variant draft -> review -> approved -> amended, the ADR
+variant proposed -> accepted -> superseded, the decision variant
+draft -> accepted -> superseded (amended / superseded are terminal).
+A skip (e.g. draft -> approved), a revert or a no-op is refused; a
+superseded ADR must be referenced by a replacement via ` + "`supersedes`" + `.
+plan- keeps planning-state as its transition domain (its content-state
+is out of scope for the transition API).
+
 The target is the line in the workspace store: <type>:<id>
 (unqualified — the repository namespace applies) or <ns>/<type>:<id>
-(qualified — the namespace must equal the repository's). Work items
-(sto/ts/bug/td/ch/spk) transition along execution-state, plans (plan-)
-along planning-state, containers (ctr-) along container-state; run
-'eka sync' first so the line exists in the workspace. ` + "`done`" + ` is
-terminal for work items (canceled is its only exit) and ` + "`canceled`" + `
-re-activates to ` + "`todo`" + `; ` + "`completed`" + ` is terminal for
-containers.
+(qualified — the namespace must equal the repository's). The target
+type selects the transition domain, so a destination keyword never
+clashes across domains: work items (sto/ts/bug/td/ch/spk) transition
+along execution-state, plans (plan-) along planning-state, containers
+(ctr-) along container-state, knowledge artifacts along content-state
+(eka transition adr:001 accepted); run 'eka sync' first so the line
+exists in the workspace. ` + "`done`" + ` is terminal for work items
+(canceled is its only exit) and ` + "`canceled`" + ` re-activates to
+` + "`todo`" + `; ` + "`completed`" + ` is terminal for containers.
 
 The work-item gates (R13) are checked early: in-review requires a
 resolved implementation note, done requires every note resolved —
@@ -123,6 +137,8 @@ Exit codes:
 		Example: `  eka transition sto:12 in-review
   eka transition plan:roadmap-v1 approved
   eka transition ctr:wave-7 completed
+  eka transition adr:001 accepted
+  eka transition spec:api review
   eka transition sto:12 --forward
   eka transition sto:12 --backward
   eka transition atrium-api/sto:12 done --by agent-x
