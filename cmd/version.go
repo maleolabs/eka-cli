@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	standardembed "github.com/maleolabs/eka-cli"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/metadata"
@@ -19,14 +20,18 @@ import (
 var version = "dev"
 
 // standardVersion is the EKA standard version this CLI implements,
-// derived from the single canonical source: the version constants the
-// eka-core library exports (exchange.SpecificationVersion — the EKA
-// standard 1.0 corpus, JSON-native authoring and the camelCase
-// convention). The value is a compile-time constant here only because
-// the core constant is one; it is never hardcoded or re-derived in the
-// CLI. Standards use a two-component scheme (major.minor) — a standard,
-// unlike a tool, has no patch line.
-const standardVersion = exchange.SpecificationVersion
+// derived at package init from the single canonical source: the
+// `Version X.Y` line of the embedded EKA standard declaration file
+// (standardembed — the vendored eka-standard release asset, the ADR-023
+// embed pattern). The value is resolved from the embedded file, never
+// hardcoded. Standards use a two-component scheme (major.minor) — a
+// standard, unlike a tool, has no patch line.
+//
+// The build-time version-consistency test (standardembed_test.go) locks
+// the embedded line to the standard version the CLI conformance rules
+// implement (exchange.SpecificationVersion), so the rendered version and
+// the enforced rules cannot drift.
+var standardVersion = standardembed.MustVersion()
 
 // versionInfo is the `eka version --json` report: one field per version
 // axis, each derived from a single source (the owning package's exported
@@ -35,7 +40,7 @@ const standardVersion = exchange.SpecificationVersion
 //
 // Axes (sto:version-clarity):
 //
-//	standardCorpus   EKA standard version the CLI implements        exchange.SpecificationVersion
+//	standardCorpus   EKA standard version the CLI implements        embedded EKA declaration (standardembed)
 //	rsfSerialization RSF (Reference Serialization Format) version   exchange.SerializationVersion
 //	exchangeSpec     Exchange Contract format version               exchange.ExchangeFormatVersion
 //	machineSchema    machine interface (CKO JSON) schema identifier machine.Schema
@@ -63,7 +68,10 @@ func newVersionCommand() *cobra.Command {
 		Long: `Print the EKA version axes this CLI reports, each from its single
 canonical source:
 
-  standard corpus    the EKA standard version (exchange.SpecificationVersion)
+  standard corpus    the EKA standard version, derived from the
+                     embedded EKA standard declaration file
+                     (standardembed; locked to the conformance rules
+                     by a build-time test)
   RSF serialization  the Reference Serialization Format version
                      (exchange.SerializationVersion)
   exchange spec      the Exchange Contract format version
@@ -79,8 +87,10 @@ The CLI version is set at build time:
   go build -ldflags "-X .../cmd.version=v1.2.3" ./cmd/eka
 
 The standard version is fixed by the ratified specifications (EKA v1.0)
-and is never hardcoded in the CLI — it derives from eka-core's exported
-version constants, the single source of truth for every axis.
+and is never hardcoded in the CLI — it derives from the Version X.Y
+line of the embedded EKA standard declaration file, the single source of
+truth for the standard-corpus axis (eka-core's exported constants remain
+the source for the other axes).
 
 --json emits all six axes as one machine-readable document (deterministic
 key order, two-space indentation, trailing newline).`,

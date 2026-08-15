@@ -16,8 +16,9 @@ import (
 // to the exit code contract.
 //
 // `eka init` is identity-only: the generated repository contains
-// eka.yaml only (+ optional git init). The legacy docs-in-repo skeleton
-// is never scaffolded — knowledge lives in the EKA workspace.
+// eka.yaml and the root EKA standard declaration file (+ optional git
+// init). The legacy docs-in-repo skeleton is never scaffolded —
+// knowledge lives in the EKA workspace.
 //
 // Exit codes:
 //
@@ -31,12 +32,14 @@ func newInitCommand() *cobra.Command {
 		Short: "Bootstrap a new EKA repository",
 		Long: `Bootstrap a new EKA repository at the current directory or at the
 directory name (relative to the current directory). The generated
-repository contains eka.yaml only (+ optional git init): the identity
-file carrying the project id, the repository name and the namespace.
-The legacy docs-in-repo skeleton is never generated — knowledge lives
-in the EKA workspace. If name already exists as a directory it is
-adopted; existing files with identical content are reused, conflicting
-files are never overwritten silently.
+repository contains eka.yaml and the root EKA standard declaration
+file (the compact consumer summary of the standard the repository
+conforms to) plus optional git init: the identity file carrying the
+project id, the repository name and the namespace. The legacy
+docs-in-repo skeleton is never generated — knowledge lives in the EKA
+workspace. If name already exists as a directory it is adopted;
+existing files with identical content are reused, conflicting files are
+never overwritten silently.
 
 Identity options:
   --project     fix the project id (eka.yaml project)
@@ -113,7 +116,7 @@ Exit codes:
 		},
 	}
 	cmd.Flags().Bool("dry-run", false,
-		"preview the plan (identity file, git, validation); writes nothing")
+		"preview the plan (identity file, EKA declaration, git, validation); writes nothing")
 	cmd.Flags().String("project", "",
 		"fix the project id (eka.yaml project); a valid EKA identifier")
 	cmd.Flags().String("namespace", "",

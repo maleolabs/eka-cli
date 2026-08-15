@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	standardembed "github.com/maleolabs/eka-cli"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/metadata"
@@ -18,13 +19,26 @@ import (
 // re-derives a version value. The JSON report is the machine contract;
 // the plain output is the deterministic human-readable view.
 
-// TestVersionStandardDerivesFromCore: the CLI's standardVersion must
-// equal the eka-core single source (exchange.SpecificationVersion). This
-// is a compile-time constant derivation (const standardVersion =
-// exchange.SpecificationVersion); the assertion locks the link.
-func TestVersionStandardDerivesFromCore(t *testing.T) {
+// TestVersionStandardDerivesFromEmbeddedDeclaration: the CLI's
+// standardVersion must equal the `Version X.Y` line of the embedded EKA
+// standard declaration file (standardembed — the vendored release
+// asset). It is derived at package init from the embedded file, never
+// hardcoded; the assertion locks the link. The cross-check against
+// exchange.SpecificationVersion (the conformance rules the CLI enforces)
+// is the build-time version-consistency test in standardembed_test.go.
+func TestVersionStandardDerivesFromEmbeddedDeclaration(t *testing.T) {
+	want := standardembed.MustVersion()
+	if want == "" {
+		t.Fatal("embedded declaration version must not be empty")
+	}
+	if standardVersion != want {
+		t.Errorf("standardVersion = %q, want the embedded declaration version %q", standardVersion, want)
+	}
+	// The embedded line must agree with the conformance-rules version
+	// (locked by the build-time consistency test; assert here too so a
+	// regression in either direction fails loudly at the CLI level).
 	if standardVersion != exchange.SpecificationVersion {
-		t.Errorf("standardVersion = %q, want exchange.SpecificationVersion = %q (single source)", standardVersion, exchange.SpecificationVersion)
+		t.Errorf("standardVersion = %q, want exchange.SpecificationVersion = %q (conformance rules)", standardVersion, exchange.SpecificationVersion)
 	}
 }
 

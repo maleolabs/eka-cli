@@ -1,0 +1,8 @@
+# The EKA standard declaration is a byte-pinned vendored asset: it must
+# stay byte-identical to the eka-standard release asset (the embedded
+# copy is the single canonical source the CLI distributes, and the
+# build-time version-consistency test parses its exact bytes). Treat it
+# as a binary — never end-of-line normalize it on any platform
+# (Windows checkouts would otherwise rewrite LF into CRLF and break the
+# byte-exact contract).
+EKA -text

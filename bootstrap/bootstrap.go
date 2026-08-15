@@ -18,10 +18,12 @@
 //  5. Validation           — validate.go: run conformance.Validate over the
 //     generated repository.
 //
-// `eka init` is identity-only (ADR-020 Phase B1): the generated repository
-// contains eka.yaml only (+ optional git init). The legacy docs-in-repo
-// skeleton is never scaffolded — knowledge lives in the EKA workspace and
-// docs-in-repo remains legacy backward-compat, never generated.
+// `eka init` is identity-only (ADR-020 Phase B1, amended for the
+// standard declaration): the generated repository contains eka.yaml and
+// the root EKA standard declaration file (+ optional git init). The
+// legacy docs-in-repo skeleton is never scaffolded — knowledge lives in
+// the EKA workspace and docs-in-repo remains legacy backward-compat,
+// never generated.
 //
 // Behavioral contracts:
 //
