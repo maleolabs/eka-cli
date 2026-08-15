@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/dustin/go-humanize v1.0.1
-	github.com/maleolabs/eka-core v1.1.0
+	github.com/maleolabs/eka-core v1.2.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -41,5 +41,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.45.0 // indirect
 )
-
-replace github.com/maleolabs/eka-core => ../eka-core-feature-version-clarity

@@ -95,7 +95,9 @@ key order, two-space indentation, trailing newline).`,
 				EkaYAMLSchema:    fmt.Sprintf("%d", metadata.SchemaVersion),
 				CLIVersion:       version,
 			}
-			if asJSON, _ := c.Flags().GetBool("json"); asJSON {
+			if asJSON, err := c.Flags().GetBool("json"); err != nil {
+				return fmt.Errorf("version failed: %w", err) // Exit 2: internal.
+			} else if asJSON {
 				out, err := json.MarshalIndent(info, "", "  ")
 				if err != nil {
 					return fmt.Errorf("version failed: %w", err) // Exit 2: internal.
