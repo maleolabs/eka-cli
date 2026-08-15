@@ -96,6 +96,28 @@ func TestDiscoverEmpty(t *testing.T) {
 	}
 }
 
+// TestDiscoverSkipsOldMarkers: an "eka-<name>.old" leftover of the
+// CLI's atomic replace (the update command preserves the old binary
+// as <target>.old) is debris, never a plugin — it must not be
+// discovered.
+func TestDiscoverSkipsOldMarkers(t *testing.T) {
+	bin := t.TempDir()
+	for _, name := range []string{"eka-mcp", "eka-mcp.old", "eka-helper.old"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Setenv("EKA_PLUGIN_DIR", bin)
+	t.Setenv("PATH", t.TempDir())
+	plugins, err := Discover("")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(plugins) != 1 || filepath.Base(plugins[0].Exe) != "eka-mcp" {
+		t.Fatalf("plugins = %+v, want only eka-mcp (the .old markers are debris)", plugins)
+	}
+}
+
 // TestManifestOutputTooLargeRefused: a plugin that writes more than
 // maxPluginOutputSize to stdout is refused — a spewing plugin must not
 // exhaust memory (bounded read, fail-closed).

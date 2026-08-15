@@ -510,3 +510,153 @@ func TestPluginLifecycleCommandTree(t *testing.T) {
 		}
 	}
 }
+
+// --- Fix-loop tests (review findings on PR #12) ----------------------
+
+// TestPluginListWindowsExeTier: on windows the installed binary is
+// eka-<name>.exe; the list must derive the clean name (mcp, not
+// mcp.exe) so the trust tier (official) and the installed state are
+// computed from the clean name.
+func TestPluginListWindowsExeTier(t *testing.T) {
+	dir := t.TempDir()
+	writeLifecyclePlugin(t, dir, "eka-mcp.exe", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	t.Setenv("PATH", t.TempDir())
+
+	entries := collectPluginListEntries("", "windows")
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1: %+v", len(entries), entries)
+	}
+	e := entries[0]
+	if e.Name != "mcp" {
+		t.Errorf("name = %q, want mcp (the .exe suffix must be stripped)", e.Name)
+	}
+	if e.Trust != "official" {
+		t.Errorf("trust = %q, want official (tier must come from the clean name)", e.Trust)
+	}
+	if !e.Installed {
+		t.Errorf("installed = false, want true (eka-mcp.exe is the installed binary)")
+	}
+	if e.Version != "1.0.0" {
+		t.Errorf("version = %q, want 1.0.0", e.Version)
+	}
+}
+
+// TestPluginListSkipsOldMarkers: an eka-<name>.old leftover of the
+// update rename dance is debris, never a plugin — the list must not
+// show a phantom "mcp.old" entry.
+func TestPluginListSkipsOldMarkers(t *testing.T) {
+	dir := t.TempDir()
+	writeLifecyclePlugin(t, dir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	writeLifecyclePlugin(t, dir, "eka-mcp.old", []byte("stale"))
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	t.Setenv("PATH", t.TempDir())
+
+	code, out, errText := runIn([]string{"plugin", "list"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	if strings.Contains(out, "mcp.old") {
+		t.Errorf("the stale .old marker must not appear as a plugin:\n%s", out)
+	}
+	if !strings.Contains(out, "mcp") {
+		t.Errorf("the real plugin must still be listed:\n%s", out)
+	}
+}
+
+// TestPluginRemoveInternalErrorExit2: a filesystem failure while
+// removing (here: the target is a non-empty directory, so os.Remove
+// fails) is an internal error — exit 2, not the domain refusal exit 1.
+func TestPluginRemoveInternalErrorExit2(t *testing.T) {
+	dir := t.TempDir()
+	// A non-empty directory at the target: fileExists passes (Stat
+	// succeeds) but os.Remove fails — the internal-error path.
+	if err := os.MkdirAll(filepath.Join(dir, "eka-mcp", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &pluginRemoveRunner{pluginDir: dir, goos: "linux"}
+	var out, errb bytes.Buffer
+	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 2 {
+		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(err.Error(), "cannot remove") {
+		t.Errorf("the error must explain the failed removal, got %q", err.Error())
+	}
+	if strings.Contains(errb.String(), "refused") {
+		t.Errorf("an internal failure must not render a refusal line, got %q", errb.String())
+	}
+}
+
+// TestPluginUpdateReplaceFailureExit2: a rename failure inside the
+// atomic replace (here: a non-empty directory blocks the <target>.old
+// rename) is an internal error — exit 2, plain error — and the old
+// binary stays untouched.
+func TestPluginUpdateReplaceFailureExit2(t *testing.T) {
+	body := []byte(pluginManifestScript)
+	srv := newFakePluginReleaseServer(t, plugin.Repo{Owner: "maleolabs", Name: "eka-mcp"},
+		"v1.0.0", "eka-mcp-linux-amd64", sha256Hex(body), body)
+	dir := t.TempDir()
+	old := []byte(lifecycleManifestScript("0.9.0", "github.com/maleolabs/eka-mcp"))
+	writeLifecyclePlugin(t, dir, "eka-mcp", old)
+	// A non-empty directory at the .old path blocks the first rename
+	// of the dance (best-effort os.Remove cannot remove it).
+	if err := os.MkdirAll(filepath.Join(dir, "eka-mcp.old", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := testPluginInstallRunner(srv, dir)
+	var out, errb bytes.Buffer
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 2 {
+		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(err.Error(), "cannot replace") {
+		t.Errorf("the error must explain the failed replacement, got %q", err.Error())
+	}
+	if strings.Contains(errb.String(), "refused") {
+		t.Errorf("an internal failure must not render a refusal line, got %q", errb.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "eka-mcp"))
+	if err != nil || !bytes.Equal(got, old) {
+		t.Errorf("a failed replacement must leave the old binary untouched (err %v)", err)
+	}
+}
+
+// TestPluginUpdateAllUnreadableDirExit2: --all against an unreadable
+// plugin directory (here: a regular file where the directory should
+// be — ReadDir fails with ENOTDIR) is an internal error, exit 2 — it
+// must not misreport "no installed official plugins" (exit 0).
+func TestPluginUpdateAllUnreadableDirExit2(t *testing.T) {
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := testPluginInstallRunner(nil, notADir)
+	var out, errb bytes.Buffer
+	err := r.runUpdateAll(updateTestCommand(&out, &errb))
+	if code := exitCodeOf(err); code != 2 {
+		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(err.Error(), "cannot read the plugin directory") {
+		t.Errorf("the error must explain the unreadable directory, got %q", err.Error())
+	}
+	if strings.Contains(out.String(), "no installed official plugins") {
+		t.Errorf("an unreadable directory must not misreport the empty result:\n%s", out.String())
+	}
+}
+
+// TestPluginUpdateAllMissingDirEmpty: --all with a missing plugin
+// directory is nothing installed — the informative empty result,
+// exit 0 (a missing directory is not an error).
+func TestPluginUpdateAllMissingDirEmpty(t *testing.T) {
+	r := testPluginInstallRunner(nil, filepath.Join(t.TempDir(), "missing"))
+	var out, errb bytes.Buffer
+	if err := r.runUpdateAll(updateTestCommand(&out, &errb)); err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
+	}
+	if !strings.Contains(out.String(), "no installed official plugins to update") {
+		t.Errorf("--all with a missing plugin directory must report the empty result, got:\n%s", out.String())
+	}
+}

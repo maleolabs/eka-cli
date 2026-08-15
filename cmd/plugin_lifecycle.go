@@ -22,14 +22,16 @@ package cmd
 //	           deterministic report, never a failure)
 //	remove  0  removed
 //	        1  refusal (plugin not installed)
-//	        2  usage or internal error
+//	        2  usage or internal error (filesystem failure while
+//	           removing)
 //	update  0  updated (also: --all with nothing installed, or --all
 //	           with every update successful)
 //	        1  refusal (unknown plugin, plugin not installed,
 //	           unresolved release, checksum mismatch, broken new
 //	           manifest), or --all with at least one failed update
 //	        2  usage or internal error (missing name without --all,
-//	           --all with a name)
+//	           --all with a name, binary replacement failure,
+//	           unreadable plugin directory)
 
 import (
 	"context"
@@ -115,7 +117,7 @@ func runPluginList(cmd *cobra.Command, asJSON bool) error {
 	if err != nil {
 		return fmt.Errorf("plugin list failed: %w", err) // Exit 2: internal.
 	}
-	entries := collectPluginListEntries(home)
+	entries := collectPluginListEntries(home, runtime.GOOS)
 	if asJSON {
 		out, err := json.MarshalIndent(pluginListDocument{Schema: "eka-plugin-list-v1", Plugins: entries}, "", "  ")
 		if err != nil {
@@ -134,17 +136,23 @@ func runPluginList(cmd *cobra.Command, asJSON bool) error {
 // collectPluginListEntries gathers the plugin list report: the
 // discovered plugins (PATH + plugin dirs, via plugin.Discover) plus
 // any plugin-dir "eka-*" entry Discover skipped, one entry per
-// unique name sorted by name. The manifest is read bounded (a hung
-// plugin is reported unknown instead of wedging the list); a broken
-// manifest keeps the entry visible.
-func collectPluginListEntries(home string) []pluginListEntry {
+// unique name sorted by name. goos is the target platform (the
+// installed binary mirrors the asset suffix — .exe on windows). The
+// manifest is read bounded (a hung plugin is reported unknown instead
+// of wedging the list); a broken manifest keeps the entry visible.
+func collectPluginListEntries(home, goos string) []pluginListEntry {
 	dir := plugin.PluginDir(home)
 	plugins, _ := plugin.Discover(home)
 	seen := map[string]bool{}
 	entries := make([]pluginListEntry, 0, len(plugins))
 	add := func(exe string) {
 		name := strings.TrimPrefix(filepath.Base(exe), "eka-")
-		if name == "" || name == "eka" || seen[name] {
+		if goos == "windows" {
+			name = strings.TrimSuffix(name, ".exe") // mirrors the asset suffix
+		}
+		// A trailing ".old" is the preserved-old-binary marker of the
+		// update command's atomic replace — debris, never a plugin.
+		if name == "" || name == "eka" || strings.HasSuffix(name, ".old") || seen[name] {
 			return
 		}
 		seen[name] = true
@@ -159,7 +167,7 @@ func collectPluginListEntries(home string) []pluginListEntry {
 			Version:   version,
 			Source:    source,
 			Trust:     pluginTrustTier(name),
-			Installed: pluginInstalledIn(dir, name),
+			Installed: pluginInstalledIn(dir, name, goos),
 		})
 	}
 	for _, p := range plugins {
@@ -205,16 +213,16 @@ func pluginTrustTier(name string) string {
 }
 
 // pluginInstalledIn reports whether the plugin is installed in the
-// plugin directory: the eka-<name> executable there (the .exe form
-// on windows mirrors the asset suffix).
-func pluginInstalledIn(dir, name string) bool {
+// plugin directory: the eka-<name> executable there (the .exe form on
+// windows mirrors the asset suffix).
+func pluginInstalledIn(dir, name, goos string) bool {
 	if dir == "" {
 		return false
 	}
 	if fileExists(filepath.Join(dir, "eka-"+name)) {
 		return true
 	}
-	return runtime.GOOS == "windows" && fileExists(filepath.Join(dir, "eka-"+name+".exe"))
+	return goos == "windows" && fileExists(filepath.Join(dir, "eka-"+name+".exe"))
 }
 
 // renderPluginListTable renders the deterministic column report: the
@@ -309,8 +317,11 @@ func newPluginRemoveRunner() (*pluginRemoveRunner, error) {
 	return &pluginRemoveRunner{pluginDir: dir, goos: runtime.GOOS}, nil
 }
 
-// run executes one removal: refuse when not installed, delete the
-// binary and its stale .old marker, print the confirmation.
+// run executes one removal: refuse when not installed (exit 1, the
+// domain refusal), delete the binary and its stale .old marker, print
+// the confirmation. A filesystem failure while removing is an
+// internal error (exit 2, plain error) — exit 1 is reserved for the
+// "not installed" domain refusal.
 func (r *pluginRemoveRunner) run(cmd *cobra.Command, name string) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
@@ -328,7 +339,7 @@ func (r *pluginRemoveRunner) run(cmd *cobra.Command, name string) error {
 	// removal. Best-effort: never a refusal.
 	os.Remove(target + ".old")
 	if err := os.Remove(target); err != nil {
-		return refuse(cmd, "plugin remove refused: cannot remove %s: %s", target, err)
+		return fmt.Errorf("plugin remove failed: cannot remove %s: %w", target, err) // Exit 2: internal.
 	}
 	fmt.Fprintf(s.W, "%s\n", s.Success(ui.IconDone+" removed: "+target))
 	sm.Add("Plugin", name)
@@ -417,11 +428,15 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
 		return refuse(cmd, "plugin update refused: plugin %q is not installed (no %s in %s); install it with: eka plugin install %s",
 			name, filepath.Base(target), r.pluginDir, name)
 	}
-	oldVersion := r.installedVersion(target)
+	// The release is resolved BEFORE the old binary is executed for
+	// its version: a network failure refuses fast (no 30s hang when
+	// the old plugin hangs AND the network is down), and only a
+	// resolvable release proceeds to touch the installed binary.
 	tag, size, want, err := r.resolveLatestRelease(repo, asset)
 	if err != nil {
 		return refuse(cmd, "plugin update refused: %s", err)
 	}
+	oldVersion := r.installedVersion(target)
 	r.renderUpdateHeader(s, name, repo, asset, tag, oldVersion)
 	tmp, err := r.downloadVerified(s, repo, tag, asset, size, want)
 	if err != nil {
@@ -435,19 +450,21 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
 	// also works on Windows): the old binary moves to <target>.old and
 	// stays there until the smoke check passes — any failure restores
 	// it; if even the restore fails, the old binary is preserved as
-	// <target>.old and the refusal says so (the recovery path is never
-	// silent).
+	// <target>.old and the error says so (the recovery path is never
+	// silent). A rename failure is an internal filesystem error (exit
+	// 2, plain error) — exit 1 is reserved for the domain refusals
+	// above.
 	old := target + ".old"
 	os.Remove(old) // best-effort: a leftover .old must not block the dance
 	if err := os.Rename(target, old); err != nil {
-		return refuse(cmd, "plugin update refused: cannot replace %s: %s", target, err)
+		return fmt.Errorf("plugin update failed: cannot replace %s: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		if rerr := os.Rename(old, target); rerr != nil {
-			return refuse(cmd, "plugin update refused: cannot replace %s: %s; the old binary is preserved at %s — restore it with: mv %s %s",
-				target, err, old, old, target)
+			return fmt.Errorf("plugin update failed: cannot replace %s: %w; the old binary is preserved at %s — restore it with: mv %s %s%s",
+				target, err, old, old, target, r.windowsInstallHint()) // Exit 2: internal.
 		}
-		return refuse(cmd, "plugin update refused: cannot replace %s: %s", target, err)
+		return fmt.Errorf("plugin update failed: cannot replace %s: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
 	}
 	if err := r.smokeCheck(name, target); err != nil {
 		if rerr := os.Rename(old, target); rerr != nil {
@@ -498,12 +515,17 @@ func (r *pluginInstallRunner) installedVersion(target string) string {
 // runUpdateAll updates every installed official plugin, in sorted
 // name order. A plugin whose update fails is reported (each refusal
 // renders its own line) and the remaining plugins still update; the
-// run exits 1 when at least one update failed. Nothing installed is
-// an informative empty result, exit 0.
+// run exits 1 when at least one update failed. Nothing installed (a
+// missing plugin directory included) is an informative empty result,
+// exit 0; an unreadable plugin directory is an internal error (exit
+// 2).
 func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
-	names := r.installedOfficialNames()
+	names, err := r.installedOfficialNames()
+	if err != nil {
+		return fmt.Errorf("plugin update failed: %w", err) // Exit 2: internal.
+	}
 	if len(names) == 0 {
 		sm.Add("Status", "no installed official plugins to update")
 		sm.Add("Hint", "install one with: eka plugin install <name>")
@@ -527,11 +549,16 @@ func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command) error {
 // installed OFFICIAL plugins: "eka-<name>" executables (not the CLI
 // itself) whose name resolves through the official registry, sorted.
 // Only official names are updateable — the registry is the filter
-// (third-party plugins are never touched by --all).
-func (r *pluginInstallRunner) installedOfficialNames() []string {
+// (third-party plugins are never touched by --all). A missing plugin
+// directory is an empty set (nothing installed); any other read
+// failure is an error.
+func (r *pluginInstallRunner) installedOfficialNames() ([]string, error) {
 	entries, err := os.ReadDir(r.pluginDir)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot read the plugin directory %s: %w", r.pluginDir, err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -548,5 +575,5 @@ func (r *pluginInstallRunner) installedOfficialNames() []string {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }

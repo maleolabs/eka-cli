@@ -187,13 +187,20 @@ func Discover(home string) ([]Plugin, error) {
 }
 
 // pluginName extracts the stable plugin name from an executable path:
-// the basename with the leading "eka-" prefix dropped.
+// the basename with the leading "eka-" prefix dropped. A trailing
+// ".old" (the preserved-old-binary marker of the CLI's atomic
+// replace) is debris, never a plugin: an "eka-<name>.old" leftover of
+// a completed update must not be discovered.
 func pluginName(exe string) string {
 	base := filepath.Base(exe)
 	if !strings.HasPrefix(base, "eka-") {
 		return ""
 	}
-	return strings.TrimPrefix(base, "eka-")
+	name := strings.TrimPrefix(base, "eka-")
+	if strings.HasSuffix(name, ".old") {
+		return ""
+	}
+	return name
 }
 
 // Manifest runs "manifest --json" and parses the result. The plugin
