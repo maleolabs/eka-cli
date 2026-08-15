@@ -159,7 +159,17 @@ Exit codes:
 		// pointers) instead of the raw usage dump. Landing is
 		// informational output — it exits 0. Unknown subcommands remain
 		// usage errors (exit 2).
+		//
+		// `eka --version` prints the CLI version instead of the landing:
+		// one deterministic line ("eka <version>") through the same
+		// presentation writer `eka version` uses — byte-identical to
+		// the first line of `eka version`, the same single source (the
+		// ldflags-injected `version` variable).
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion, _ := cmd.Flags().GetBool(flagVersion); showVersion {
+				fmt.Fprintf(styleFor(cmd).W, "eka %s\n", version)
+				return nil
+			}
 			printLanding(styleFor(cmd))
 			return nil
 		},
@@ -174,6 +184,8 @@ Exit codes:
 	}
 	root.PersistentFlags().BoolP(flagVerbose, "v", false,
 		"verbose output: additional detail lines (per-unit lists, plan actions)")
+	root.PersistentFlags().Bool(flagVersion, false,
+		"print the CLI version (the same first line 'eka version' reports) and exit")
 	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
@@ -221,5 +233,6 @@ func printLanding(s *ui.Style) {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Version")
 	fmt.Fprintf(&b, "  %s (EKA standard %s)\n", version, standardVersion)
+	fmt.Fprintln(&b, "  Run 'eka --version' for just the CLI version.")
 	ui.Container(s, b.String())
 }
