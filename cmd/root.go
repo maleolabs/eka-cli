@@ -196,29 +196,43 @@ Exit codes:
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
 		newPluginCommand())
 	root.AddCommand(newAuthoringCommands()...)
+	// The root help and the landing Commands list are grouped by intent
+	// (Authoring / Repository & Exchange / Knowledge Access / Runtime &
+	// Workspace / Utility): cobra AddGroup/GroupID is the data model,
+	// assignCommandGroups distributes the registered commands, and the
+	// two cobra setters give the built-in help/completion commands their
+	// Utility group when ExecuteC creates them (without creating them
+	// here, so the fresh-tree command list stays built-in-free).
+	root.AddGroup(commandGroups...)
+	assignCommandGroups(root)
+	root.SetHelpCommandGroupID(groupUtility)
+	root.SetCompletionCommandGroupID(groupUtility)
 	// The output container wraps the help text of EVERY command
-	// (HelpFunc resolves up the tree): cobra's default help renders
-	// into a buffer, then the container adds the uniform left margin
-	// and the leading/trailing blank lines — help never sticks to the
-	// terminal corner, and the help content itself stays untouched.
-	defaultHelp := root.HelpFunc()
+	// (HelpFunc resolves up the tree): the help renderer produces the
+	// styled text (colors follow the real writer through the Style), the
+	// container adds the uniform left margin and the leading/trailing
+	// blank lines — help never sticks to the terminal corner.
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		s := styleFor(cmd)
 		out := cmd.OutOrStdout()
 		buf := &bytes.Buffer{}
 		cmd.SetOut(buf)
-		defaultHelp(cmd, args)
+		renderHelp(cmd, s, buf)
 		cmd.SetOut(out)
-		ui.Container(styleFor(cmd), buf.String())
+		ui.Container(s, buf.String())
 	})
 	return root
 }
 
 // printLanding renders the root landing page: a calm product orientation
-// without banners or decoration — heading, one-line description, compact
-// command overview, and pointers to help and version — wrapped in the
-// output container (uniform left margin + leading/trailing blank
-// lines), so it never sticks to the terminal corner. Deterministic on
-// non-TTY output; the heading is accent-colored on a color TTY.
+// without banners or decoration — heading, one-line description, the
+// intent-grouped command overview (the same renderCommandGroups the root
+// help uses, so the two never drift apart), and pointers to help and
+// version — wrapped in the output container (uniform left margin +
+// leading/trailing blank lines), so it never sticks to the terminal
+// corner. Deterministic on non-TTY output; on a color TTY the heading
+// and section/group headers are accent-colored, command names Info and
+// the help hints Dim.
 func printLanding(s *ui.Style) {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Accent("Engineering Knowledge Architecture (EKA)"))
@@ -226,18 +240,20 @@ func printLanding(s *ui.Style) {
 	fmt.Fprintln(&b, "The official command-line interface for the EKA engineering")
 	fmt.Fprintln(&b, "knowledge standard: bootstrap, validate, exchange, and run")
 	fmt.Fprintln(&b, "the knowledge runtime (sync, projects, status, integrity).")
+	fmt.Fprintf(&b, "%s\n", s.Dim("New here? Run 'eka init' to bootstrap a repository."))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Commands")
-	for _, c := range newRootCommand().Commands() {
-		fmt.Fprintf(&b, "  %-12s %s\n", c.Name(), c.Short)
-	}
+	fmt.Fprint(&b, s.Accent("Commands"))
+	renderCommandGroups(s, &b, commandGroups, newRootCommand().Commands())
+	// renderCommandGroups leaves the last member line unterminated:
+	// close it and add the blank line before the next section.
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Help")
-	fmt.Fprintln(&b, "  Run 'eka help <command>' for command details,")
-	fmt.Fprintln(&b, "  or 'eka <command> --help' for usage.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Version")
+	fmt.Fprintln(&b, s.Accent("Help"))
+	fmt.Fprintf(&b, "  %s\n", s.Dim("Run 'eka help <command>' for command details,"))
+	fmt.Fprintf(&b, "  %s\n", s.Dim("or 'eka <command> --help' for usage."))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, s.Accent("Version"))
 	fmt.Fprintf(&b, "  %s (EKA standard %s)\n", version, standardVersion)
-	fmt.Fprintln(&b, "  Run 'eka --version' for just the CLI version.")
+	fmt.Fprintf(&b, "  %s\n", s.Dim("Run 'eka --version' for just the CLI version."))
 	ui.Container(s, b.String())
 }

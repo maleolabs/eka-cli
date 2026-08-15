@@ -1344,6 +1344,12 @@ func TestNoANSIEscapesInNonTTYOutput(t *testing.T) {
 	scenarios := []scenario{
 		{"validate-pass", []string{"validate", valid}, 0},
 		{"validate-fail", []string{"validate", filepath.Join("..", "testdata", "conformance", "invalid-dimension")}, 1},
+		// Help paths (root help, the help command and subcommand help)
+		// carry the same no-ANSI contract; they need no repository.
+		{"root-help", []string{"--help"}, 0},
+		{"help-command", []string{"help"}, 0},
+		{"subcommand-help", []string{"validate", "--help"}, 0},
+		{"nested-help", []string{"get", "ticket", "--help"}, 0},
 	}
 	// The validate paths are relative to the package directory: run them
 	// before any chdir in this test.
