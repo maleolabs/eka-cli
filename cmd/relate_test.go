@@ -259,6 +259,40 @@ func TestRelateVersionedTargetRefused(t *testing.T) {
 	}
 }
 
+// TestRelateNoFlagsUsageError: a relate without any relationship flag
+// is a usage error (exit 2) — never a silent "unchanged" (the
+// idempotent-duplicate case has a distinct message and exit 0).
+func TestRelateNoFlagsUsageError(t *testing.T) {
+	authoringEnv(t, "acme")
+	code, out, errText := runIn([]string{"relate", "sto:item-a"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, "no relationship targets") {
+		t.Errorf("stderr = %q, want the no-relationship-targets usage error", errText)
+	}
+}
+
+// TestRelateQualifiedCrossNamespaceRefused: inside a repository context
+// a qualified target whose namespace differs from the repository's is
+// refused (exit 1) — cross-platform access is read-only, the same
+// ownership gate the other authoring commands enforce.
+func TestRelateQualifiedCrossNamespaceRefused(t *testing.T) {
+	publishPair(t)
+	code, out, errText := runIn([]string{"relate", "other/sto:item-a", "--depends-on", "sto:item-b"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, "cross-platform access is read-only") {
+		t.Errorf("stderr = %q, want the cross-platform ownership refusal", errText)
+	}
+	// Nothing was written: the artifact stays edge-free.
+	doc := getDoc(t, "acme/sto:item-a")
+	if rels, _ := doc["relationships"].([]any); len(rels) != 0 {
+		t.Errorf("relationships = %+v, want none (refused before write)", rels)
+	}
+}
+
 // TestRelateDeterministicOutput: the same relate operation produces
 // byte-identical output across runs.
 func TestRelateDeterministicOutput(t *testing.T) {

@@ -24,17 +24,19 @@ import (
 //
 //	relate 0 related (published re-point, draft mutated, or unchanged —
 //	       every requested edge was already present); 1 refused (missing
-//	       artifact, self-reference, unknown relationship type,
-//	       malformed reference, unresolved namespace, Markdown draft,
-//	       CKO-level validation findings on the published path);
-//	       2 usage/internal (invalid target, canonical published form,
-//	       workspace errors)
+//	       artifact, cross-namespace target, self-reference, unknown
+//	       relationship type, malformed reference, unresolved namespace,
+//	       Markdown draft, CKO-level validation findings on the published
+//	       path); 2 usage/internal (invalid target, canonical published
+//	       form, no relationship targets, workspace errors)
 //
 // The target is an artifact LINE: <ns>/<type>:<id> (qualified) or
 // <type>:<id> (unqualified — the repository namespace applies, the same
 // resolution `eka new` and `eka transition` use). Canonical published
 // forms (<ns>/<type>:<id>:<v>) are refused: relate addresses the line,
-// never a single immutable instance.
+// never a single immutable instance. Inside a repository context a
+// qualified target must stay inside the repository's own namespace
+// (cross-platform access is read-only).
 
 // newRelateCommand builds `eka relate <target>`.
 func newRelateCommand() *cobra.Command {
@@ -48,7 +50,19 @@ The target is an artifact line: <ns>/<type>:<id> (qualified) or
 <type>:<id> (unqualified — resolved to the repository's namespace
 inside a registered repository; outside one an unqualified target is
 refused with a hint). A canonical published form (<ns>/<type>:<id>:<v>)
-is refused: relate addresses the line.
+is refused: relate addresses the line. Inside a repository context a
+qualified target must stay inside the repository's own namespace —
+cross-platform access is read-only, the same ownership rule 'eka new',
+'eka publish' and 'eka transition' enforce.
+
+At least one relationship flag is required: a relate with no targets is
+a usage error. Edges that are already present are skipped (idempotent;
+a relate whose edges are all already present writes nothing). A
+self-reference, an unknown relationship type and a malformed reference
+are refused. On the published path, unresolved targets follow the Rule
+5 draft tolerance exactly like publish: a warning while the artifact's
+content-state is draft, an error otherwise (a pending-draft target is
+therefore tolerated on a draft-state artifact).
 
 What happens depends on the line's state:
 
@@ -81,9 +95,9 @@ Flags:
 
 Exit codes:
   0  related (published, draft, or unchanged)
-  1  refused (missing artifact, self-reference, unknown type,
-     malformed reference, unresolved namespace, Markdown draft,
-     validation findings on the published path)
+  1  refused (missing artifact, cross-namespace target, self-reference,
+     unknown type, malformed reference, unresolved namespace, Markdown
+     draft, validation findings on the published path)
   2  usage or internal error`,
 		Example: `  eka relate feather/sto:my-item --depends-on feather/ctr:wave-7
   eka relate sto:my-item --depends-on ctr:wave-7 --derives-from plan:roadmap-v1
@@ -102,6 +116,14 @@ Exit codes:
 			if ref.HasVersion {
 				return newUsage(cmd, fmt.Sprintf("relate: %s is a canonical published form; relate addresses the artifact line", target))
 			}
+			// No relationship flags is a usage error, never a silent
+			// "unchanged" (the idempotent-duplicate case has a distinct
+			// message): the core refuses the same way, this check keeps
+			// the refusal in the usage class with a clean message.
+			rels := collectRelationships(cmd)
+			if len(rels) == 0 {
+				return newUsage(cmd, "relate: no relationship targets; pass --depends-on/--derives-from/--validates/--supersedes/--amends")
+			}
 			r, err := openAuthoringRuntime(cmd)
 			if err != nil {
 				return err // Exit 2: workspace resolution.
@@ -111,7 +133,7 @@ Exit codes:
 			res, err := runtime.Authoring.Relate(r, runtime.RelateRequest{
 				RepoPath:      ".",
 				Target:        target,
-				Relationships: collectRelationships(cmd),
+				Relationships: rels,
 			})
 			if err != nil {
 				var refusal *runtime.RelateRefusal

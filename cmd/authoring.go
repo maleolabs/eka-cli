@@ -76,7 +76,9 @@ const (
 	flagDraftListProject = "project"
 )
 
-// newAuthoringCommands builds the six draft-publish commands.
+// newAuthoringCommands builds the seven authoring commands (new, edit,
+// draft, publish, discard and relate; relate is an authoring command —
+// a relationship-only edge-add — not a draft-publish command).
 func newAuthoringCommands() []*cobra.Command {
 	return []*cobra.Command{
 		newNewCommand(),
