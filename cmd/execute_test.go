@@ -72,7 +72,7 @@ func TestVersionCommand(t *testing.T) {
 	if code != 0 {
 		t.Errorf("version --help: exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "Print the CLI build version and the EKA standard version") {
+	if !strings.Contains(out, "Print the EKA version axes this CLI reports") {
 		t.Errorf("version --help missing description: %q", out)
 	}
 }

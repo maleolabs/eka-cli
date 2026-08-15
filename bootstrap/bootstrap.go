@@ -205,7 +205,7 @@ func Run(opts Options) (*Outcome, error) {
 	for _, a := range plan {
 		if a.Kind == ActionGenerateEkaYAML {
 			out.Identity = &metadata.Metadata{
-				Version:   1,
+				Version:   metadata.SchemaVersion,
 				Project:   answers.Project,
 				Name:      ekaYAMLName(d),
 				Namespace: answers.Namespace,
