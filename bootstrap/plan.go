@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/maleolabs/eka-core/metadata"
 )
 
 // This file implements Stage 2 of the bootstrap model: Bootstrap Planning.
@@ -209,12 +211,15 @@ func ekaYAMLName(d *Discovery) string {
 }
 
 // generatedEkaYAML returns the exact bytes of the generated eka.yaml:
-// the repository identity (project/name/namespace) per ADR-017 §3.
+// the repository identity (project/name/namespace) per ADR-017 §3. The
+// schema version comes from metadata.SchemaVersion — the single
+// canonical source — so the written file always carries the accepted
+// schema version.
 // project is the wizard project id, namespace is the wizard namespace —
 // the two are equal by default and decoupled when the user overrides one
 // (the user edits the file freely before the first sync); name is the
 // directory basename.
 func generatedEkaYAML(d *Discovery, a Answers) []byte {
-	return []byte(fmt.Sprintf("version: 1\nproject: %s\nname: %s\nnamespace: %s\n",
-		a.Project, ekaYAMLName(d), a.Namespace))
+	return []byte(fmt.Sprintf("version: %d\nproject: %s\nname: %s\nnamespace: %s\n",
+		metadata.SchemaVersion, a.Project, ekaYAMLName(d), a.Namespace))
 }

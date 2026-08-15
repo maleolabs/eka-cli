@@ -12,6 +12,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/metadata"
 )
 
@@ -65,14 +66,14 @@ func TestVersionCommand(t *testing.T) {
 	if code != 0 {
 		t.Errorf("version: exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "eka dev") || !strings.Contains(out, "EKA standard 1.0") {
+	if !strings.Contains(out, "eka dev") || !strings.Contains(out, "EKA standard "+exchange.SpecificationVersion) {
 		t.Errorf("version output incomplete: %q", out)
 	}
 	code, out, _ = runIn([]string{"version", "--help"})
 	if code != 0 {
 		t.Errorf("version --help: exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "Print the CLI build version and the EKA standard version") {
+	if !strings.Contains(out, "Print the EKA version axes this CLI reports") {
 		t.Errorf("version --help missing description: %q", out)
 	}
 }
