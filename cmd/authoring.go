@@ -76,7 +76,7 @@ const (
 	flagDraftListProject = "project"
 )
 
-// newAuthoringCommands builds the five draft-publish commands.
+// newAuthoringCommands builds the six draft-publish commands.
 func newAuthoringCommands() []*cobra.Command {
 	return []*cobra.Command{
 		newNewCommand(),
@@ -84,6 +84,7 @@ func newAuthoringCommands() []*cobra.Command {
 		newDraftCommand(),
 		newPublishCommand(),
 		newDiscardCommand(),
+		newRelateCommand(),
 	}
 }
 
