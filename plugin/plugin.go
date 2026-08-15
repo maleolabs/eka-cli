@@ -265,9 +265,12 @@ const maxPluginOutputSize = 1 << 20 // 1 MiB
 // stdout bytes on success (stderr is surfaced on failure). A plugin
 // that hangs past ctx's deadline, or writes more than
 // maxPluginOutputSize, is refused — a hung or spewing plugin must not
-// wedge the CLI or exhaust memory.
+// wedge the CLI or exhaust memory. The subprocess runs under the
+// minimal environment whitelist (pluginEnv): a plugin must never see
+// the CLI user's secrets.
 func (p Plugin) runContext(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, p.Exe, args...)
+	cmd.Env = pluginEnv()
 	var stdout limitedBuffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -285,6 +288,26 @@ func (p Plugin) runContext(ctx context.Context, args ...string) ([]byte, error) 
 		return nil, fmt.Errorf("plugin output exceeds %d bytes", maxPluginOutputSize)
 	}
 	return stdout.buf.Bytes(), nil
+}
+
+// pluginEnv is the minimal environment whitelist the CLI grants a
+// plugin subprocess — an explicit allow-list, never a denylist. The
+// plugin contract (manifest/install subcommands with explicit --dir
+// arguments) needs PATH (locating tools), HOME (user configuration),
+// EKA_PLUGIN_DIR (the CLI-managed plugin directory) and, on Windows,
+// SystemRoot (DLL resolution). Everything else — notably credentials
+// such as GH_TOKEN, SSH_AUTH_SOCK and cloud-provider variables — is
+// deliberately NOT inherited: a third-party binary is executed for its
+// manifest BEFORE the consent decision, and it must not be able to
+// read the user's secrets from the environment.
+func pluginEnv() []string {
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	for _, key := range []string{"HOME", "EKA_PLUGIN_DIR", "SystemRoot"} {
+		if v := os.Getenv(key); v != "" {
+			env = append(env, key+"="+v)
+		}
+	}
+	return env
 }
 
 // limitedBuffer writes into an internal buffer up to

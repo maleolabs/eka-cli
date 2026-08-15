@@ -17,43 +17,52 @@ package cmd
 //
 // Install flow (fail-closed, both tiers):
 //
-//  1. `eka plugin install <name> [--repo owner/name]` resolves the
-//     source repository: the registry for an official name, the
-//     --repo value for a third-party one. An unknown name refuses with
-//     the list of known plugins before any network access.
-//  2. The latest release of the plugin's repository is resolved via the
-//     GitHub REST API (a minimal, well-formed User-Agent; a rate-limited
-//     or unavailable API refuses with a clear message).
-//  3. The release asset matching the platform binary naming contract
-//     (eka-<name>-<os>-<arch>[.exe]) and SHA256SUMS.txt are fetched from
-//     the SAME tag-pinned release, so the checksum and the asset always
-//     come from one release.
-//  4. The downloaded binary's SHA-256 is verified against the checksum
-//     entry. ANY mismatch, missing entry or malformed entry refuses and
-//     removes the partial download — never install unverified. The
-//     checksum gate applies to BOTH tiers.
-//  5. The STAGED binary's manifest is inspected before anything moves
+//  1. `eka plugin install <name> [--repo owner/name]` validates the
+//     name (a single eka-<name> path segment — never a traversal)
+//     and resolves the source repository: the registry for an
+//     official name, the --repo value for a third-party one. An
+//     unknown name refuses with the list of known plugins before any
+//     network access.
+//  2. A THIRD-PARTY run without --yes in a non-terminal refuses
+//     BEFORE any download (determinism gate, mirrors `eka update`):
+//     the CLI never auto-consents silently.
+//  3. The latest release of the plugin's repository is resolved via
+//     the GitHub REST API (a minimal, well-formed User-Agent; a
+//     rate-limited or unavailable API refuses with a clear message).
+//  4. The release asset matching the platform binary naming contract
+//     (eka-<name>-<os>-<arch>[.exe]) and SHA256SUMS.txt are fetched
+//     from the SAME tag-pinned release, so the checksum and the
+//     asset always come from one release.
+//  5. The downloaded binary's SHA-256 is verified against the
+//     checksum entry. ANY mismatch, missing entry or malformed entry
+//     refuses and removes the partial download — never install
+//     unverified. The checksum gate applies to BOTH tiers.
+//  6. The STAGED binary's manifest is inspected before anything moves
 //     into place (bounded by pluginSmokeCheckTimeout — a hung plugin
 //     refuses): it must parse into plugin.Manifest with a matching
 //     name. This verifies the download AND supplies the capabilities
-//     the third-party consent surfaces.
-//  6. A third-party plugin prints its source and capabilities and asks
+//     the third-party consent surfaces. The manifest subprocess runs
+//     with a minimal environment (PATH, HOME, EKA_PLUGIN_DIR — never
+//     the CLI's secrets) and the staged file is 0700 during staging.
+//  7. A third-party plugin prints its source and capabilities and asks
 //     for explicit consent (--yes consents non-interactively; outside a
 //     terminal --yes is required — the CLI never auto-consents
 //     silently). Declining removes the staged download and refuses.
-//  7. The verified, consented binary is installed as eka-<name> (0755;
-//     .exe on windows) into the plugin directory ($EKA_PLUGIN_DIR or
-//     ~/.eka/plugins), matching the Discover "eka-*" executable
-//     contract.
-//  8. Re-install overwrites the previous binary cleanly (with a printed
-//     notice).
+//  8. The verified, consented binary is installed as eka-<name> (0755
+//     — the finalize chmod; .exe on windows) into the plugin
+//     directory ($EKA_PLUGIN_DIR or ~/.eka/plugins), matching the
+//     Discover "eka-*" executable contract.
+//  9. Re-install overwrites the previous binary cleanly (with a
+//     printed notice).
 //
 // Hardening (review findings): all network reads are bounded
 // (SHA256SUMS.txt at 1 MiB, the asset at 1 GiB via Content-Length
 // agreement AND a streaming cap), the manifest subprocess output is
-// capped at 1 MiB, redirects are HTTPS-only and capped at 10, and a
+// capped at 1 MiB, redirects are HTTPS-only and capped at 10, a
 // GH_TOKEN is sent as Authorization: Bearer when set (raises the API
-// rate limit).
+// rate limit), plugin names are validated against a charset whitelist
+// (no path traversal), and attacker-controlled render strings
+// (manifest fields, release tags) are terminal-sanitized.
 //
 // Exit codes:
 //
@@ -209,6 +218,12 @@ explicit consent is required before the install — --yes consents
 non-interactively, and outside a terminal --yes is required (the CLI
 never auto-consents silently).
 
+Security boundary: the downloaded binary is executed once to read its
+manifest BEFORE the third-party consent decision. Plugin subprocesses
+run with a minimal environment (PATH, HOME, EKA_PLUGIN_DIR) — never
+with the CLI's secrets — and the staged file is 0700 until consent;
+it becomes the 0755 installed executable only after finalize.
+
 --repo <owner/name> installs from an arbitrary GitHub repository; the
 name is then third-party by definition (the registry is bypassed) and
 the consent flow applies.
@@ -257,13 +272,20 @@ type pluginInstallRunner struct {
 	goos         string
 	goarch       string
 	version      string // CLI version (User-Agent)
-	// consent decides whether a third-party install proceeds when --yes
-	// was NOT given. Production (pluginConsentPrompt) enforces the
-	// determinism gate (a non-terminal run refuses — never auto-consent)
-	// and prompts interactively on a terminal; tests inject a
-	// deterministic stub to exercise the consent branches without a real
-	// terminal.
-	consent func(*cobra.Command, *ui.Style, string) (bool, error)
+	// consent decides whether a third-party install/update proceeds
+	// when --yes was NOT given. Production (pluginConsentPrompt)
+	// prompts interactively on a terminal (verb: "install" or
+	// "update"); tests inject a deterministic stub to exercise the
+	// consent branches without a real terminal. Callers must gate on
+	// canPrompt first (the early non-TTY refusal) — pluginConsentPrompt
+	// errors are internal (exit 2), a declined consent is a refusal
+	// (exit 1).
+	consent func(*cobra.Command, *ui.Style, string, string) (bool, error)
+	// canPrompt reports whether an interactive consent prompt is
+	// possible. Production (pluginCanPrompt: stdin and stdout real
+	// terminals); tests inject true to exercise the post-gate consent
+	// branches without a real terminal.
+	canPrompt func(*cobra.Command, *ui.Style) bool
 }
 
 // newPluginInstallRunner assembles the production runner: the pinned
@@ -292,6 +314,7 @@ func newPluginInstallRunner() (*pluginInstallRunner, error) {
 		goarch:       runtime.GOARCH,
 		version:      version,
 		consent:      pluginConsentPrompt,
+		canPrompt:    pluginCanPrompt,
 	}, nil
 }
 
@@ -330,10 +353,27 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string, f *pluginInst
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
 
+	// Path-traversal guard: a plugin name is a single eka-<name> path
+	// segment — anything else must never reach filepath.Join(pluginDir,
+	// "eka-"+name). Refused before any network or filesystem use.
+	if !validPluginName(name) {
+		return refuse(cmd, "plugin install refused: invalid plugin name %q (want a single eka-<name> identifier)", name)
+	}
+
 	repo, thirdParty, err := r.resolveInstallRepo(cmd, name, f.repo)
 	if err != nil {
 		return err
 	}
+
+	// Determinism gate (mirrors `eka update`): a non-terminal run
+	// without --yes cannot consent — refuse BEFORE any download or
+	// staged execution (fail-closed, never auto-consent). The
+	// interactive path is unchanged: source and capabilities are still
+	// shown before the prompt.
+	if thirdParty && !f.yes && !r.canPrompt(cmd, s) {
+		return refuse(cmd, "plugin install refused: %q is a third-party plugin and requires explicit consent; pass --yes to consent non-interactively", name)
+	}
+
 	asset, err := platformAssetName("eka-"+name, r.goos, r.goarch)
 	if err != nil {
 		return refuse(cmd, "plugin install refused: %s", err)
@@ -370,15 +410,23 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string, f *pluginInst
 		return refuse(cmd, "plugin install refused: %s", err)
 	}
 
+	// Source-swap surface: a binary that claims a different source than
+	// the one it was downloaded from is at best mislabeled, at worst a
+	// swapped artifact. Warn (never silently): the manifest is
+	// self-reported, so a mismatch is a warning, not a refusal.
+	if claimed, err := parsePluginSource(m.Source); err == nil && claimed != repo {
+		fmt.Fprintf(s.W, "%s\n", s.Warning(fmt.Sprintf("warning: the plugin %q reports source %s, but was downloaded from %s", name, claimed, repo)))
+	}
+
 	if thirdParty {
-		r.renderThirdPartyInfo(s, repo, m)
+		r.renderThirdPartyInfo(s, repo, m, target)
 		if !f.yes {
-			ok, err := r.consent(cmd, s, name)
+			ok, err := r.consent(cmd, s, name, "install")
 			if err != nil {
-				return refuse(cmd, "plugin install refused: %s", err)
+				return err // Exit 2: internal (the prompt could not be read).
 			}
 			if !ok {
-				return refuse(cmd, "plugin install refused: consent to install the third-party plugin %q declined", name)
+				return refuse(cmd, "plugin install refused: consent to install the third-party plugin %q declined — nothing was installed", name)
 			}
 		}
 	}
@@ -386,11 +434,18 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string, f *pluginInst
 	if err := os.Rename(tmp, target); err != nil {
 		return refuse(cmd, "plugin install refused: cannot install %s: %s%s", target, err, r.windowsInstallHint())
 	}
+	// Finalize the install: the staged file was 0700 during inspection
+	// (not world-readable/writable before consent); the installed
+	// binary is 0755.
+	if err := os.Chmod(target, 0o755); err != nil {
+		os.Remove(target) // best-effort: never leave a failed install behind.
+		return refuse(cmd, "plugin install refused: cannot make %s executable: %s", target, err)
+	}
 
 	fmt.Fprintf(s.W, "%s\n", s.Success(ui.IconDone+" installed: "+target))
 	sm.Add("Plugin", name)
 	sm.Add("Repo", repo.String())
-	sm.Add("Version", tag)
+	sm.Add("Version", sanitizeTerminal(tag))
 	if thirdParty {
 		sm.Add("Trust", "third-party (consent given)")
 	}
@@ -422,14 +477,92 @@ func (r *pluginInstallRunner) resolveInstallRepo(cmd *cobra.Command, name, repoF
 }
 
 // parsePluginRepo parses and validates a --repo value: the canonical
-// "owner/name" GitHub reference. Any other shape is a refusal.
+// "owner/name" GitHub reference (each segment restricted to the
+// GitHub-safe charset). Any other shape is a refusal — in particular
+// URL-structure characters (%, #, ?, /, \), ".", ".." and a ".git"
+// suffix, which would otherwise allow escaping the repo reference.
 func parsePluginRepo(s string) (plugin.Repo, error) {
 	parts := strings.Split(s, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
-		strings.ContainsAny(parts[0], " \t\n") || strings.ContainsAny(parts[1], " \t\n") {
-		return plugin.Repo{}, fmt.Errorf("invalid --repo %q (want owner/name)", s)
+	if len(parts) != 2 || !validRepoSegment(parts[0]) || !validRepoSegment(parts[1]) {
+		return plugin.Repo{}, fmt.Errorf("invalid --repo %q (want owner/name: letters, digits, dots, underscores, hyphens; no \".\", \"..\" or \".git\" suffix)", s)
 	}
 	return plugin.Repo{Owner: parts[0], Name: parts[1]}, nil
+}
+
+// validRepoSegment reports whether s is a safe GitHub owner/name
+// segment: letters, digits, dots, underscores and hyphens, and not
+// ".", ".." or a ".git" suffix.
+func validRepoSegment(s string) bool {
+	if s == "" || s == "." || s == ".." || strings.HasSuffix(s, ".git") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validPluginName reports whether name is a safe plugin name for the
+// eka-<name> executable identity: ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ — a
+// single path segment starting with a letter or digit. Anything else
+// (path separators, ".", "..", control characters, spaces, unicode)
+// is refused: a plugin name must never be able to escape the plugin
+// directory through the install/update/remove filepath.Join sink.
+func validPluginName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			// Alphanumeric anywhere (and required at position 0).
+		case r == '.' || r == '_' || r == '-':
+			if i == 0 {
+				return false // must start with a letter or digit.
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeTerminal neutralizes terminal-control bytes in
+// attacker-controlled render strings (a manifest's description,
+// capabilities or source, a release tag, an installed version): bytes
+// below 0x20 except \t \n \r, DEL (0x7f) and the C1 range (0x80-0x9f)
+// are replaced with U+FFFD. A plugin's self-reported text is rendered
+// only through this function, so ESC sequences (OSC-52 clipboard
+// exfiltration, screen clears, fake prompts) cannot inject into the
+// consent UI or any other output.
+func sanitizeTerminal(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool {
+		return (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+	}) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			b.WriteRune('\uFFFD')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// pluginCanPrompt reports whether an interactive consent prompt is
+// possible: both stdin and stdout must be real terminals (ui.Select's
+// contract). Non-terminal runs (pipes, CI) cannot consent — the
+// install/update flow refuses before any download.
+func pluginCanPrompt(cmd *cobra.Command, s *ui.Style) bool {
+	return s.TTY && isTTYReader(cmd.InOrStdin())
 }
 
 // installTarget is the installed binary path of a plugin: the plugin
@@ -515,7 +648,10 @@ func (r *pluginInstallRunner) downloadVerified(s *ui.Style, repo plugin.Repo, ta
 		bar.Abort()
 		return fail(fmt.Errorf("checksum mismatch for %s (expected %s, got %s)", asset, want, got))
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
+	// The staged file is executable (the manifest inspection runs it)
+	// but NOT world-readable/writable: 0700 during staging — a
+	// third-party binary is only made 0755 at finalize (after consent).
+	if err := os.Chmod(tmpName, 0o700); err != nil {
 		bar.Abort()
 		return fail(fmt.Errorf("cannot make %s executable: %w", tmpName, err))
 	}
@@ -527,13 +663,14 @@ func (r *pluginInstallRunner) downloadVerified(s *ui.Style, repo plugin.Repo, ta
 // interaction model): the accent heading and the Plugin/Repo/Version/
 // Asset labels followed by the pipeline line. A third-party install
 // carries a "Trust third-party" row — the tier is visible before any
-// download.
+// download. The release tag is attacker-controlled (GitHub API
+// metadata) and is rendered sanitized.
 func (r *pluginInstallRunner) renderHeader(s *ui.Style, name string, repo plugin.Repo, asset, tag string, thirdParty bool) {
 	fmt.Fprintln(s.W)
 	fmt.Fprintln(s.W, s.Accent("Install"))
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Plugin"), name)
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Repo"), repo.String())
-	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Version"), tag)
+	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Version"), sanitizeTerminal(tag))
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Asset"), asset)
 	if thirdParty {
 		fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Trust"), "third-party")
@@ -542,22 +679,37 @@ func (r *pluginInstallRunner) renderHeader(s *ui.Style, name string, repo plugin
 }
 
 // renderThirdPartyInfo surfaces the trust surface of a third-party
-// install — the source repository and the capabilities (plus the
-// summary) the staged binary's manifest declares — immediately before
-// the consent decision. It renders for --yes runs too: automation must
-// still see what it consented to.
-func (r *pluginInstallRunner) renderThirdPartyInfo(s *ui.Style, repo plugin.Repo, m plugin.Manifest) {
+// install — the source repository, the declared capabilities, the
+// summary and the install target the staged binary's manifest
+// declares — immediately before the consent decision. It renders for
+// --yes runs too: automation must still see what it consented to.
+// Every manifest-controlled field (summary, each capability) is
+// rendered sanitized: a hostile manifest must not inject terminal
+// sequences into the consent UI.
+func (r *pluginInstallRunner) renderThirdPartyInfo(s *ui.Style, repo plugin.Repo, m plugin.Manifest, target string) {
 	fmt.Fprintln(s.W)
 	fmt.Fprintln(s.W, s.Warning("Third-party plugin"))
-	fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Source"), "https://github.com/"+repo.String())
-	if m.Description != "" {
-		fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Summary"), m.Description)
+	// The label column width is derived from the labels (a self-reported
+	// capability list must not shift it), so values stay aligned.
+	width := len("Declared capabilities")
+	for _, l := range []string{"Source", "Summary", "Install"} {
+		if len(l) > width {
+			width = len(l)
+		}
 	}
-	caps := m.Capabilities
+	fmt.Fprintf(s.W, "  %-*s   %s\n", width, s.Info("Source"), sanitizeTerminal("https://github.com/"+repo.String()))
+	if m.Description != "" {
+		fmt.Fprintf(s.W, "  %-*s   %s\n", width, s.Info("Summary"), sanitizeTerminal(m.Description))
+	}
+	caps := make([]string, 0, len(m.Capabilities))
+	for _, c := range m.Capabilities {
+		caps = append(caps, sanitizeTerminal(c))
+	}
 	if len(caps) == 0 {
 		caps = []string{"none declared"}
 	}
-	fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Capabilities"), strings.Join(caps, ", "))
+	fmt.Fprintf(s.W, "  %-*s   %s\n", width, s.Info("Declared capabilities"), strings.Join(caps, ", "))
+	fmt.Fprintf(s.W, "  %-*s   %s\n", width, s.Info("Install"), target)
 }
 
 // windowsInstallHint explains the Windows installation caveat on the
@@ -592,26 +744,29 @@ func (r *pluginInstallRunner) inspectStaged(name, tmp string) (plugin.Manifest, 
 }
 
 // pluginConsentPrompt is the production third-party consent decision
-// (the runner's consent default). A non-terminal run (pipes, CI)
-// without --yes refuses — the CLI never auto-consents silently
-// (fail-closed): the run stops with a refusal naming the --yes escape
-// hatch. On a real terminal the user is prompted explicitly
-// (ui.Select, defaulting to "abort"; Esc/q/Ctrl-C decline). It is
-// only invoked when --yes was NOT given.
-func pluginConsentPrompt(cmd *cobra.Command, s *ui.Style, name string) (bool, error) {
-	if !(s.TTY && isTTYReader(cmd.InOrStdin())) {
-		return false, fmt.Errorf("the third-party plugin %q requires explicit consent; pass --yes to consent non-interactively", name)
+// (the runner's consent default): an interactive prompt on a real
+// terminal (ui.Select, defaulting to "abort"; Esc/q/Ctrl-C decline).
+// verb is "install" or "update" and titles the prompt. Callers gate
+// on canPrompt BEFORE any download (the early non-TTY refusal, exit
+// 1); when this function is nevertheless invoked without a terminal
+// it errors (exit 2 — internal) — the CLI never auto-consents
+// silently. A declined consent is (false, nil): the caller refuses
+// (exit 1).
+func pluginConsentPrompt(cmd *cobra.Command, s *ui.Style, name, verb string) (bool, error) {
+	if !pluginCanPrompt(cmd, s) {
+		return false, fmt.Errorf("cannot read the consent: the third-party plugin %q requires explicit consent; pass --yes to consent non-interactively", name)
 	}
+	title := strings.ToUpper(verb[:1]) + verb[1:]
 	value, err := ui.Select(s, cmd.InOrStdin(), cmd.OutOrStdout(),
-		fmt.Sprintf("Install the third-party plugin %q?", name),
-		[]ui.MenuItem{{Title: "install", Value: "install"}, {Title: "abort", Value: "abort"}}, 1)
+		fmt.Sprintf("%s the third-party plugin %q?", title, name),
+		[]ui.MenuItem{{Title: verb, Value: verb}, {Title: "abort", Value: "abort"}}, 1)
 	if err != nil {
 		if errors.Is(err, ui.ErrCancelled) {
 			return false, nil // cancelled = declined
 		}
 		return false, fmt.Errorf("cannot read the consent: %w", err) // Exit 2: internal.
 	}
-	return value == "install", nil
+	return value == verb, nil
 }
 
 // latestTag resolves the latest release version of the plugin's

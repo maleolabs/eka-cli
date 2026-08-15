@@ -106,6 +106,7 @@ func testPluginInstallRunner(srv *fakePluginReleaseServer, pluginDir string) *pl
 		goarch:       "amd64",
 		version:      "dev",
 		consent:      pluginConsentPrompt,
+		canPrompt:    pluginCanPrompt,
 	}
 }
 

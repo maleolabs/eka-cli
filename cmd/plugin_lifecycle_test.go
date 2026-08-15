@@ -332,7 +332,7 @@ func TestPluginUpdateChecksumMismatchKeepsOld(t *testing.T) {
 // refuses and the OLD binary is untouched (the staged download is
 // inspected before the swap, so the old binary is never moved; no
 // .old or temp debris remains).
-func TestPluginUpdateBrokenNewManifestRestoresOld(t *testing.T) {
+func TestPluginUpdateBrokenNewManifestKeepsOld(t *testing.T) {
 	body := []byte(`#!/bin/sh
 printf '%s' 'this is not json'
 `)
