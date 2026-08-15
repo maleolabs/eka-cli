@@ -18,6 +18,13 @@ import (
 const fakeExe = `#!/bin/sh
 case "$1" in
   manifest)
+    # The contract is "manifest --json"; a bare "manifest" must refuse
+    # exactly like the real binaries do (usage on stderr, exit 1), so
+    # the tests catch a CLI-side contract drift.
+    if [ "$2" != "--json" ]; then
+      echo "usage: eka-mcp manifest --json" >&2
+      exit 1
+    fi
     cat <<'EOF'
 {"contract":"v1","name":"mcp","version":"2.3.4","description":"fake","artifacts":[{"kind":"skills","entries":["eka-a","eka-b"]}],"capabilities":["install","mcp"],"source":"github.com/maleolabs/eka-mcp"}
 EOF

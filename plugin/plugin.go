@@ -215,7 +215,7 @@ func (p Plugin) Manifest() (Manifest, error) {
 // timeout) and parses the result. The plugin's stdout is capped at
 // maxPluginOutputSize; a larger output refuses (fail-closed).
 func (p Plugin) ManifestContext(ctx context.Context) (Manifest, error) {
-	out, err := p.runContext(ctx, "manifest")
+	out, err := p.runContext(ctx, "manifest", "--json")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("plugin %q manifest failed: %w", pluginName(p.Exe), err)
 	}
