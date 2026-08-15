@@ -29,8 +29,11 @@ var groupMember = map[string][]string{
 // TestCommandGroupMembership: every registered command carries the
 // GroupID of its intent group, the five groups contain exactly their
 // expected members, and every command with a GroupID has a registered
-// group (cobra panics otherwise at Execute time — asserted here so a
-// future command without a group fails the build, not a panic).
+// group. Cobra panics at Execute time only when a GroupID is SET but
+// not registered; a command left without a GroupID instead falls into
+// the renderer's "Additional Commands:" section — asserted here so a
+// future command without a group fails the build, not a panic or a
+// silent fallback.
 func TestCommandGroupMembership(t *testing.T) {
 	root := newRootCommand()
 

@@ -240,6 +240,7 @@ func printLanding(s *ui.Style) {
 	fmt.Fprintln(&b, "The official command-line interface for the EKA engineering")
 	fmt.Fprintln(&b, "knowledge standard: bootstrap, validate, exchange, and run")
 	fmt.Fprintln(&b, "the knowledge runtime (sync, projects, status, integrity).")
+	fmt.Fprintf(&b, "%s\n", s.Dim("New here? Run 'eka init' to bootstrap a repository."))
 	fmt.Fprintln(&b)
 	fmt.Fprint(&b, s.Accent("Commands"))
 	renderCommandGroups(s, &b, commandGroups, newRootCommand().Commands())

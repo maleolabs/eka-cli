@@ -57,7 +57,7 @@ var commandGroupsByName = map[string]string{
 	"note":       groupAuthoring,
 	// Repository & Exchange: repository lifecycle and RSF exchange.
 	"init":     groupRepositoryExchange,
-	"validate": groupRepositoryExchange,
+	"validate": groupRepositoryExchange, // user intent: repo conformance, though it runs through the Authoring API internally
 	"export":   groupRepositoryExchange,
 	"import":   groupRepositoryExchange,
 	// Knowledge Access: reading Engineering Knowledge.
@@ -70,7 +70,7 @@ var commandGroupsByName = map[string]string{
 	"project":   groupRuntimeWorkspace,
 	"status":    groupRuntimeWorkspace,
 	"integrity": groupRuntimeWorkspace,
-	"snapshot":  groupRuntimeWorkspace,
+	"snapshot":  groupRuntimeWorkspace, // inspection/repair of workspace snapshots is a runtime concern, not authoring
 	// Utility: CLI maintenance and help.
 	"update":     groupUtility,
 	"version":    groupUtility,
