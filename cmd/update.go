@@ -289,16 +289,24 @@ func (r *updateRunner) renderHeader(s *ui.Style, f *updateFlags, asset string, r
 	}
 }
 
-// updateAssetName maps a GOOS/GOARCH pair to the release asset name
-// (the installer asset naming contract: eka-<os>-<arch>[.exe]).
-// Unsupported platforms are a refusal.
+// updateAssetName maps a GOOS/GOARCH pair to the CLI's release asset
+// name (the installer asset naming contract: eka-<os>-<arch>[.exe]).
 func updateAssetName(goos, goarch string) (string, error) {
+	return platformAssetName("eka", goos, goarch)
+}
+
+// platformAssetName maps a GOOS/GOARCH pair to a release asset name
+// for a product with the given executable prefix — "eka" for the CLI
+// itself, "eka-<name>" for a plugin (eka plugin install). The naming
+// contract is <prefix>-<os>-<arch>[.exe]; unsupported platforms are a
+// refusal.
+func platformAssetName(prefix, goos, goarch string) (string, error) {
 	switch goos {
 	case "linux", "darwin":
 	case "windows":
 		switch goarch {
 		case "amd64", "arm64":
-			return "eka-windows-" + goarch + ".exe", nil
+			return prefix + "-windows-" + goarch + ".exe", nil
 		}
 		return "", fmt.Errorf("unsupported architecture %q on windows (supported: amd64, arm64)", goarch)
 	default:
@@ -306,7 +314,7 @@ func updateAssetName(goos, goarch string) (string, error) {
 	}
 	switch goarch {
 	case "amd64", "arm64":
-		return "eka-" + goos + "-" + goarch, nil
+		return prefix + "-" + goos + "-" + goarch, nil
 	}
 	return "", fmt.Errorf("unsupported architecture %q (supported: amd64, arm64)", goarch)
 }
