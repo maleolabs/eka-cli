@@ -238,10 +238,11 @@ section placeholders (the per-target form of --content-file).
 contentState is not a batch field: every draft scaffolds at its
 type's default state.
 
-All targets are scaffolded in the repository's project and
-namespace. The batch is all-or-nothing: when any target cannot be
-scaffolded (a collision, an unknown type, a guard violation), the
-run refuses and removes the drafts it created — no partial set.
+All targets are scaffolded in the resolved project and namespace (the
+repository's, or the explicit --project/--namespace). The batch is
+all-or-nothing: when any target cannot be scaffolded (a collision, an
+unknown type, a guard violation), the run refuses and removes the
+drafts it created — no partial set.
 
 --file is mutually exclusive with the single-target flags: combining
 it with --dimension, --phase, any relationship flag
@@ -259,7 +260,8 @@ Flags:
                         requires --namespace or a qualified target
   --namespace <ns>      explicit namespace for workspace-native
                         authoring: overrides the repository/target
-                        namespace (--project must be registered)
+                        namespace (--project, when given, must be
+                        registered)
   --dimension <token>    primary knowledge dimension (knowledge types)
   --phase <value>        phase context (scp-/plan- only)
   --depends-on <ref>[,<ref>...]   relationship targets (also
@@ -426,7 +428,7 @@ Exit codes:
 	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
 	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above; exclusive with the single-target flags)")
 	cmd.Flags().String(flagProject, "", "explicit project for workspace-native authoring: a project registered in the workspace (run 'eka project list'), targeted from any directory; requires --namespace or a qualified target")
-	cmd.Flags().String(flagNewNamespace, "", "explicit namespace for workspace-native authoring: overrides the repository/target namespace (--project must be registered)")
+	cmd.Flags().String(flagNewNamespace, "", "explicit namespace for workspace-native authoring: overrides the repository/target namespace (--project, when given, must be registered)")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
 	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
 	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
@@ -538,7 +540,9 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference, projectFlag,
 //     from eka.yaml.
 //   - --namespace alone: the project resolves from the repository
 //     registered at the current directory (the same context the default
-//     path uses); outside a repository it is refused.
+//     path uses); outside a repository it is refused. --namespace alone
+//     also overrides the repository namespace deliberately — D6 guards
+//     only the implicit path.
 //   - the resolved namespace must be a valid EKA identifier (the
 //     eka.yaml identifier rule) — the explicit path validates it at
 //     scaffold time so the draft is publishable.
