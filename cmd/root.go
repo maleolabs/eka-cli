@@ -138,8 +138,8 @@ get retrieves Engineering Knowledge as machine-readable CKO JSON
 (the machine interface — scripts, MCP, Atrium, AI agents), eka
 watch re-renders a projection live as the repository changes, eka
 update replaces this binary with the latest checksum-verified
-release from GitHub, eka plugin install installs an official
-checksum-verified plugin (e.g. eka-mcp) into the plugin directory,
+release from GitHub, eka plugin installs, lists, removes and
+updates official checksum-verified plugins (e.g. eka-mcp),
 and the Knowledge Runtime commands (eka sync,
 eka project, eka status, eka integrity) keep a local canonical
 workspace (~/.eka or $EKA_HOME) synchronized with registered
