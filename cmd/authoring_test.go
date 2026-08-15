@@ -331,7 +331,9 @@ func TestNewNamespaceResolutionMatrix(t *testing.T) {
 	}
 
 	// Outside an EKA repository, even a qualified target is refused
-	// by the same gate (--project no longer exists).
+	// by the same gate (no explicit workspace-native target given —
+	// see TestNewWorkspaceNativeOutsideRepo for the --project/
+	// --namespace path).
 	code, _, errText = runIn([]string{"new", "feather/sto:remote"})
 	if code != 1 {
 		t.Errorf("qualified target outside an EKA repository: exit = %d, want 1", code)
@@ -355,8 +357,9 @@ func TestNewNamespaceResolutionMatrix(t *testing.T) {
 		t.Errorf("stderr must carry the spec's hint, got %q", errText)
 	}
 	// The qualified target in the same unregistered repository is
-	// refused: the project cannot resolve without a registration
-	// (--project no longer exists).
+	// refused: the project cannot resolve without a registration (the
+	// workspace-native path needs an explicit --project, tested
+	// separately).
 	code, _, errText = runIn([]string{"new", "feather/sto:remote"})
 	if code != 1 {
 		t.Errorf("qualified target in an unregistered EKA repository: exit = %d, want 1", code)
@@ -389,8 +392,171 @@ func assertDraftNS(t *testing.T, w *workspace.Workspace, project, name, wantNS s
 	}
 }
 
-// TestNewCollision: a second draft with the same project/type/id is
-// refused with exit 1.
+// --- workspace-native authoring (sto:workspace-native-authoring) ------
+
+// workspaceWithProject seeds the workspace registry with ONE registered
+// project (project = basename, namespace = ns) and returns it — the
+// setup for the workspace-native tests, which run OUTSIDE any
+// repository.
+func workspaceWithProject(t *testing.T, ns string) (*workspace.Workspace, string) {
+	t.Helper()
+	gitIdentityEnv(t, "test-agent")
+	t.Setenv("EKA_HOME", t.TempDir())
+	w, err := workspace.Ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+	repoDir := t.TempDir()
+	proj := filepath.Base(repoDir)
+	writeEkaYAML(t, repoDir, proj, proj, ns)
+	m := metadata.Metadata{Version: 1, Project: proj, Name: proj, Namespace: ns}
+	if _, _, _, err := w.RegisterRepoMetadata(repoDir, m); err != nil {
+		t.Fatal(err)
+	}
+	return w, proj
+}
+
+// TestNewWorkspaceNativeOutsideRepo: the acceptance of the work item —
+// from a NON-repo directory (no eka.yaml anywhere above the cwd),
+// `eka new <type>:<id> --project <registered> --namespace <ns>`
+// scaffolds the draft into EKA_HOME/drafts/<project>/; without an
+// explicit target the ADR-018 gate still refuses.
+func TestNewWorkspaceNativeOutsideRepo(t *testing.T) {
+	w, proj := workspaceWithProject(t, "atrium-api")
+	outside := t.TempDir()
+	t.Chdir(outside)
+
+	// Acceptance: the explicit pair scaffolds the draft outside any
+	// repository, under the registered project.
+	code, text, errText := runIn([]string{"new", "sto:x", "--project", proj, "--namespace", "atrium-api"})
+	if code != 0 {
+		t.Fatalf("workspace-native new: exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, proj) {
+		t.Errorf("output must name the explicit project %s:\n%s", proj, text)
+	}
+	assertDraftNS(t, w, proj, "sto-x.json", "atrium-api")
+
+	// A qualified target supplies the namespace: --project alone works.
+	if code, _, errText := runIn([]string{"new", "nest/sto:y", "--project", proj}); code != 0 {
+		t.Errorf("qualified target + --project: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	assertDraftNS(t, w, proj, "sto-y.json", "nest")
+
+	// Inside an EKA repository that is NOT registered yet, the explicit
+	// pair still works (the explicit path never resolves from the cwd).
+	unregistered := t.TempDir()
+	writeEkaYAML(t, unregistered, filepath.Base(unregistered), filepath.Base(unregistered), "atrium-api")
+	t.Chdir(unregistered)
+	if code, _, errText := runIn([]string{"new", "sto:q", "--project", proj, "--namespace", "atrium-api"}); code != 0 {
+		t.Errorf("unregistered repo + explicit pair: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	assertDraftNS(t, w, proj, "sto-q.json", "atrium-api")
+
+	t.Chdir(outside)
+	// A bare --project with an unqualified target has no namespace
+	// source: refused (never a silent borrow from eka.yaml).
+	code, _, errText = runIn([]string{"new", "sto:z", "--project", proj})
+	if code != 1 {
+		t.Errorf("--project without --namespace: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "requires --namespace") {
+		t.Errorf("stderr must demand --namespace, got %q", errText)
+	}
+	// An unregistered project is refused with the registration hint.
+	code, _, errText = runIn([]string{"new", "sto:w", "--project", "ghost", "--namespace", "atrium-api"})
+	if code != 1 {
+		t.Errorf("unregistered project: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "project ghost is not registered in the workspace") ||
+		!strings.Contains(errText, "eka project list") {
+		t.Errorf("stderr must name the unregistered project and the hint, got %q", errText)
+	}
+	// --namespace alone has no project source outside a repository.
+	code, _, errText = runIn([]string{"new", "sto:v", "--namespace", "atrium-api"})
+	if code != 1 {
+		t.Errorf("--namespace alone outside a repo: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "cannot resolve a project here") {
+		t.Errorf("stderr must refuse the unresolvable project, got %q", errText)
+	}
+	// An invalid namespace identifier is refused at scaffold time.
+	code, _, errText = runIn([]string{"new", "sto:u", "--project", proj, "--namespace", "Bad NS"})
+	if code != 1 {
+		t.Errorf("invalid namespace: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "not a valid EKA identifier") {
+		t.Errorf("stderr must refuse the invalid identifier, got %q", errText)
+	}
+	// Without explicit targets the ADR-018 gate still refuses outside
+	// an EKA repository (unchanged).
+	code, _, errText = runIn([]string{"new", "sto:ghost"})
+	if code != 1 {
+		t.Errorf("no flags outside an EKA repository: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "is not an EKA repository (no eka.yaml)") ||
+		!strings.Contains(errText, "run 'eka init' first") {
+		t.Errorf("stderr must carry the ADR-018 gate refusal, got %q", errText)
+	}
+}
+
+// TestNewWorkspaceNativeInsideRepoOverride: inside a registered
+// repository the explicit pair overrides the repository identity
+// deterministically (the draft lands in the explicit project), while
+// the implicit path keeps D6 unchanged.
+func TestNewWorkspaceNativeInsideRepoOverride(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	repoProject := projectOf(t, w, mustAbs(t, "."))
+	// A second registered project (project "atrium", namespace
+	// atrium-api).
+	other := t.TempDir()
+	writeEkaYAML(t, other, "atrium", "api", "atrium-api")
+	m := metadata.Metadata{Version: 1, Project: "atrium", Name: "api", Namespace: "atrium-api"}
+	if _, _, _, err := w.RegisterRepoMetadata(other, m); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit override inside a repo: the draft goes to the explicit
+	// project, not the repository's.
+	if code, _, errText := runIn([]string{"new", "sto:x", "--project", "atrium", "--namespace", "atrium-api"}); code != 0 {
+		t.Fatalf("explicit override: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	assertDraftNS(t, w, "atrium", "sto-x.json", "atrium-api")
+	if _, err := os.Stat(draftFile(t, w, repoProject, "sto", "x")); err == nil {
+		t.Error("an explicit override must not write into the repository's project")
+	}
+
+	// A deliberate foreign namespace is allowed on the explicit path
+	// (D6 guards the implicit path against accidental cross-platform
+	// writes; an explicit target is a deliberate choice).
+	if code, _, errText := runIn([]string{"new", "sto:y", "--project", "atrium", "--namespace", "feather"}); code != 0 {
+		t.Errorf("explicit foreign namespace: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	assertDraftNS(t, w, "atrium", "sto-y.json", "feather")
+
+	// --namespace alone: the project resolves from the repository
+	// context, the namespace is explicit.
+	if code, _, errText := runIn([]string{"new", "sto:z", "--namespace", "feather"}); code != 0 {
+		t.Errorf("--namespace alone inside a repo: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	assertDraftNS(t, w, repoProject, "sto-z.json", "feather")
+
+	// Even the repository's OWN project needs an explicit namespace:
+	// the explicit path never borrows from eka.yaml.
+	code, _, errText := runIn([]string{"new", "sto:v", "--project", repoProject})
+	if code != 1 || !strings.Contains(errText, "requires --namespace") {
+		t.Errorf("--project = repo project without --namespace: exit = %d, %q; want 1 + requires --namespace", code, errText)
+	}
+
+	// D6 unchanged on the implicit path: a qualified target with a
+	// foreign namespace is still refused inside the repository.
+	code, _, errText = runIn([]string{"new", "feather/sto:w"})
+	if code != 1 || !strings.Contains(errText, "refused: namespace feather differs from the repository namespace atrium-api") {
+		t.Errorf("D6 on the implicit path: exit = %d, %q; want 1 + the cross-platform refusal", code, errText)
+	}
+}
+
 func TestNewCollision(t *testing.T) {
 	w, _ := authoringEnv(t, "feather")
 	runIn([]string{"new", "sto:my-item"})
@@ -1100,14 +1266,16 @@ func TestAuthoringRefuseOutsideEKA(t *testing.T) {
 	}
 }
 
-// TestNewPublishUnknownFlags (ADR-017 D6): the removed --project and
-// --namespace flags are unknown to `eka new` / `eka publish` — a cobra
-// usage error (exit 2), never a silent ignore.
-func TestNewPublishUnknownFlags(t *testing.T) {
+// TestPublishUnknownFlags (ADR-017 D6): the removed --project flag
+// stays unknown to `eka publish` — a cobra usage error (exit 2), never
+// a silent ignore. (`eka new` re-gained --project/--namespace for
+// workspace-native authoring, sto:workspace-native-authoring — the
+// explicit pair targets a REGISTERED project from any directory, the
+// cross-project slot D6 kept open; that is tested in the workspace-
+// native matrix, not here.)
+func TestPublishUnknownFlags(t *testing.T) {
 	authoringEnv(t, "atrium-api")
 	for _, args := range [][]string{
-		{"new", "sto:x", "--project", "foo"},
-		{"new", "sto:x", "--namespace", "foo"},
 		{"publish", "sto:x", "--project", "foo"},
 	} {
 		code, _, errText := runIn(args)

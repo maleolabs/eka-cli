@@ -151,8 +151,11 @@ func batchFlagConflict(cmd *cobra.Command) string {
 // uses for an unqualified target, spec §3.2 + ADR-018): the project is
 // the repository's project, the namespace is the repository's default
 // namespace. Outside an EKA repository the batch is refused
-// deterministically.
-func resolveBatchScope(r *runtime.Runtime) (project, ns string, err error) {
+// deterministically. With --project/--namespace the batch targets a
+// REGISTERED project workspace-natively (resolveExplicitScope, the
+// same rule `eka new` uses; a batch has no single target, so --project
+// always requires --namespace here).
+func resolveBatchScope(r *runtime.Runtime, projectFlag, nsFlag string) (project, ns string, err error) {
 	abs, aerr := filepath.Abs(".")
 	if aerr != nil {
 		return "", "", fmt.Errorf("cannot resolve the current directory: %w", aerr)
@@ -161,6 +164,9 @@ func resolveBatchScope(r *runtime.Runtime) (project, ns string, err error) {
 	repo, found, ferr := r.Workspace.FindRepo(abs)
 	if ferr != nil {
 		return "", "", ferr
+	}
+	if projectFlag != "" || nsFlag != "" {
+		return resolveExplicitScope(r, projectFlag, nsFlag, "", repo, found)
 	}
 	if !found {
 		// The repository context gate (ADR-018): without eka.yaml the
@@ -189,12 +195,14 @@ func resolveBatchScope(r *runtime.Runtime) (project, ns string, err error) {
 // order, all-or-nothing: when any target cannot be scaffolded (a
 // collision, an unknown type, a tkt-/ctr- guard violation, an invalid
 // phase), the run refuses and removes the drafts it created.
-func runNewBatch(cmd *cobra.Command, r *runtime.Runtime, by conformance.AuthorIdentity, path string) error {
+// projectFlag/nsFlag are the explicit workspace-native scope of
+// --project/--namespace ("" when the repository context resolves).
+func runNewBatch(cmd *cobra.Command, r *runtime.Runtime, by conformance.AuthorIdentity, path, projectFlag, nsFlag string) error {
 	batch, err := readBatchFile(path)
 	if err != nil {
 		return refuse(cmd, "new: %v", err)
 	}
-	project, ns, err := resolveBatchScope(r)
+	project, ns, err := resolveBatchScope(r, projectFlag, nsFlag)
 	if err != nil {
 		return refuse(cmd, "new: %v", err)
 	}
@@ -346,7 +354,7 @@ func runPublishBatch(cmd *cobra.Command) error {
 		return err
 	}
 	defer r.Close()
-	project, _, err := resolveBatchScope(r)
+	project, _, err := resolveBatchScope(r, "", "")
 	if err != nil {
 		return refuse(cmd, "publish: %v", err)
 	}
