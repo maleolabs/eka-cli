@@ -1,16 +1,17 @@
 // Package cmd implements the EKA CLI as a thin Cobra command layer.
 //
 // The command tree (root, validate, init, export, import, get, view,
-// watch, sync, project, status, feedback, update, note) is the only
-// part of the codebase that knows about argument parsing, flags, help
-// text, output rendering and exit codes. It contains no domain logic:
-// validate delegates to the Authoring API (runtime.Authoring), init
-// delegates to the bootstrap engine, export/import delegate to the
+// watch, sync, project, status, feedback, update, note, plugin) is the
+// only part of the codebase that knows about argument parsing, flags,
+// help text, output rendering and exit codes. It contains no domain
+// logic: validate delegates to the Authoring API (runtime.Authoring),
+// init delegates to the bootstrap engine, export/import delegate to the
 // exchange engine, get delegates to the machine interface (machine/),
 // feedback delegates to the standalone feedback module (feedback/),
-// and every runtime command (sync, view, watch, project, status,
-// integrity) delegates to the Runtime Kernel services (the runtime
-// package) — the CLI is a CLIENT of the Runtime.
+// plugin delegates to the plugin contract + registry (plugin/), and
+// every runtime command (sync, view, watch, project, status, integrity)
+// delegates to the Runtime Kernel services (the runtime package) — the
+// CLI is a CLIENT of the Runtime.
 //
 // Client-only boundary (milestone 5, documented): production code in
 // this package must NOT import the store, workspace, sync or compile
@@ -22,9 +23,10 @@
 // conformance (model types, e.g. Report for render helpers, plus the
 // representation-independent reference-parsing helper ParseReference —
 // authoring validation itself runs through runtime.Authoring),
-// bootstrap (init), feedback (the standalone ADR-026 feedback module)
-// and ui. Tests MAY import store/workspace/sync for
-// seeding and corruption fixtures (test-only, documented).
+// bootstrap (init), feedback (the standalone ADR-026 feedback module),
+// plugin (the plugin contract, registry and install flow) and ui. Tests
+// MAY import store/workspace/sync for seeding and corruption fixtures
+// (test-only, documented).
 //
 // Layout rationale: the reusable engines stay where they are
 // (bootstrap/, conformance/, exchange/, ...). There is deliberately no
@@ -136,7 +138,9 @@ get retrieves Engineering Knowledge as machine-readable CKO JSON
 (the machine interface — scripts, MCP, Atrium, AI agents), eka
 watch re-renders a projection live as the repository changes, eka
 update replaces this binary with the latest checksum-verified
-release from GitHub, and the Knowledge Runtime commands (eka sync,
+release from GitHub, eka plugin install installs an official
+checksum-verified plugin (e.g. eka-mcp) into the plugin directory,
+and the Knowledge Runtime commands (eka sync,
 eka project, eka status, eka integrity) keep a local canonical
 workspace (~/.eka or $EKA_HOME) synchronized with registered
 repositories via
@@ -189,7 +193,8 @@ Exit codes:
 	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
-		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand())
+		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
+		newPluginCommand())
 	root.AddCommand(newAuthoringCommands()...)
 	// The output container wraps the help text of EVERY command
 	// (HelpFunc resolves up the tree): cobra's default help renders
