@@ -430,6 +430,11 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	if !strings.Contains(text, "generate file: eka.yaml (repository identity)") {
 		t.Errorf("output must contain the identity plan line:\n%s", text)
 	}
+	// The standard declaration is planned right after the identity file
+	// (order: dir → eka.yaml → EKA → git → validate).
+	if !strings.Contains(text, "generate file: EKA (standard declaration)") {
+		t.Errorf("output must contain the standard declaration plan line:\n%s", text)
+	}
 	if !strings.Contains(text, "Dry-run: no changes were written.") {
 		t.Errorf("output must state that nothing was written:\n%s", text)
 	}
@@ -471,16 +476,27 @@ func TestInitCurrentDirectory(t *testing.T) {
 	if !strings.Contains(text, "Validation: PASS") {
 		t.Errorf("output must report PASS:\n%s", text)
 	}
-	// Identity-only: exactly eka.yaml is generated.
+	// Identity-only: eka.yaml + the EKA standard declaration are
+	// generated, nothing else.
 	if _, err := os.Stat(filepath.Join(dir, "eka.yaml")); err != nil {
 		t.Errorf("expected the generated identity file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "EKA")); err != nil {
+		t.Errorf("expected the generated EKA standard declaration: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "eka.yaml" {
-		t.Errorf("generated tree must be eka.yaml only, found: %v", entries)
+	if len(entries) != 2 {
+		t.Errorf("generated tree must be eka.yaml + EKA only, found: %v", entries)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	if !names["eka.yaml"] || !names["EKA"] {
+		t.Errorf("generated tree must contain eka.yaml and EKA, found: %v", entries)
 	}
 	// The generated repository must pass `eka validate`.
 	code, text, _ = runIn([]string{"validate", dir})
@@ -552,6 +568,83 @@ func TestInitWritesEkaYAML(t *testing.T) {
 	}
 	if !strings.Contains(text, "project "+filepath.Base(fresh)+", name "+filepath.Base(fresh)) {
 		t.Errorf("dry-run identity must match the real run's triple:\n%s", text)
+	}
+}
+
+// TestInitWritesStandardDeclaration verifies `eka init` writes the root
+// EKA standard declaration file (sto:init-standard-declaration): the
+// compact consumer summary starting with "EKA STANDARD", carrying the
+// correct `Version X.Y` line equal to the CLI's reported standard
+// version, byte-identical across runs (deterministic).
+func TestInitWritesStandardDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	chdirInto(t, dir)
+	code, text, errText := runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "EKA"))
+	if err != nil {
+		t.Fatalf("generated EKA declaration missing: %v", err)
+	}
+	if !strings.HasPrefix(string(data), "EKA STANDARD\nVersion "+standardVersion+"\n") {
+		t.Errorf("EKA declaration must start with the EKA STANDARD header and the Version %s line:\n%s",
+			standardVersion, data[:80])
+	}
+	// The dry-run reports the same file deterministically and writes
+	// nothing.
+	fresh := t.TempDir()
+	chdirInto(t, fresh)
+	_, dryRunOut, _ := runIn([]string{"init", "--dry-run"})
+	if !strings.Contains(dryRunOut, "generate file: EKA (standard declaration)") {
+		t.Errorf("dry-run output must plan the EKA generation:\n%s", dryRunOut)
+	}
+	if _, err := os.Stat(filepath.Join(fresh, "EKA")); !os.IsNotExist(err) {
+		t.Error("dry-run must not write the EKA declaration")
+	}
+	// Deterministic: two real runs produce identical EKA bytes.
+	_, _, _ = runIn([]string{"init", "--dry-run"})
+	_, _, _ = runIn([]string{"init", "--dry-run"})
+	if data2, _ := os.ReadFile(filepath.Join(dir, "EKA")); !bytes.Equal(data, data2) {
+		t.Error("EKA declaration must be deterministic across runs")
+	}
+}
+
+// TestInitBackfillsMissingDeclaration verifies the re-run contract on an
+// already-initialized repository (sto:init-standard-declaration): a
+// missing EKA declaration is backfilled; an identical one is reused (the
+// tree stays byte-identical); a differing one is never replaced
+// silently in non-interactive mode.
+func TestInitBackfillsMissingDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	chdirInto(t, dir)
+	if code, _, errText := runIn([]string{"init"}); code != 0 {
+		t.Fatalf("first init: exit = %d, stderr: %s", code, errText)
+	}
+	// Remove the declaration, then re-run: it must be backfilled.
+	if err := os.Remove(filepath.Join(dir, "EKA")); err != nil {
+		t.Fatal(err)
+	}
+	code, text, _ := runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("backfill init: exit = %d, want 0", code)
+	}
+	if !strings.Contains(text, "already initialized") {
+		t.Errorf("backfill run must report already initialized:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "EKA")); err != nil {
+		t.Errorf("missing declaration must be backfilled: %v", err)
+	}
+	// A differing declaration is preserved (never replaced silently).
+	if err := os.WriteFile(filepath.Join(dir, "EKA"), []byte("EKA STANDARD\nVersion 9.9\ncustom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ = runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("differing-declaration init: exit = %d, want 0", code)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "EKA")); string(data) != "EKA STANDARD\nVersion 9.9\ncustom\n" {
+		t.Error("differing declaration must be preserved in non-interactive mode")
 	}
 }
 

@@ -15,8 +15,8 @@ import (
 // --- BuildPlan ----------------------------------------------------------
 
 // TestBuildPlanNewDirectory pins the fresh-target plan: create dir +
-// generate eka.yaml + git + validate — and nothing else (identity-only:
-// no docs/ tree, no README, no skeleton files).
+// generate eka.yaml + generate EKA + git + validate — and nothing else
+// (identity-only: no docs/ tree, no README, no skeleton files).
 func TestBuildPlanNewDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "fresh")
 	d, err := Discover(dir)
@@ -25,8 +25,8 @@ func TestBuildPlanNewDirectory(t *testing.T) {
 	}
 	plan := BuildPlan(dir, d, DefaultAnswers(d))
 
-	if len(plan) != 4 {
-		t.Fatalf("fresh plan must be create-dir + eka.yaml + git + validate, got %d actions: %v", len(plan), plan)
+	if len(plan) != 5 {
+		t.Fatalf("fresh plan must be create-dir + eka.yaml + EKA + git + validate, got %d actions: %v", len(plan), plan)
 	}
 	// 1. The target dir itself is created (sentinel path ".", target in
 	// Detail).
@@ -47,13 +47,20 @@ func TestBuildPlanNewDirectory(t *testing.T) {
 	if len(plan[1].Content) == 0 {
 		t.Error("eka.yaml action must carry content")
 	}
-	// 3. Git follows the identity file.
-	if plan[2].Kind != ActionGitSkip {
-		t.Errorf("third action must be the git step, got %+v", plan[2])
+	// 3. The EKA standard declaration follows the identity file.
+	if plan[2].Kind != ActionGenerateEKA || plan[2].Path != "EKA" {
+		t.Errorf("third action must generate the EKA declaration, got %+v", plan[2])
 	}
-	// 4. Validation closes the plan.
-	if plan[3].Kind != ActionValidate {
-		t.Errorf("last action must be validate, got %+v", plan[3])
+	if !bytes.Equal(plan[2].Content, generatedEKA()) {
+		t.Error("EKA action must carry the embedded declaration content")
+	}
+	// 4. Git follows the standard declaration.
+	if plan[3].Kind != ActionGitSkip {
+		t.Errorf("fourth action must be the git step, got %+v", plan[3])
+	}
+	// 5. Validation closes the plan.
+	if plan[4].Kind != ActionValidate {
+		t.Errorf("last action must be validate, got %+v", plan[4])
 	}
 	// No skeleton artifact may be planned.
 	for _, a := range plan {
@@ -65,7 +72,7 @@ func TestBuildPlanNewDirectory(t *testing.T) {
 
 // TestBuildPlanExistingDirectory pins the adoption plan for an existing
 // non-EKA directory: no create-dir (the target exists), eka.yaml +
-// git + validate.
+// EKA + git + validate.
 func TestBuildPlanExistingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	d, err := Discover(dir)
@@ -73,17 +80,20 @@ func TestBuildPlanExistingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := BuildPlan(dir, d, DefaultAnswers(d))
-	if len(plan) != 3 {
-		t.Fatalf("existing-dir plan must be eka.yaml + git + validate, got %d actions: %v", len(plan), plan)
+	if len(plan) != 4 {
+		t.Fatalf("existing-dir plan must be eka.yaml + EKA + git + validate, got %d actions: %v", len(plan), plan)
 	}
 	if plan[0].Kind != ActionGenerateEkaYAML || plan[0].Path != "eka.yaml" {
 		t.Errorf("first action must generate eka.yaml, got %+v", plan[0])
 	}
-	if plan[1].Kind != ActionGitSkip {
-		t.Errorf("second action must be the git step, got %+v", plan[1])
+	if plan[1].Kind != ActionGenerateEKA || plan[1].Path != "EKA" {
+		t.Errorf("second action must generate the EKA declaration, got %+v", plan[1])
 	}
-	if plan[2].Kind != ActionValidate {
-		t.Errorf("last action must be validate, got %+v", plan[2])
+	if plan[2].Kind != ActionGitSkip {
+		t.Errorf("third action must be the git step, got %+v", plan[2])
+	}
+	if plan[3].Kind != ActionValidate {
+		t.Errorf("last action must be validate, got %+v", plan[3])
 	}
 	for _, a := range plan {
 		if a.Kind == ActionCreateDir {
@@ -126,8 +136,8 @@ func TestBuildPlanExistingEkaRepo(t *testing.T) {
 	}
 	a := DefaultAnswers(d)
 	plan := BuildPlan(dir, d, a)
-	if len(plan) != 3 {
-		t.Fatalf("legacy repo without eka.yaml must plan reuse + generate eka.yaml + validate, got %d actions", len(plan))
+	if len(plan) != 4 {
+		t.Fatalf("legacy repo without eka.yaml must plan reuse + generate eka.yaml + generate EKA + validate, got %d actions", len(plan))
 	}
 	if plan[0].Kind != ActionReuse {
 		t.Errorf("first action must be reuse, got %+v", plan[0])
@@ -138,26 +148,33 @@ func TestBuildPlanExistingEkaRepo(t *testing.T) {
 	if !bytes.Equal(plan[1].Content, generatedEkaYAML(d, a)) {
 		t.Error("the adoption eka.yaml action must carry the deterministic identity content")
 	}
-	if plan[2].Kind != ActionValidate {
-		t.Errorf("last action must be validate, got %+v", plan[2])
+	if plan[2].Kind != ActionGenerateEKA || plan[2].Path != "EKA" {
+		t.Errorf("third action must generate the EKA declaration, got %+v", plan[2])
+	}
+	if plan[3].Kind != ActionValidate {
+		t.Errorf("last action must be validate, got %+v", plan[3])
 	}
 
-	// A metadata repository that already carries the identical eka.yaml:
-	// reuse + reuse eka.yaml + validate (the no-op run).
+	// A metadata repository that already carries the identical eka.yaml
+	// but no EKA file: reuse + reuse eka.yaml + generate EKA + validate
+	// (the backfill run).
 	os.WriteFile(filepath.Join(dir, "eka.yaml"), generatedEkaYAML(d, a), 0o644)
 	d, err = Discover(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	plan = BuildPlan(dir, d, a)
-	if len(plan) != 3 {
-		t.Fatalf("metadata repo must plan reuse + reuse eka.yaml + validate, got %d actions", len(plan))
+	if len(plan) != 4 {
+		t.Fatalf("metadata repo must plan reuse + reuse eka.yaml + generate EKA + validate, got %d actions", len(plan))
 	}
 	if plan[1].Kind != ActionReuse || plan[1].Path != "eka.yaml" {
 		t.Errorf("identical eka.yaml must be planned as reuse, got %+v", plan[1])
 	}
-	if plan[2].Kind != ActionValidate {
-		t.Errorf("last action must be validate, got %+v", plan[2])
+	if plan[2].Kind != ActionGenerateEKA || plan[2].Path != "EKA" {
+		t.Errorf("missing EKA declaration must be backfilled with a generate action, got %+v", plan[2])
+	}
+	if plan[3].Kind != ActionValidate {
+		t.Errorf("last action must be validate, got %+v", plan[3])
 	}
 
 	// A metadata repository whose eka.yaml differs from the
@@ -168,11 +185,14 @@ func TestBuildPlanExistingEkaRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan = BuildPlan(dir, d, a)
-	if len(plan) != 3 {
-		t.Fatalf("differing eka.yaml must keep the 3-action plan, got %d actions", len(plan))
+	if len(plan) != 4 {
+		t.Fatalf("differing eka.yaml must keep the 4-action plan, got %d actions", len(plan))
 	}
 	if plan[1].Kind != ActionOverwriteConfirm || plan[1].Path != "eka.yaml" {
 		t.Errorf("differing eka.yaml must be planned as overwrite-confirm, got %+v", plan[1])
+	}
+	if plan[2].Kind != ActionGenerateEKA {
+		t.Errorf("the EKA declaration must still be planned (backfill), got %+v", plan[2])
 	}
 }
 
@@ -271,6 +291,152 @@ func TestBuildPlanEkaYAMLReuseAndOverwrite(t *testing.T) {
 	}
 }
 
+// TestBuildPlanStandardDeclarationContract pins the EKA declaration
+// plan semantics (sto:init-standard-declaration): a missing file is
+// generated with the embedded declaration bytes, an identical file is
+// reused, a differing file is planned as overwrite-confirm — never
+// replaced silently — and the plan is deterministic.
+func TestBuildPlanStandardDeclarationContract(t *testing.T) {
+	want := generatedEKA()
+	if len(want) == 0 {
+		t.Fatal("generated EKA content must not be empty")
+	}
+	if !bytes.HasPrefix(want, []byte("EKA STANDARD\nVersion ")) {
+		t.Errorf("generated EKA content must start with the standard header and Version X.Y line:\n%s", want[:80])
+	}
+
+	dir := t.TempDir()
+	d, err := Discover(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := DefaultAnswers(d)
+
+	// Missing file: generated with the exact embedded bytes.
+	plan := BuildPlan(dir, d, a)
+	var gen *Action
+	for i := range plan {
+		if plan[i].Kind == ActionGenerateEKA {
+			gen = &plan[i]
+		}
+	}
+	if gen == nil {
+		t.Fatal("plan must contain the generate-EKA action on a fresh target")
+	}
+	if gen.Path != "EKA" {
+		t.Errorf("EKA action path = %q, want EKA", gen.Path)
+	}
+	if !bytes.Equal(gen.Content, want) {
+		t.Error("EKA action must carry the embedded declaration bytes")
+	}
+	// Deterministic: two plans carry identical content.
+	plan2 := BuildPlan(dir, d, a)
+	for i := range plan2 {
+		if plan2[i].Kind == ActionGenerateEKA && !bytes.Equal(plan2[i].Content, gen.Content) {
+			t.Error("EKA content must be deterministic across plan builds")
+		}
+	}
+
+	// Identical existing file: reuse.
+	if err := os.WriteFile(filepath.Join(dir, "EKA"), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err = Discover(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan = BuildPlan(dir, d, a)
+	found := false
+	for _, act := range plan {
+		if act.Path == "EKA" && act.Kind != ActionReuse {
+			t.Errorf("identical EKA file must be planned as reuse, got %s", act.Kind)
+		}
+		if act.Path == "EKA" && act.Kind == ActionReuse {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("identical EKA file must be planned as reuse")
+	}
+
+	// Differing existing file: overwrite-confirm with the content.
+	if err := os.WriteFile(filepath.Join(dir, "EKA"), []byte("EKA STANDARD\nVersion 9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err = Discover(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan = BuildPlan(dir, d, a)
+	found = false
+	for _, act := range plan {
+		if act.Path == "EKA" && act.Kind != ActionOverwriteConfirm {
+			t.Errorf("differing EKA file must be planned as overwrite-confirm, got %s", act.Kind)
+		}
+		if act.Path == "EKA" && act.Kind == ActionOverwriteConfirm {
+			found = true
+			if !bytes.Equal(act.Content, want) {
+				t.Error("overwrite-confirm EKA action must carry the embedded declaration bytes")
+			}
+		}
+	}
+	if !found {
+		t.Error("differing EKA file must be planned as overwrite-confirm")
+	}
+}
+
+// TestApplyStandardDeclarationWrites pins the generation side of the
+// EKA action: Apply writes the embedded declaration bytes and reports
+// the created file.
+func TestApplyStandardDeclarationWrites(t *testing.T) {
+	dir := t.TempDir()
+	plan := []Action{
+		{Kind: ActionGenerateEKA, Path: "EKA", Content: generatedEKA()},
+	}
+	res, err := Apply(dir, plan, applyOpts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "EKA"))
+	if err != nil {
+		t.Fatalf("EKA file missing after apply: %v", err)
+	}
+	if !bytes.Equal(data, generatedEKA()) {
+		t.Error("applied EKA file must equal the embedded declaration bytes")
+	}
+	if len(res.CreatedFiles) != 1 || res.CreatedFiles[0] != "EKA" {
+		t.Errorf("created files must be exactly [EKA], got %v", res.CreatedFiles)
+	}
+}
+
+// TestApplyStandardDeclarationSkip pins the overwrite-confirm contract
+// on the EKA file: non-interactive apply must never replace a differing
+// existing declaration.
+func TestApplyStandardDeclarationSkip(t *testing.T) {
+	dir := t.TempDir()
+	original := []byte("EKA STANDARD\nVersion 9.9\n")
+	if err := os.WriteFile(filepath.Join(dir, "EKA"), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := []Action{
+		{Kind: ActionOverwriteConfirm, Path: "EKA", Content: generatedEKA()},
+	}
+	res, err := Apply(dir, plan, applyOpts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "EKA"))
+	if !bytes.Equal(data, original) {
+		t.Error("non-interactive apply must never replace a differing EKA file")
+	}
+	if len(res.SkippedFiles) != 1 || res.SkippedFiles[0] != "EKA" {
+		t.Errorf("skipped files must be exactly [EKA], got %v", res.SkippedFiles)
+	}
+	if len(res.OverwrittenFiles) != 0 {
+		t.Errorf("no EKA overwrite may be reported, got %v", res.OverwrittenFiles)
+	}
+}
+
 // TestEkaYAMLNameFallback: an unusable basename (filesystem root) falls
 // back deterministically to the sanitized/fallback name so eka.yaml
 // always passes metadata.Parse.
@@ -338,6 +504,7 @@ func TestActionString(t *testing.T) {
 		{Action{Kind: ActionCreateDir, Path: "."}, "create dir: ."},
 		{Action{Kind: ActionCreateDir, Path: ".", Detail: "myproj"}, "create dir: myproj"},
 		{Action{Kind: ActionGenerateEkaYAML, Path: "eka.yaml"}, "generate file: eka.yaml (repository identity)"},
+		{Action{Kind: ActionGenerateEKA, Path: "EKA"}, "generate file: EKA (standard declaration)"},
 		{Action{Kind: ActionReuse, Path: "eka.yaml"}, "reuse: eka.yaml"},
 		{Action{Kind: ActionReuse, Path: "t", Detail: "existing EKA repository (already initialized)"}, "reuse: t (existing EKA repository (already initialized))"},
 		{Action{Kind: ActionOverwriteConfirm, Path: "eka.yaml"}, "overwrite confirm: eka.yaml"},
