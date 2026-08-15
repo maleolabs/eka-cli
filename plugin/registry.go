@@ -7,12 +7,14 @@ import "sort"
 // executable identity, e.g. "mcp") to the canonical GitHub repository
 // its release assets are fetched from.
 //
-// Two-tier trust model: an official registry entry is full-trust by
-// definition — the registry IS the trust decision, made by the CLI
-// maintainers. Anything not in the registry is untrusted and out of
-// scope for `eka plugin install`. (The trust-model work item refines
-// what full-trust permits; today the registry only resolves the source
-// repository.)
+// Two-tier trust model (sto:plugin-trust-model): an official registry
+// entry is full-trust by definition — the registry IS the trust
+// decision, made by the CLI maintainers. Registry-listed names install
+// without a prompt; anything else is third-party and requires explicit
+// consent after its source and capabilities are surfaced. The registry
+// is the single source of truth for what "official" means: a name is
+// official iff it resolves here (all entries are maleolabs-maintained
+// today).
 
 // Repo is a canonical GitHub repository reference (owner/name), e.g.
 // {Owner: "maleolabs", Name: "eka-mcp"}.
