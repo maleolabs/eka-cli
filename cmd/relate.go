@@ -159,11 +159,11 @@ Exit codes:
 	// comma-joined values accumulate (never silently override), the same
 	// flag contract as `eka new` (collectRelationships reads these
 	// names).
-	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
+	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets; comma-separated values and repeated flags accumulate")
 	return cmd
 }
 

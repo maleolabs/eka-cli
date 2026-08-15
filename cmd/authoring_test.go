@@ -94,6 +94,31 @@ func TestAuthoringHelpExitsZero(t *testing.T) {
 	}
 }
 
+// TestNewHelpDocumentsFlagAccumulation (sto:cli-polish): the hidden
+// relationship comma-join constraint — comma-joined values AND repeated
+// relationship flags accumulate, never silently override — is
+// discoverable in the `eka new` help (long help and every relationship
+// flag line).
+func TestNewHelpDocumentsFlagAccumulation(t *testing.T) {
+	code, text, _ := runIn([]string{"new", "--help"})
+	if code != 0 {
+		t.Fatalf("new --help: exit = %d, want 0", code)
+	}
+	for _, want := range []string{
+		"comma-joined",
+		"values and repeated flags accumulate",
+		"--depends-on",
+		"--derives-from",
+		"--validates",
+		"--supersedes",
+		"--amends",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("new --help missing %q:\n%s", want, text)
+		}
+	}
+}
+
 // TestNewScaffoldsDraft: `eka new` inside a registered repository
 // scaffolds the draft under the repository's project with the
 // repository's default namespace, and the template carries the type's

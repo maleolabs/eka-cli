@@ -121,3 +121,56 @@ func TestVersionJSONFlagHelp(t *testing.T) {
 		t.Errorf("version --help must document --json, got:\n%s", out.String())
 	}
 }
+
+// TestVersionFlag: the top-level `eka --version` flag (sto:cli-polish)
+// prints the CLI version — the SAME single source as `eka version` (the
+// ldflags-injected `version` variable) — as one deterministic line
+// byte-identical to the first line `eka version` emits, and exits 0
+// with empty stderr.
+func TestVersionFlag(t *testing.T) {
+	code, out, errText := runIn([]string{"--version"})
+	if code != 0 {
+		t.Fatalf("--version: exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if errText != "" {
+		t.Errorf("--version: stderr must be empty, got %q", errText)
+	}
+	if out != "  eka "+version+"\n" {
+		t.Errorf("--version output = %q, want %q (the first line of 'eka version')", out, "  eka "+version+"\n")
+	}
+
+	// Agreement with `eka version`: the first line of `eka version` is
+	// byte-identical to `eka --version` — both derive from `version`
+	// and render through the same presentation writer.
+	code, versionOut, _ := runIn([]string{"version"})
+	if code != 0 {
+		t.Fatalf("version: exit = %d, want 0", code)
+	}
+	if !strings.HasPrefix(versionOut, out) {
+		t.Errorf("eka version must start with the eka --version line %q, got:\n%s", out, versionOut)
+	}
+
+	// Deterministic: two runs produce identical bytes.
+	_, out2, _ := runIn([]string{"--version"})
+	if out != out2 {
+		t.Errorf("--version is not deterministic")
+	}
+}
+
+// TestVersionFlagDocumented: the --version flag is discoverable in the
+// root help (persistent flag) and the landing points at it.
+func TestVersionFlagDocumented(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"help"}} {
+		var out, errb bytes.Buffer
+		if code := Execute(args, strings.NewReader(""), &out, &errb); code != 0 {
+			t.Errorf("args %v: exit = %d, want 0", args, code)
+		}
+		if !strings.Contains(out.String(), "--version") {
+			t.Errorf("args %v: root help must document --version:\n%s", args, out.String())
+		}
+	}
+	_, landing, _ := runIn(nil)
+	if !strings.Contains(landing, "eka --version") {
+		t.Errorf("landing must point at 'eka --version':\n%s", landing)
+	}
+}

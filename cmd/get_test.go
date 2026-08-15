@@ -354,6 +354,29 @@ func TestGetNoArgExitsTwo(t *testing.T) {
 	}
 }
 
+// TestGetHelpDocumentsTicketProjection (sto:cli-polish): the hidden
+// ticket projection constraint — the generated tkt- units carry a
+// "Generated — State Projection. Do NOT edit state here" header and
+// their state must never be edited — is discoverable in the help of
+// `eka get` and of the `eka get ticket` subcommand.
+func TestGetHelpDocumentsTicketProjection(t *testing.T) {
+	for _, args := range [][]string{{"get", "--help"}, {"get", "ticket", "--help"}} {
+		code, text, _ := runIn(args)
+		if code != 0 {
+			t.Errorf("args %v: exit = %d, want 0", args, code)
+		}
+		for _, want := range []string{
+			"State Projection",
+			"edit state",
+			"Generated",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("args %v: help missing %q:\n%s", args, want, text)
+			}
+		}
+	}
+}
+
 // TestGetHelpExitsZero covers the help entry points: the long help
 // documents the machine interface purpose, the query model, the stable
 // schema, the stdout contract, the exit codes, the retrieval option
@@ -567,6 +590,111 @@ func TestGetIdentityCompactGolden(t *testing.T) {
 	pb, _ := json.Marshal(b)
 	if string(pa) != string(pb) {
 		t.Errorf("compact and pretty must carry the same document")
+	}
+}
+
+// TestGetCompactEveryUnitType (sto:cli-polish): --compact produces
+// non-empty single-line JSON for an identity lookup of EVERY unit type
+// in the fixture (adr, epc, plan, trc, scp, sto, ts, tkt, bug, ch,
+// cmt, ctr) — no type has a missing or gated compact renderer — and
+// every compact document parses to the same object as its pretty form.
+func TestGetCompactEveryUnitType(t *testing.T) {
+	seedGetRepo(t, nil)
+	// One canonical form per unit type present in the view fixture.
+	identities := []string{
+		"eka-view-fixture/adr:001-login-serialization:1",
+		"eka-view-fixture/epc:auth:1",
+		"eka-view-fixture/plan:roadmap-2026:1",
+		"eka-view-fixture/trc:spec-trace:1",
+		"eka-view-fixture/scp:wave-2:1",
+		"eka-view-fixture/sto:alpha:1",
+		"eka-view-fixture/ts:gamma:1",
+		"eka-view-fixture/tkt:sto-beta-multi:1",
+		"eka-view-fixture/bug:delta:1",
+		"eka-view-fixture/ch:epsilon:1",
+		"eka-view-fixture/cmt:delta-implementation:1",
+		"eka-view-fixture/ctr:wave-1:1",
+	}
+	for _, id := range identities {
+		code, out, errText := runIn([]string{"get", id, "--compact"})
+		if code != 0 {
+			t.Errorf("%s: exit = %d, want 0\nstderr: %s", id, code, errText)
+			continue
+		}
+		if out == "" {
+			t.Errorf("%s: --compact output must not be empty", id)
+			continue
+		}
+		if strings.Contains(strings.TrimSuffix(out, "\n"), "\n") {
+			t.Errorf("%s: compact output must be a single line plus a trailing newline, got %q", id, out)
+		}
+		if !strings.HasSuffix(out, "\n") {
+			t.Errorf("%s: compact output must end with a newline, got %q", id, out)
+		}
+		var compact, pretty map[string]any
+		if err := json.Unmarshal([]byte(out), &compact); err != nil {
+			t.Errorf("%s: compact output must be parseable JSON: %v\n%q", id, err, out)
+			continue
+		}
+		code, prettyOut, _ := runIn([]string{"get", id})
+		if code != 0 {
+			t.Errorf("%s: pretty run: exit = %d, want 0", id, code)
+			continue
+		}
+		if err := json.Unmarshal([]byte(prettyOut), &pretty); err != nil {
+			t.Errorf("%s: pretty output must be parseable JSON: %v", id, err)
+			continue
+		}
+		ca, _ := json.Marshal(compact)
+		pa, _ := json.Marshal(pretty)
+		if string(ca) != string(pa) {
+			t.Errorf("%s: compact and pretty must carry the same document", id)
+		}
+	}
+}
+
+// TestGetCompactEveryQuery (sto:cli-polish): --compact produces
+// non-empty single-line JSON for every domain query, the containers
+// query, an empty collection (type filter matching nothing) and the
+// ticket subcommand — the complete get query surface.
+func TestGetCompactEveryQuery(t *testing.T) {
+	seedGetRepo(t, nil)
+	type scenario struct {
+		args []string
+	}
+	scenarios := []scenario{
+		{[]string{"get", "discovery", "--compact"}},
+		{[]string{"get", "architecture", "--compact"}},
+		{[]string{"get", "planning", "--compact"}},
+		{[]string{"get", "execution", "--compact"}},
+		{[]string{"get", "operations", "--compact"}},
+		{[]string{"get", "containers", "--compact"}},
+		// An empty collection must still emit the envelope, never an
+		// empty stdout.
+		{[]string{"get", "planning", "--compact", "--type", "no-such-type"}},
+		// The ticket subcommand's compact path.
+		{[]string{"get", "ticket", "tkt-sto-beta-multi", "--compact"}},
+	}
+	for _, sc := range scenarios {
+		code, out, errText := runIn(sc.args)
+		if code != 0 {
+			t.Errorf("%v: exit = %d, want 0\nstderr: %s", sc.args, code, errText)
+			continue
+		}
+		if out == "" {
+			t.Errorf("%v: --compact output must not be empty", sc.args)
+			continue
+		}
+		if strings.Contains(strings.TrimSuffix(out, "\n"), "\n") {
+			t.Errorf("%v: compact output must be a single line plus a trailing newline, got %q", sc.args, out)
+		}
+		if !strings.HasSuffix(out, "\n") {
+			t.Errorf("%v: compact output must end with a newline, got %q", sc.args, out)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Errorf("%v: compact output must be parseable JSON: %v\n%q", sc.args, err, out)
+		}
 	}
 }
 
