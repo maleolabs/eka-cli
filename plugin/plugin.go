@@ -52,6 +52,13 @@ type Manifest struct {
 	Description string `json:"description"`
 	// Artifacts lists the installable artifact families.
 	Artifacts []Artifact `json:"artifacts"`
+	// Capabilities declares what the plugin can do: "install" (artifact
+	// installation) and/or "mcp" (MCP server). Absent (nil) for legacy
+	// plugins that predate the field.
+	Capabilities []string `json:"capabilities"`
+	// Source is the canonical source repository of the plugin
+	// (e.g. "github.com/maleolabs/eka-mcp"). Empty for legacy plugins.
+	Source string `json:"source"`
 }
 
 // Artifact is one installable family the plugin can install into an agent
@@ -105,6 +112,18 @@ func DefaultPluginPaths(home string) []string {
 		paths = append(paths, filepath.Join(home, pluginDirDefault))
 	}
 	return paths
+}
+
+// PluginDir returns the single directory plugins are installed into:
+// $EKA_PLUGIN_DIR when set, else <home>/.eka/plugins ("" when neither is
+// available). It is the first entry of DefaultPluginPaths — the install
+// target of `eka plugin install`.
+func PluginDir(home string) string {
+	paths := DefaultPluginPaths(home)
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }
 
 // Discover finds plugin executables: any "eka-*" executable on PATH

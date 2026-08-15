@@ -16,7 +16,7 @@ const fakeExe = `#!/bin/sh
 case "$1" in
   manifest)
     cat <<'EOF'
-{"contract":"v1","name":"mcp","version":"2.3.4","description":"fake","artifacts":[{"kind":"skills","entries":["eka-a","eka-b"]}]}
+{"contract":"v1","name":"mcp","version":"2.3.4","description":"fake","artifacts":[{"kind":"skills","entries":["eka-a","eka-b"]}],"capabilities":["install","mcp"],"source":"github.com/maleolabs/eka-mcp"}
 EOF
     ;;
     install)
@@ -111,6 +111,59 @@ func TestManifestParsesJSON(t *testing.T) {
 	}
 	if len(m.Artifacts[0].Entries) != 2 || m.Artifacts[0].Entries[0] != "eka-a" {
 		t.Errorf("entries = %+v", m.Artifacts[0].Entries)
+	}
+	// The eka-mcp manifest shape (cross-repo contract pin): capabilities
+	// and source must parse.
+	if len(m.Capabilities) != 2 || m.Capabilities[0] != "install" || m.Capabilities[1] != "mcp" {
+		t.Errorf("capabilities = %+v, want [install mcp]", m.Capabilities)
+	}
+	if m.Source != "github.com/maleolabs/eka-mcp" {
+		t.Errorf("source = %q, want github.com/maleolabs/eka-mcp", m.Source)
+	}
+}
+
+// TestManifestLegacyWithoutCapabilities: a pre-contract-pin manifest
+// (no capabilities/source fields) still parses — the fields are
+// optional and absent for legacy plugins.
+func TestManifestLegacyWithoutCapabilities(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+printf '%s' '{"contract":"v1","name":"legacy","version":"1.0.0","description":"old","artifacts":[]}'
+`
+	exe := filepath.Join(bin, "eka-legacy")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, err := (Plugin{Exe: exe}).Manifest()
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if m.Name != "legacy" || m.Version != "1.0.0" {
+		t.Errorf("manifest = %+v", m)
+	}
+	if m.Capabilities != nil || m.Source != "" {
+		t.Errorf("legacy manifest must carry empty capabilities/source, got %+v / %q", m.Capabilities, m.Source)
+	}
+}
+
+// TestManifestUnknownFieldsIgnored: unknown fields from NEWER manifests
+// must not break parsing (standard encoding/json behavior) — the CLI
+// stays forward-compatible with the contract.
+func TestManifestUnknownFieldsIgnored(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+printf '%s' '{"contract":"v1","name":"mcp","version":"2.3.4","futureField":{"nested":1},"capabilities":["install","mcp"],"source":"github.com/maleolabs/eka-mcp","another":"x"}'
+`
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, err := (Plugin{Exe: exe}).Manifest()
+	if err != nil {
+		t.Fatalf("Manifest must ignore unknown fields: %v", err)
+	}
+	if m.Name != "mcp" || len(m.Capabilities) != 2 || m.Source != "github.com/maleolabs/eka-mcp" {
+		t.Errorf("manifest = %+v", m)
 	}
 }
 
