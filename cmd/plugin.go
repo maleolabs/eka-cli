@@ -154,9 +154,18 @@ never touches the EKA workspace or the canonical store. Official
 plugins are resolved through the CLI's built-in registry and every
 downloaded binary is SHA-256 verified against the release's
 SHA256SUMS.txt before it is installed (fail-closed: a mismatch
-refuses).`,
+refuses).
+
+  install <name>  install (or replace) a plugin's latest verified
+                  release from GitHub
+  list            list discovered and installed plugins with their
+                  trust tier (official / third-party)
+  remove <name>   remove an installed plugin
+  update [name]   update an installed plugin to its latest verified
+                  release (--all: every installed official plugin)`,
 	}
-	cmd.AddCommand(newPluginInstallCommand())
+	cmd.AddCommand(newPluginInstallCommand(), newPluginListCommand(),
+		newPluginRemoveCommand(), newPluginUpdateCommand())
 	return cmd
 }
 
@@ -274,80 +283,27 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 	if err != nil {
 		return refuse(cmd, "plugin install refused: %s", err)
 	}
-	tag, err := r.latestTag(repo)
+	tag, size, want, err := r.resolveLatestRelease(repo, asset)
 	if err != nil {
-		return refuse(cmd, "plugin install refused: cannot resolve the latest release of %s: %s", repo, err)
+		return refuse(cmd, "plugin install refused: %s", err)
 	}
-	sums, err := r.fetchChecksums(repo, tag)
-	if err != nil {
-		return refuse(cmd, "plugin install refused: cannot fetch SHA256SUMS.txt of %s: %s", repo, err)
-	}
-	want, ok := checksumForAsset(sums, asset)
-	if !ok {
-		return refuse(cmd, "plugin install refused: SHA256SUMS.txt of %s carries no entry for %s (fail-closed)", repo, asset)
-	}
-	target := filepath.Join(r.pluginDir, "eka-"+name)
-	if r.goos == "windows" {
-		target += ".exe" // the installed name mirrors the asset suffix
-	}
+	target := r.installTarget(name)
 	replacing := fileExists(target)
-	size := r.assetSize(repo, tag, asset)
 
 	r.renderHeader(s, name, repo, asset, tag)
 	if replacing {
 		fmt.Fprintln(s.W, s.Warning("replacing the existing eka-"+name+" installation"))
 	}
 
-	if err := os.MkdirAll(r.pluginDir, 0o755); err != nil {
-		return refuse(cmd, "plugin install refused: cannot create %s: %s", r.pluginDir, err)
-	}
-	tmp, err := os.CreateTemp(r.pluginDir, ".eka-plugin-*")
+	tmp, err := r.downloadVerified(s, repo, tag, asset, size, want)
 	if err != nil {
-		return refuse(cmd, "plugin install refused: cannot stage the download in %s: %s", r.pluginDir, err)
+		return refuse(cmd, "plugin install refused: %s", err)
 	}
-	tmpName := tmp.Name()
 	// Leftover cleanup: after a successful rename the temp path no
 	// longer exists and the deferred removal is a no-op.
-	defer os.Remove(tmpName)
+	defer os.Remove(tmp)
 
-	// A blank line releases the header before the progress bar (the
-	// update command's layout).
-	fmt.Fprintln(s.W)
-
-	bar := ui.NewDownloadBar(s, asset, size)
-	if err := r.downloadAsset(tmp, repo, tag, asset, bar); err != nil {
-		tmp.Close()
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: download of %s failed: %s", asset, err)
-	}
-	if fi, err := tmp.Stat(); err == nil && fi.Size() == 0 {
-		tmp.Close()
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: downloaded asset %s is empty", asset)
-	}
-	if err := tmp.Close(); err != nil {
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: cannot finalize the download: %s", err)
-	}
-
-	// Fail-closed verification against the checksum resolved from the
-	// SAME tag-pinned release as the download.
-	got, err := sha256File(tmpName)
-	if err != nil {
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: cannot hash the downloaded %s: %s", asset, err)
-	}
-	if !strings.EqualFold(got, want) {
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: checksum mismatch for %s (expected %s, got %s)", asset, want, got)
-	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
-		bar.Abort()
-		return refuse(cmd, "plugin install refused: cannot make %s executable: %s", tmpName, err)
-	}
-	bar.Finish()
-
-	if err := os.Rename(tmpName, target); err != nil {
+	if err := os.Rename(tmp, target); err != nil {
 		return refuse(cmd, "plugin install refused: cannot install %s: %s%s", target, err, r.windowsInstallHint())
 	}
 
@@ -367,6 +323,97 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 	sm.Add("Installed", target)
 	sm.Render()
 	return nil
+}
+
+// installTarget is the installed binary path of a plugin: the plugin
+// directory with the eka-<name> executable contract (the .exe suffix
+// on windows mirrors the asset name).
+func (r *pluginInstallRunner) installTarget(name string) string {
+	target := filepath.Join(r.pluginDir, "eka-"+name)
+	if r.goos == "windows" {
+		target += ".exe"
+	}
+	return target
+}
+
+// resolveLatestRelease resolves the latest release of a plugin's
+// repository for the platform asset: the version tag (GitHub API),
+// the asset's Content-Length (HEAD probe; 0 when unknown —
+// presentation only) and the expected SHA-256 checksum from the SAME
+// tag-pinned SHA256SUMS.txt. Any failure refuses the run — a release
+// that cannot be fully resolved is a broken release.
+func (r *pluginInstallRunner) resolveLatestRelease(repo plugin.Repo, asset string) (tag string, size int64, want string, err error) {
+	tag, err = r.latestTag(repo)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("cannot resolve the latest release of %s: %w", repo, err)
+	}
+	sums, err := r.fetchChecksums(repo, tag)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("cannot fetch SHA256SUMS.txt of %s: %w", repo, err)
+	}
+	want, ok := checksumForAsset(sums, asset)
+	if !ok {
+		return "", 0, "", fmt.Errorf("SHA256SUMS.txt of %s carries no entry for %s (fail-closed)", repo, asset)
+	}
+	return tag, r.assetSize(repo, tag, asset), want, nil
+}
+
+// downloadVerified downloads the platform asset of a tag-pinned
+// release, verifies its SHA-256 checksum fail-closed (the checksum
+// resolved from the SAME tag-pinned release as the download), makes
+// the staged binary executable and returns its temp path — the caller
+// renames the staged file into place. Any failure removes the partial
+// download; unverified bytes are never installed.
+func (r *pluginInstallRunner) downloadVerified(s *ui.Style, repo plugin.Repo, tag, asset string, size int64, want string) (string, error) {
+	if err := os.MkdirAll(r.pluginDir, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", r.pluginDir, err)
+	}
+	tmp, err := os.CreateTemp(r.pluginDir, ".eka-plugin-*")
+	if err != nil {
+		return "", fmt.Errorf("cannot stage the download in %s: %w", r.pluginDir, err)
+	}
+	tmpName := tmp.Name()
+	fail := func(err error) (string, error) {
+		tmp.Close()
+		os.Remove(tmpName)
+		return "", err
+	}
+
+	// A blank line releases the header before the progress bar (the
+	// update command's layout).
+	fmt.Fprintln(s.W)
+
+	bar := ui.NewDownloadBar(s, asset, size)
+	if err := r.downloadAsset(tmp, repo, tag, asset, bar); err != nil {
+		bar.Abort()
+		return fail(fmt.Errorf("download of %s failed: %w", asset, err))
+	}
+	if fi, err := tmp.Stat(); err == nil && fi.Size() == 0 {
+		bar.Abort()
+		return fail(fmt.Errorf("downloaded asset %s is empty", asset))
+	}
+	if err := tmp.Close(); err != nil {
+		bar.Abort()
+		return fail(fmt.Errorf("cannot finalize the download: %w", err))
+	}
+
+	// Fail-closed verification against the checksum resolved from the
+	// SAME tag-pinned release as the download.
+	got, err := sha256File(tmpName)
+	if err != nil {
+		bar.Abort()
+		return fail(fmt.Errorf("cannot hash the downloaded %s: %w", asset, err))
+	}
+	if !strings.EqualFold(got, want) {
+		bar.Abort()
+		return fail(fmt.Errorf("checksum mismatch for %s (expected %s, got %s)", asset, want, got))
+	}
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		bar.Abort()
+		return fail(fmt.Errorf("cannot make %s executable: %w", tmpName, err))
+	}
+	bar.Finish()
+	return tmpName, nil
 }
 
 // renderHeader prints the context header (the single-operation
