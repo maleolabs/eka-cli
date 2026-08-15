@@ -11,4 +11,4 @@ artifact:
 project:
     description: EKA CLI — the official command-line interface for the EKA engineering knowledge standard
     name: eka-cli
-    version: 1.0.0
+    version: 1.1.0
