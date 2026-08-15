@@ -1,0 +1,1 @@
+{"description":"Clarify version axes: `eka version --json` should report ALL axes (standard corpus, RSF serialization, exchange spec, machine schema, eka.yaml schema, CLI) from a single source; standardVersion must not be hardcoded.","acceptanceCriteria":"`eka version --json` reports every axis; standardVersion derives from one source."}

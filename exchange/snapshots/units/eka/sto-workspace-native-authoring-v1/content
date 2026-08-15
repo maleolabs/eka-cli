@@ -1,0 +1,1 @@
+{"description":"Allow authoring workspace-native knowledge without being inside a registered repository; `eka new` currently resolves project/namespace only from the current directory's eka.yaml.","acceptanceCriteria":"`eka new` can target a project/namespace explicitly outside a repo context."}

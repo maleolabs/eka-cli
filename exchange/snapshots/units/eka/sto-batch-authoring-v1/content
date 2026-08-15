@@ -1,0 +1,1 @@
+{"description":"Add batch create/publish: `eka new --file batch.json` (multiple targets) and `eka publish --all/--pending` in topological order (referenced drafts first). Removes per-object loops.","acceptanceCriteria":"A planning unit (plan + work items + container + tickets) can be created/published in one command in valid topological order."}

@@ -1,0 +1,1 @@
+{"description":"Fix `eka new --phase`: the scaffolded draft fails R7 because the phase field has no change-log entry. Scaffold the phase change-log entry alongside the field.","acceptanceCriteria":"`eka new plan:x --phase mvp` then `eka draft validate` passes (no R7 phase error)."}

@@ -1,0 +1,1 @@
+{"description":"Add `workflow_dispatch` to the release workflow so a release can be triggered manually without deleting + re-pushing the tag.","acceptanceCriteria":"A release can be triggered from Actions UI / gh workflow run without tag surgery."}

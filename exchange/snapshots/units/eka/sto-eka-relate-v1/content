@@ -1,0 +1,1 @@
+{"description":"Add a relationship-only command (`eka relate \u003ctarget\u003e --depends-on X`) so adding an edge does not require a full re-publish (new instance) of the artifact.","acceptanceCriteria":"Adding a relationship to an existing artifact does not create instance churn."}

@@ -1,0 +1,1 @@
+{"description":"Fix `eka draft validate` rejecting draft-to-draft references: a draft referencing another draft (both unpublished) fails R5. Apply draft tolerance when the unresolved target is itself a draft.","acceptanceCriteria":"Drafts referencing other drafts validate; published objects referencing missing targets still flag."}
