@@ -421,11 +421,11 @@ Exit codes:
 	cmd.Flags().String(flagNewPhase, "", "phase context (scp-/plan- only)")
 	// Relationship targets: StringSlice — repeated occurrences and
 	// comma-joined values accumulate (never silently override).
-	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets, comma-separated and repeatable (containers require a plan- reference)")
-	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
-	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
+	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets; comma-separated values and repeated flags accumulate (containers require a plan- reference)")
+	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets; comma-separated values and repeated flags accumulate")
 	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above; exclusive with the single-target flags)")
 	cmd.Flags().String(flagProject, "", "explicit project for workspace-native authoring: a project registered in the workspace (run 'eka project list'), targeted from any directory; requires --namespace or a qualified target")
 	cmd.Flags().String(flagNewNamespace, "", "explicit namespace for workspace-native authoring: overrides the repository/target namespace (--project, when given, must be registered)")

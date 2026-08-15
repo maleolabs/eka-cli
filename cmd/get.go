@@ -180,6 +180,14 @@ only. Any other combination is allowed: --compact and --no-content
 apply everywhere; traversal flags combine with each other and with
 --timeline on the same identity lookup.
 
+The ticket subcommand ('eka get ticket <target>') retrieves one
+ticket's projected status (schema "eka-ticket-v1"). tkt- units are
+GENERATED state projections — their files carry the header "Generated
+— State Projection. Do NOT edit state here; refresh on read." — so
+never edit a projection's state: transition the referenced work item
+instead ('eka transition <work-item-id> <state>'). Run 'eka get
+ticket --help' for the full reference.
+
 The repository must be an EKA repository — a directory tree carrying
 eka.yaml (run 'eka init' to create one) — registered in the EKA
 workspace and synced first ('eka sync'). Run this command inside the

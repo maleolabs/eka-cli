@@ -116,6 +116,12 @@ func TestViewHelpExitsZero(t *testing.T) {
 		if !strings.Contains(text, "EKA workspace") {
 			t.Errorf("args %v: help must document the workspace canonical source:\n%s", args, text)
 		}
+		// The generated-projection constraint is discoverable
+		// (sto:cli-polish): the ticket projection help explains that
+		// tkt- units are generated state projections.
+		if !strings.Contains(text, "GENERATED state projections") {
+			t.Errorf("args %v: help must document the generated projection constraint:\n%s", args, text)
+		}
 	}
 }
 

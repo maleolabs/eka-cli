@@ -67,6 +67,31 @@ func TestRelateHelpExitsZero(t *testing.T) {
 	}
 }
 
+// TestRelateHelpDocumentsFlagAccumulation (sto:cli-polish): the hidden
+// relationship comma-join constraint — comma-joined values AND repeated
+// relationship flags accumulate, never silently override — is
+// discoverable in the `eka relate` help (long help and every
+// relationship flag line).
+func TestRelateHelpDocumentsFlagAccumulation(t *testing.T) {
+	code, text, _ := runIn([]string{"relate", "--help"})
+	if code != 0 {
+		t.Fatalf("relate --help: exit = %d, want 0", code)
+	}
+	for _, want := range []string{
+		"comma-joined",
+		"values and repeated flags accumulate",
+		"--depends-on",
+		"--derives-from",
+		"--validates",
+		"--supersedes",
+		"--amends",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("relate --help missing %q:\n%s", want, text)
+		}
+	}
+}
+
 // TestRelateAddsEdgeWithoutInstanceChurn is the acceptance test at CLI
 // level: `eka relate sto:item-a --depends-on sto:item-b` adds the edge
 // and `eka get` shows BOTH the edge AND the unchanged instance version

@@ -86,7 +86,11 @@ Projections (domain-first):
   ticket       one execution item's projected status: for a ticket
                (tkt-) derived from its referenced work item, for a
                direct work item (sto-/ts-/bug-/td-/ch-/spk-) its own
-               execution state (ticket body content is never read)
+               execution state (ticket body content is never read).
+               tkt- units are GENERATED state projections (their files
+               carry "Generated — State Projection. Do NOT edit state
+               here; refresh on read.") — never edit a projection's
+               state; transition the referenced work item instead
   document     ONE canonical document's detail of any type (the
                bare-argument resolution): identity, states,
                relationships, and the content sections
