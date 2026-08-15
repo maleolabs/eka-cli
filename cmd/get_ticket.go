@@ -89,10 +89,11 @@ or a direct work item id of any work item type.
 Projection constraint: tkt- units are GENERATED state projections —
 their tkt- file carries the header "Generated — State Projection. Do
 NOT edit state here; refresh on read.", and their projected status
-derives from the referenced work item's execution state. Never edit
-a projection's state (eka new/eka edit/eka relate/eka transition on a
-tkt- line): change the work item's state instead — 'eka transition
-<work-item-id> <state>'.
+derives from the referenced work item's execution state. Never
+hand-edit the generated state in a tkt- file, and never transition a
+tkt- line ('eka transition' refuses it as not transitionable): change
+the work item's state instead — 'eka transition <work-item-id>
+<state>'.
 
 The repository must be an EKA repository — a directory tree carrying
 eka.yaml (run 'eka init' to create one) — registered in the EKA
