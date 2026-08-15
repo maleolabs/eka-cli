@@ -36,30 +36,42 @@ func Declaration() []byte {
 	return declaration
 }
 
+// headerLine is the first line of the standard declaration file: the
+// header marking the compact consumer summary. The version line must
+// follow it immediately (line 2 of the file) — the shape is part of the
+// vendored asset contract.
+const headerLine = "EKA STANDARD"
+
 // versionLinePrefix marks the version line of the standard declaration
 // file: "Version X.Y" (the two-component scheme of a standard — no
 // patch line). The line is the single source the CLI's standard-version
-// reporting derives from.
+// reporting derives from. It must appear as the second line, directly
+// after the EKA STANDARD header.
 const versionLinePrefix = "Version "
 
 // Version parses the `Version X.Y` line of the embedded declaration and
-// returns the version value (e.g. "1.0"). It returns an error when the
-// line is missing or malformed — the embedded file is a compile-time
-// resource, so a failure here means the vendored asset is broken and the
-// binary must not claim a version.
+// returns the version value (e.g. "1.0"). The parse is anchored to the
+// file shape: line 1 must be the EKA STANDARD header and line 2 the
+// Version X.Y line — any other shape is rejected deterministically. The
+// embedded file is a compile-time resource, so a failure here means the
+// vendored asset is broken and the binary must not claim a version.
 func Version() (string, error) {
-	for _, line := range bytes.Split(declaration, []byte("\n")) {
-		trimmed := bytes.TrimSpace(line)
-		if !bytes.HasPrefix(trimmed, []byte(versionLinePrefix)) {
-			continue
-		}
-		v := string(bytes.TrimSpace(trimmed[len(versionLinePrefix):]))
-		if v == "" {
-			return "", fmt.Errorf("standard declaration version line %q is empty", trimmed)
-		}
-		return v, nil
+	lines := bytes.Split(declaration, []byte("\n"))
+	if len(lines) < 2 {
+		return "", fmt.Errorf("standard declaration is missing the %q header line", headerLine)
 	}
-	return "", fmt.Errorf("standard declaration is missing the %q line", versionLinePrefix)
+	if got := string(bytes.TrimSpace(lines[0])); got != headerLine {
+		return "", fmt.Errorf("standard declaration must start with the %q header line, got %q", headerLine, got)
+	}
+	line := bytes.TrimSpace(lines[1])
+	if !bytes.HasPrefix(line, []byte(versionLinePrefix)) {
+		return "", fmt.Errorf("standard declaration must carry the %q line as its second line, got %q", versionLinePrefix, line)
+	}
+	v := string(bytes.TrimSpace(line[len(versionLinePrefix):]))
+	if v == "" {
+		return "", fmt.Errorf("standard declaration version line %q is empty", line)
+	}
+	return v, nil
 }
 
 // MustVersion returns Version(), panicking when the embedded declaration

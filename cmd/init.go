@@ -116,7 +116,7 @@ Exit codes:
 		},
 	}
 	cmd.Flags().Bool("dry-run", false,
-		"preview the plan (identity file, git, validation); writes nothing")
+		"preview the plan (identity file, EKA declaration, git, validation); writes nothing")
 	cmd.Flags().String("project", "",
 		"fix the project id (eka.yaml project); a valid EKA identifier")
 	cmd.Flags().String("namespace", "",
