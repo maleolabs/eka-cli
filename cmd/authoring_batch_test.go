@@ -266,6 +266,56 @@ func TestNewBatchUsageErrors(t *testing.T) {
 	}
 }
 
+// TestNewBatchWorkspaceNativeOutsideRepo: the batch form of the
+// workspace-native path (sto:workspace-native-authoring) — from a
+// NON-repo directory, `eka new --file <batch> --project <registered>
+// --namespace <ns>` scaffolds the whole set under the explicit project;
+// a batch has no single target, so --project always requires --namespace.
+func TestNewBatchWorkspaceNativeOutsideRepo(t *testing.T) {
+	w, proj := workspaceWithProject(t, "atrium-api")
+	outside := t.TempDir()
+	t.Chdir(outside)
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "sto", "id": "a"},
+		{"type": "sto", "id": "b"},
+	})
+
+	// Acceptance: the explicit pair scaffolds the set outside any
+	// repository, under the registered project.
+	code, text, errText := runIn([]string{"new", "--file", path, "--project", proj, "--namespace", "atrium-api"})
+	if code != 0 {
+		t.Fatalf("workspace-native batch: exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, proj) {
+		t.Errorf("output must name the explicit project %s:\n%s", proj, text)
+	}
+	assertDraftNS(t, w, proj, "sto-a.json", "atrium-api")
+	assertDraftNS(t, w, proj, "sto-b.json", "atrium-api")
+
+	// --file + --project without --namespace: refused (a batch carries
+	// no target namespace).
+	code, _, errText = runIn([]string{"new", "--file", path, "--project", proj})
+	if code != 1 {
+		t.Errorf("batch --project without --namespace: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "requires --namespace") {
+		t.Errorf("stderr must demand --namespace, got %q", errText)
+	}
+	// --file + --namespace alone outside a repo: no project source.
+	code, _, errText = runIn([]string{"new", "--file", path, "--namespace", "atrium-api"})
+	if code != 1 {
+		t.Errorf("batch --namespace alone outside a repo: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errText, "cannot resolve a project here") {
+		t.Errorf("stderr must refuse the unresolvable project, got %q", errText)
+	}
+	// --file without flags outside a repo: the ADR-018 gate unchanged.
+	code, _, errText = runIn([]string{"new", "--file", path})
+	if code != 1 || !strings.Contains(errText, "is not an EKA repository (no eka.yaml)") {
+		t.Errorf("batch without flags outside a repo: exit = %d, %q; want 1 + the ADR-018 gate", code, errText)
+	}
+}
+
 // --- eka publish --all / --pending ------------------------------------
 
 // TestPublishAllPlanningUnit: the planning unit created by one `eka new

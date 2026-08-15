@@ -48,15 +48,35 @@ import (
 // repository an unqualified target resolves to repos.namespace;
 // outside one it is refused with the spec's hint.
 //
+// Workspace-native authoring (sto:workspace-native-authoring): `eka
+// new` also targets a project/namespace EXPLICITLY with --project and
+// --namespace — the drafts of the workspace live under
+// EKA_HOME/drafts/<project>/, so a draft can be scaffolded against any
+// project REGISTERED in the workspace (run 'eka project list') from
+// ANY directory, inside or outside a repository. The explicit path is
+// a deliberate step outside the repository identity: it never borrows
+// project/namespace from eka.yaml (ADR-017 D6 rejected --project as a
+// REPO OVERRIDE because an override that can differ from the immutable
+// identity is ambiguous; the explicit pair --project + --namespace is
+// the cross-project integration that D6's internal query slot kept the
+// door open for — deterministic, no ambiguity, and only for registered
+// projects). Publishing workspace-native drafts still requires a
+// repository context (the ADR-018 gate of publish/edit/discard
+// unchanged; the cross-project draft fallback resolves the draft from
+// any project).
+//
 // Repository context (ADR-018): an EKA repository is a directory tree
 // carrying eka.yaml. All four mutating commands (new, publish, edit,
 // discard) refuse deterministically when the walk-up finds no eka.yaml
-// — run 'eka init' first; there is no legacy mode.
+// — run 'eka init' first; there is no legacy mode. The ADR-018 gate
+// applies to the repository-context path only: an explicit
+// --project/--namespace target needs no repository at all.
 
 // Flag names of the authoring commands (declared once, shared by the
 // help text and the flag lookups).
 const (
 	flagProject          = "project"
+	flagNewNamespace     = "namespace"
 	flagNewDimension     = "dimension"
 	flagNewPhase         = "phase"
 	flagNewDependsOn     = "depends-on"
@@ -159,7 +179,19 @@ target is refused with a hint).
 
 The command requires an EKA repository: a directory tree carrying
 eka.yaml (run 'eka init' to create one — there is no legacy mode, so
-outside an EKA repository the command is refused).
+outside an EKA repository the command is refused), unless the scope is
+given explicitly: --project + --namespace target a project REGISTERED
+in the workspace (run 'eka project list') from any directory —
+workspace-native authoring, no repository needed. An explicit --project
+requires --namespace (or a qualified target) and must name a registered
+project; an explicit --namespace alone resolves the project from the
+repository context. The explicit path never reads eka.yaml: the draft's
+project/namespace come from the flags or the qualified target, and the
+cross-platform (D6) refusal does not apply to a deliberate explicit
+target. The draft lands under EKA_HOME/drafts/<project>/ and is
+published like any other draft: 'eka publish' (and edit/discard) still
+require a repository context, resolving the draft through the
+cross-project fallback.
 
 The template carries the full §3.2 schema (namespace, type, id,
 revision 1, the type's owned state fields with their initial values,
@@ -221,6 +253,13 @@ change-log authority).
 Flags:
   --file <path>         scaffold the batch in <path> instead of a
                         single target
+  --project <name>      explicit project for workspace-native authoring:
+                        a project REGISTERED in the workspace (run 'eka
+                        project list'), targeted from any directory;
+                        requires --namespace or a qualified target
+  --namespace <ns>      explicit namespace for workspace-native
+                        authoring: overrides the repository/target
+                        namespace (--project must be registered)
   --dimension <token>    primary knowledge dimension (knowledge types)
   --phase <value>        phase context (scp-/plan- only)
   --depends-on <ref>[,<ref>...]   relationship targets (also
@@ -247,7 +286,10 @@ Exit codes:
   eka new tkt:wave-7-item-1 --derives-from ctr:wave-7,sto:my-item
   eka new adr:001 --content-file proposal.json
   eka new plan:roadmap-v2 --phase milestone
-  eka new --file batch.json`,
+  eka new sto:my-item --project atrium --namespace atrium-api
+  eka new atrium-api/sto:my-item --project atrium
+  eka new --file batch.json
+  eka new --file batch.json --project atrium --namespace atrium-api`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			file, _ := cmd.Flags().GetString(flagNewBatchFile)
 			if file != "" {
@@ -282,7 +324,9 @@ Exit codes:
 					return err
 				}
 				defer r.Close()
-				return runNewBatch(cmd, r, by, file)
+				projectFlag, _ := cmd.Flags().GetString(flagProject)
+				nsFlag, _ := cmd.Flags().GetString(flagNewNamespace)
+				return runNewBatch(cmd, r, by, file, projectFlag, nsFlag)
 			}
 
 			ref, err := parseDraftTarget(args[0])
@@ -315,7 +359,9 @@ Exit codes:
 				return newUsage(cmd, err.Error())
 			}
 
-			project, ns, err := resolveNewScope(r, ref)
+			projectFlag, _ := cmd.Flags().GetString(flagProject)
+			nsFlag, _ := cmd.Flags().GetString(flagNewNamespace)
+			project, ns, err := resolveNewScope(r, ref, projectFlag, nsFlag)
 			if err != nil {
 				return refuse(cmd, "new: %v", err)
 			}
@@ -379,6 +425,8 @@ Exit codes:
 	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets, comma-separated and repeatable")
 	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets, comma-separated and repeatable")
 	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above; exclusive with the single-target flags)")
+	cmd.Flags().String(flagProject, "", "explicit project for workspace-native authoring: a project registered in the workspace (run 'eka project list'), targeted from any directory; requires --namespace or a qualified target")
+	cmd.Flags().String(flagNewNamespace, "", "explicit namespace for workspace-native authoring: overrides the repository/target namespace (--project must be registered)")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
 	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
 	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
@@ -395,21 +443,34 @@ func newUsage(cmd *cobra.Command, message string) error {
 }
 
 // resolveNewScope resolves the project and namespace of `eka new` per
-// spec §3.2 + D6, from the repository alone (no flags): the project is
-// the repository's project, the namespace is the target's namespace or
-// (unqualified) the repository's default namespace. A qualified target
-// whose namespace differs from the repository's namespace is refused —
-// cross-platform access is read-only, so writing into another
-// platform's namespace is never allowed.
+// spec §3.2 + D6. Two paths:
+//
+//   - Repo context (no --project/--namespace): the project is the
+//     repository's project, the namespace is the target's namespace or
+//     (unqualified) the repository's default namespace. A qualified
+//     target whose namespace differs from the repository's namespace
+//     is refused — cross-platform access is read-only, so writing into
+//     another platform's namespace is never allowed.
+//   - Workspace-native (--project and/or --namespace given,
+//     sto:workspace-native-authoring): the draft targets a project of
+//     the workspace registry DIRECTLY from any directory. The explicit
+//     path never borrows from the repository: an explicit --project
+//     must be a REGISTERED project (the projects table of the
+//     workspace; see projectRegistered) and an explicit --namespace
+//     (or a qualified target) must supply the namespace — a bare
+//     --project has no default namespace and is refused (ADR-017 D6
+//     rejected --project as a repo override; the explicit pair is the
+//     cross-project slot D6 kept open). --namespace alone resolves the
+//     project from the repository context.
 //
 // The repository context gate (ADR-018): an EKA repository is a
 // directory tree carrying eka.yaml — when the walk-up from the current
 // directory finds no eka.yaml the tree is not an EKA repository and
-// the command is refused deterministically (run 'eka init' first). A
-// metadata repository that is not registered yet (or whose namespace
-// was never resolved) keeps the spec's hints.
-func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns string, err error) {
-	ns = ref.Namespace
+// the repo-context path refuses deterministically (run 'eka init'
+// first). The explicit path needs no repository at all. A metadata
+// repository that is not registered yet (or whose namespace was never
+// resolved) keeps the spec's hints.
+func resolveNewScope(r *runtime.Runtime, ref conformance.Reference, projectFlag, nsFlag string) (project, ns string, err error) {
 	abs, aerr := filepath.Abs(".")
 	if aerr != nil {
 		return "", "", fmt.Errorf("cannot resolve the current directory: %w", aerr)
@@ -419,6 +480,16 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns
 	if ferr != nil {
 		return "", "", ferr
 	}
+
+	// Workspace-native authoring: the explicit pair targets a
+	// registered project from any directory (the ADR-018 gate and the
+	// D6 cross-namespace refusal are repo-context rules and do not
+	// apply to a deliberate explicit target).
+	if projectFlag != "" || nsFlag != "" {
+		return resolveExplicitScope(r, projectFlag, nsFlag, ref.Namespace, repo, found)
+	}
+
+	ns = ref.Namespace
 	if !found {
 		// The repository context gate (ADR-018): without eka.yaml the
 		// tree is not an EKA repository — deterministic refusal, never
@@ -451,6 +522,72 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns
 		return "", "", fmt.Errorf("cannot resolve a project here; run inside a registered repository")
 	}
 	return project, ns, nil
+}
+
+// resolveExplicitScope resolves the project and namespace of the
+// workspace-native authoring path (--project/--namespace given), shared
+// by the single-target and the batch forms of `eka new`:
+//
+//   - --project P: P must be a project REGISTERED in the workspace (the
+//     projects table — the authoritative project list; authoring
+//     against an unknown project would scaffold drafts that cannot
+//     publish coherently), and the namespace must come from --namespace
+//     or the target's qualified namespace (refNS) — an explicit project
+//     has no default namespace outside its repository context, so a
+//     bare --project is a deterministic refusal, never a silent borrow
+//     from eka.yaml.
+//   - --namespace alone: the project resolves from the repository
+//     registered at the current directory (the same context the default
+//     path uses); outside a repository it is refused.
+//   - the resolved namespace must be a valid EKA identifier (the
+//     eka.yaml identifier rule) — the explicit path validates it at
+//     scaffold time so the draft is publishable.
+func resolveExplicitScope(r *runtime.Runtime, projectFlag, nsFlag, refNS string, repo runtime.Repo, repoFound bool) (project, ns string, err error) {
+	if projectFlag != "" {
+		project = projectFlag
+		registered, rerr := projectRegistered(r, project)
+		if rerr != nil {
+			return "", "", rerr
+		}
+		if !registered {
+			return "", "", fmt.Errorf("refused: project %s is not registered in the workspace; run 'eka project list' to see registered projects, or register it with 'eka sync' / 'eka project register'", project)
+		}
+		if nsFlag == "" && refNS == "" {
+			return "", "", fmt.Errorf("refused: --project %s requires --namespace (an explicit project has no default namespace); pass --namespace <ns> to author workspace-natively", project)
+		}
+	} else {
+		// --namespace alone: the project still comes from the repository
+		// context (there is no registry lookup by namespace).
+		if !repoFound {
+			return "", "", fmt.Errorf("cannot resolve a project here; run inside a registered repository or pass --project <name>")
+		}
+		project = repo.ProjectID
+	}
+	ns = nsFlag
+	if ns == "" {
+		ns = refNS
+	}
+	if !metadata.ValidIdent(ns) {
+		return "", "", fmt.Errorf("refused: namespace %q is not a valid EKA identifier (lowercase letters, digits and single hyphens)", ns)
+	}
+	return project, ns, nil
+}
+
+// projectRegistered reports whether the project is registered in the
+// workspace registry (the projects table — the authoritative project
+// list of the workspace, populated by RegisterRepo/RegisterRepoMetadata
+// and auto-registration at sync).
+func projectRegistered(r *runtime.Runtime, project string) (bool, error) {
+	projects, err := r.Workspace.Projects()
+	if err != nil {
+		return false, fmt.Errorf("cannot read the workspace project registry: %w", err)
+	}
+	for _, p := range projects {
+		if p.ID == project {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // collectRelationships gathers the relationship targets of the five
