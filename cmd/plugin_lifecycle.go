@@ -11,10 +11,12 @@ package cmd
 //
 // Trust tier (list): a plugin name is labeled "official" when the
 // built-in registry (plugin.OfficialRegistry) carries it, else
-// "third-party". The full two-tier consent model is a LATER work item
-// (sto:plugin-trust-model); list only LABELS the tier — it never
-// asks for consent, and update only ever touches official plugins
-// (the registry is the filter).
+// "third-party" — the same classification the install consent model
+// (sto:plugin-trust-model) enforces. list only LABELS the tier; the
+// consent itself happens at install/update time. update --all only
+// ever touches official plugins (the registry is the filter); a NAMED
+// third-party update resolves the repository from the installed
+// binary's manifest source and goes through the same consent flow.
 //
 // Exit codes:
 //
@@ -202,9 +204,10 @@ func readPluginManifest(exe string) (plugin.Manifest, error) {
 }
 
 // pluginTrustTier labels the plugin's trust tier from the built-in
-// registry: "official" for registered plugins, "third-party"
-// otherwise. The full consent model is a later work item
-// (sto:plugin-trust-model) — here the tier is only a label.
+// registry: "official" for registered plugins (full-trust, no prompt
+// at install), "third-party" otherwise (explicit consent required).
+// It is the label side of the two-tier trust model
+// (sto:plugin-trust-model); install/update enforce the consent.
 func pluginTrustTier(name string) string {
 	if plugin.OfficialRegistry.IsOfficial(name) {
 		return "official"
@@ -348,8 +351,8 @@ func (r *pluginRemoveRunner) run(cmd *cobra.Command, name string) error {
 	return nil
 }
 
-// newPluginUpdateCommand builds `eka plugin update [name|--all]`:
-// re-downloads the latest verified release of an installed official
+// newPluginUpdateCommand builds `eka plugin update [name|--all]
+// [--yes]`: re-downloads the latest verified release of an installed
 // plugin (or of every installed official plugin with --all) through
 // the install flow's shared download+checksum+smoke-check path.
 func newPluginUpdateCommand() *cobra.Command {
@@ -359,23 +362,30 @@ func newPluginUpdateCommand() *cobra.Command {
 		Short: "Update an installed EKA plugin to its latest release",
 		Long: `Update an installed plugin to its latest release: the release is
 resolved and the binary downloaded through the same verified path as
-eka plugin install (registry resolution, latest release, SHA-256
-verification against the tag-pinned SHA256SUMS.txt, manifest smoke
-check) and replaced atomically — the old binary is preserved as
-eka-<name>.old during the swap and a new binary that fails the smoke
-check restores the old one.
+eka plugin install (registry resolution or the installed manifest
+source, latest release, SHA-256 verification against the tag-pinned
+SHA256SUMS.txt, manifest inspection) and replaced atomically — the
+old binary is preserved as eka-<name>.old during the swap.
 
 The previous and the new version are printed. Unknown plugin names
 refuse with the list of official plugins; a plugin that is not
 installed refuses with the install hint.
+
+A named update of a THIRD-PARTY plugin (one not listed in the
+registry) resolves the repository from the installed binary's
+manifest source and applies the same consent flow as the install:
+the source and capabilities are shown and explicit consent is
+required — --yes consents non-interactively, and outside a terminal
+--yes is required (the CLI never auto-consents silently).
 
   --all  update every installed official plugin (the registry is the
          filter — third-party plugins are never touched); each
          plugin is reported, and the run exits 1 when at least one
          update failed. Nothing installed is an informative empty
          result (exit 0).`,
-		Example: `  eka plugin update mcp    update eka-mcp to its latest release
-  eka plugin update --all  update every installed official plugin`,
+		Example: `  eka plugin update mcp            update eka-mcp to its latest release
+  eka plugin update mybot --yes    update a third-party plugin with consent
+  eka plugin update --all          update every installed official plugin`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, err := newPluginInstallRunner()
@@ -391,10 +401,11 @@ installed refuses with the install hint.
 			if len(args) == 0 {
 				return errors.New("plugin update: missing plugin name (pass --all to update every installed official plugin)") // Exit 2: usage.
 			}
-			return r.runUpdate(cmd, args[0])
+			return r.runUpdate(cmd, args[0], f.yes)
 		},
 	}
 	cmd.Flags().BoolVar(&f.all, "all", false, "update every installed official plugin")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "consent to a third-party update without the prompt")
 	return cmd
 }
 
@@ -402,22 +413,26 @@ installed refuses with the install hint.
 // command.
 type pluginUpdateFlags struct {
 	all bool
+	// yes consents to a third-party update without the interactive
+	// prompt (official updates never prompt).
+	yes bool
 }
 
-// runUpdate executes one plugin update: resolve the name through the
-// registry, read the installed version, download the latest verified
-// release through the install flow's shared path, replace the binary
-// atomically (the old binary is preserved as <target>.old until the
-// smoke check passes — a broken new binary restores the old one) and
-// print the old → new version.
-func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
+// runUpdate executes one plugin update: resolve the source repository
+// (the registry for an official name, the installed manifest source
+// for a third-party one), read the installed version, download the
+// latest verified release through the install flow's shared path,
+// inspect the staged binary (a broken download refuses with the OLD
+// binary untouched), obtain explicit consent for third-party plugins
+// and replace the binary atomically (the old binary is preserved as
+// <target>.old during the swap).
+func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string, yes bool) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
 
-	repo, ok := r.resolve(name)
-	if !ok {
-		return refuse(cmd, "plugin update refused: unknown plugin %q — official plugins: %s",
-			name, strings.Join(plugin.OfficialRegistry.Names(), ", "))
+	repo, thirdParty, err := r.resolveUpdateRepo(cmd, name)
+	if err != nil {
+		return err
 	}
 	asset, err := platformAssetName("eka-"+name, r.goos, r.goarch)
 	if err != nil {
@@ -437,7 +452,7 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
 		return refuse(cmd, "plugin update refused: %s", err)
 	}
 	oldVersion := r.installedVersion(target)
-	r.renderUpdateHeader(s, name, repo, asset, tag, oldVersion)
+	r.renderUpdateHeader(s, name, repo, asset, tag, oldVersion, thirdParty)
 	tmp, err := r.downloadVerified(s, repo, tag, asset, size, want)
 	if err != nil {
 		return refuse(cmd, "plugin update refused: %s", err)
@@ -446,14 +461,34 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
 	// longer exists and the deferred removal is a no-op.
 	defer os.Remove(tmp)
 
+	// The STAGED binary is inspected BEFORE the atomic swap: a broken
+	// or mismatched download refuses with the old binary untouched —
+	// the rename dance no longer needs a smoke-check-failure restore
+	// path. The manifest also supplies the capabilities/source the
+	// third-party consent surfaces.
+	m, err := r.inspectStaged(name, tmp)
+	if err != nil {
+		return refuse(cmd, "plugin update refused: %s", err)
+	}
+
+	if thirdParty {
+		r.renderThirdPartyInfo(s, repo, m)
+		if !yes {
+			ok, err := r.consent(cmd, s, name)
+			if err != nil {
+				return refuse(cmd, "plugin update refused: %s", err)
+			}
+			if !ok {
+				return refuse(cmd, "plugin update refused: consent to update the third-party plugin %q declined", name)
+			}
+		}
+	}
+
 	// Atomic replacement (the update command's rename dance, which
 	// also works on Windows): the old binary moves to <target>.old and
-	// stays there until the smoke check passes — any failure restores
-	// it; if even the restore fails, the old binary is preserved as
-	// <target>.old and the error says so (the recovery path is never
-	// silent). A rename failure is an internal filesystem error (exit
-	// 2, plain error) — exit 1 is reserved for the domain refusals
-	// above.
+	// stays there until the new one is in place. A rename failure is
+	// an internal filesystem error (exit 2, plain error) — exit 1 is
+	// reserved for the domain refusals above.
 	old := target + ".old"
 	os.Remove(old) // best-effort: a leftover .old must not block the dance
 	if err := os.Rename(target, old); err != nil {
@@ -466,27 +501,77 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string) error {
 		}
 		return fmt.Errorf("plugin update failed: cannot replace %s: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
 	}
-	if err := r.smokeCheck(name, target); err != nil {
-		if rerr := os.Rename(old, target); rerr != nil {
-			fmt.Fprintf(s.W, "%s\n", s.Warning(fmt.Sprintf("warning: cannot restore the previous plugin at %s (preserved at %s): %s", target, old, rerr)))
-		}
-		return refuse(cmd, "plugin update refused: %s", err)
-	}
 	os.Remove(old) // debris cleanup; the update itself succeeded
 
 	fmt.Fprintf(s.W, "%s\n", s.Success(ui.IconDone+" updated: "+target))
 	sm.Add("Plugin", name)
 	sm.Add("Repo", repo.String())
 	sm.Add("Version", oldVersion+" → "+tag)
+	if thirdParty {
+		sm.Add("Trust", "third-party (consent given)")
+	}
 	sm.Add("Updated", target)
 	sm.Render()
 	return nil
 }
 
+// resolveUpdateRepo classifies the update and resolves its source
+// repository: an official name resolves through the registry; a
+// third-party name's repository is read from the INSTALLED binary's
+// manifest source (the source recorded at install time). A name that
+// is neither registry-listed nor resolvable from an installed
+// manifest refuses with the official list and the install hint.
+func (r *pluginInstallRunner) resolveUpdateRepo(cmd *cobra.Command, name string) (plugin.Repo, bool, error) {
+	if repo, ok := r.resolve(name); ok {
+		return repo, false, nil // official: full-trust, no consent.
+	}
+	repo, err := r.repoFromInstalled(name)
+	if err != nil {
+		return plugin.Repo{}, true, refuse(cmd, "plugin update refused: %s; official plugins: %s",
+			err, strings.Join(plugin.OfficialRegistry.Names(), ", "))
+	}
+	return repo, true, nil // third-party: consent flow applies.
+}
+
+// repoFromInstalled reads the installed binary's manifest source
+// ("github.com/owner/name") and derives the source repository. An
+// unreadable manifest or a source without a resolvable repository
+// (legacy plugins) is a refusal with the reinstall hint.
+func (r *pluginInstallRunner) repoFromInstalled(name string) (plugin.Repo, error) {
+	target := r.installTarget(name)
+	m, err := readPluginManifest(target)
+	if err != nil {
+		return plugin.Repo{}, fmt.Errorf("plugin %q is not registry-listed and its installed manifest is unreadable (reinstall it with --repo owner/name)", name)
+	}
+	repo, err := parsePluginSource(m.Source)
+	if err != nil {
+		return plugin.Repo{}, fmt.Errorf("plugin %q is not registry-listed and its manifest source %q is not a resolvable repository: %v (reinstall it with --repo owner/name)", name, m.Source, err)
+	}
+	return repo, nil
+}
+
+// parsePluginSource derives the source repository from a manifest
+// Source value ("https://github.com/owner/name" or "github.com/
+// owner/name"): the last two path segments. Any other shape is a
+// refusal.
+func parsePluginSource(source string) (plugin.Repo, error) {
+	s := strings.TrimSpace(source)
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "https://")
+	parts := strings.Split(s, "/")
+	if len(parts) < 2 || parts[len(parts)-2] == "" || parts[len(parts)-1] == "" {
+		return plugin.Repo{}, fmt.Errorf("source %q is not a repository URL", source)
+	}
+	return plugin.Repo{Owner: parts[len(parts)-2], Name: parts[len(parts)-1]}, nil
+}
+
 // renderUpdateHeader prints the context header of an update (the
 // single-operation interaction model): the accent heading, the
-// Plugin/Repo/Version/Current/Asset labels and the pipeline line.
-func (r *pluginInstallRunner) renderUpdateHeader(s *ui.Style, name string, repo plugin.Repo, asset, tag, current string) {
+// Plugin/Repo/Version/Current/Asset labels and the pipeline line. A
+// third-party update carries a "Trust third-party" row — the tier is
+// visible before any download.
+func (r *pluginInstallRunner) renderUpdateHeader(s *ui.Style, name string, repo plugin.Repo, asset, tag, current string, thirdParty bool) {
 	fmt.Fprintln(s.W)
 	fmt.Fprintln(s.W, s.Accent("Update"))
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Plugin"), name)
@@ -494,6 +579,9 @@ func (r *pluginInstallRunner) renderUpdateHeader(s *ui.Style, name string, repo 
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Version"), tag)
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Current"), current)
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Asset"), asset)
+	if thirdParty {
+		fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Trust"), "third-party")
+	}
 	fmt.Fprintf(s.W, "  %s\n", s.Accent("↓ Update"))
 }
 
@@ -534,7 +622,9 @@ func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command) error {
 	}
 	failed := false
 	for _, name := range names {
-		if err := r.runUpdate(cmd, name); err != nil {
+		// --all only ever touches official plugins (installedOfficialNames
+		// is the registry filter), which never prompt — no --yes needed.
+		if err := r.runUpdate(cmd, name, false); err != nil {
 			failed = true
 			// The refusal already rendered its own "eka: ..." line.
 		}

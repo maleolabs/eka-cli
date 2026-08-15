@@ -105,6 +105,7 @@ func testPluginInstallRunner(srv *fakePluginReleaseServer, pluginDir string) *pl
 		goos:         "linux",
 		goarch:       "amd64",
 		version:      "dev",
+		consent:      pluginConsentPrompt,
 	}
 }
 
@@ -139,7 +140,7 @@ func TestPluginInstallHappyPath(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	if err := r.run(updateTestCommand(&out, &errb), "mcp"); err != nil {
+	if err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 
@@ -195,7 +196,7 @@ func TestPluginInstallHappyPath(t *testing.T) {
 func TestPluginInstallUnknownName(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "nope")
+	err := r.run(updateTestCommand(&out, &errb), "nope", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -213,7 +214,7 @@ func TestPluginInstallChecksumMismatch(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -234,7 +235,7 @@ func TestPluginInstallMissingChecksumEntry(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -256,7 +257,7 @@ func TestPluginInstallMalformedChecksumEntry(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -281,7 +282,7 @@ printf '%s' 'this is not json'
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -308,7 +309,7 @@ esac
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -333,7 +334,7 @@ func TestPluginInstallRateLimited(t *testing.T) {
 	r.client = srv.Client()
 
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -356,7 +357,7 @@ func TestPluginInstallReinstallOverwrites(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var first, errb1 bytes.Buffer
-	if err := r.run(updateTestCommand(&first, &errb1), "mcp"); err != nil {
+	if err := r.run(updateTestCommand(&first, &errb1), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("first install: %v\nstderr: %s", err, errb1.String())
 	}
 
@@ -365,7 +366,7 @@ func TestPluginInstallReinstallOverwrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	var second, errb2 bytes.Buffer
-	if err := r.run(updateTestCommand(&second, &errb2), "mcp"); err != nil {
+	if err := r.run(updateTestCommand(&second, &errb2), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("reinstall: %v\nstderr: %s", err, errb2.String())
 	}
 	if !strings.Contains(second.String(), "replacing the existing eka-mcp installation") {
@@ -383,7 +384,7 @@ func TestPluginInstallUnsupportedPlatform(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	r.goos, r.goarch = "freebsd", "amd64"
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -432,7 +433,7 @@ func TestPluginCommandTree(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("plugin --help: exit = %d\nstderr: %s", code, errText)
 	}
-	for _, want := range []string{"Install and manage official EKA plugins", "install     Install an official EKA plugin"} {
+	for _, want := range []string{"Install and manage EKA plugins", "install     Install an official or third-party EKA plugin"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plugin help missing %q:\n%s", want, out)
 		}
@@ -442,7 +443,7 @@ func TestPluginCommandTree(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("plugin install --help: exit = %d\nstderr: %s", code, errText)
 	}
-	for _, want := range []string{"eka plugin install <name>", "eka plugin install mcp", "SHA256SUMS.txt", "$EKA_PLUGIN_DIR", "fail-closed"} {
+	for _, want := range []string{"eka plugin install <name>", "eka plugin install mcp", "SHA256SUMS.txt", "$EKA_PLUGIN_DIR", "fail-closed", "--repo <owner/name>", "--yes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plugin install help missing %q:\n%s", want, out)
 		}
@@ -477,7 +478,7 @@ func TestPluginInstallSmokeCheckTimeout(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -515,7 +516,7 @@ func TestPluginInstallHugeChecksumsRefused(t *testing.T) {
 	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
 	r.client = srv.Client()
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -544,7 +545,7 @@ func TestPluginInstallHugeAssetRefused(t *testing.T) {
 	dirA := t.TempDir()
 	rA := testPluginInstallRunner(srvA, dirA)
 	var outA, errbA bytes.Buffer
-	errA := rA.run(updateTestCommand(&outA, &errbA), "mcp")
+	errA := rA.run(updateTestCommand(&outA, &errbA), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(errA); code != 1 {
 		t.Fatalf("variant A: exit = %d, want 1 (refusal)\nstderr: %s", code, errbA.String())
 	}
@@ -590,7 +591,7 @@ func TestPluginInstallHugeAssetRefused(t *testing.T) {
 	rB := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srvB.URL, downloadRoot: srvB.URL}, dirB)
 	rB.client = srvB.Client()
 	var outB, errbB bytes.Buffer
-	errB := rB.run(updateTestCommand(&outB, &errbB), "mcp")
+	errB := rB.run(updateTestCommand(&outB, &errbB), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(errB); code != 1 {
 		t.Fatalf("variant B: exit = %d, want 1 (refusal)\nstderr: %s", code, errbB.String())
 	}
@@ -615,7 +616,7 @@ func TestPluginInstallRedirectRefused(t *testing.T) {
 	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
 	r.client = &http.Client{CheckRedirect: pluginCheckRedirect}
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -637,7 +638,7 @@ func TestPluginInstallRedirectChainCapped(t *testing.T) {
 	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
 	r.client = &http.Client{Transport: srv.Client().Transport, CheckRedirect: pluginCheckRedirect}
 	var out, errb bytes.Buffer
-	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{})
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -659,7 +660,7 @@ func TestPluginInstallWindowsExe(t *testing.T) {
 	r := testPluginInstallRunner(srv, dir)
 	r.goos = "windows"
 	var out, errb bytes.Buffer
-	if err := r.run(updateTestCommand(&out, &errb), "mcp"); err != nil {
+	if err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-mcp.exe" {
@@ -708,26 +709,7 @@ func TestPluginInstallUsesGHToken(t *testing.T) {
 	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, t.TempDir())
 	r.client = srv.Client()
 	var out, errb bytes.Buffer
-	if err := r.run(updateTestCommand(&out, &errb), "mcp"); err != nil {
+	if err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
-	}
-}
-
-// TestPluginInstallFailedCleanupSurfacesWarning: when removing a
-// failed install fails, the failure is surfaced as a warning — never
-// silently ignored (the refusal itself is returned by the caller).
-func TestPluginInstallFailedCleanupSurfacesWarning(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "eka-mcp")
-	// A non-empty directory at the target makes os.Remove fail (the
-	// smoke-check-failed cleanup path), simulating a stuck removal.
-	if err := os.MkdirAll(filepath.Join(target, "inner"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r := &pluginInstallRunner{}
-	var out, errb bytes.Buffer
-	r.removeInstalled(styleFor(updateTestCommand(&out, &errb)), target)
-	if !strings.Contains(out.String(), "warning: cannot remove the broken plugin") {
-		t.Errorf("a removal failure must surface a warning, got %q", out.String())
 	}
 }

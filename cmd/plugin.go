@@ -1,15 +1,25 @@
 package cmd
 
 // This file implements `eka plugin` and `eka plugin install`:
-// installation of official EKA plugins from their GitHub releases.
+// installation of EKA plugins from their GitHub releases under the
+// two-tier trust model (sto:plugin-trust-model).
 //
 // The plugin command is distribution convenience, like eka update: it
 // never touches the EKA workspace or the canonical store.
 //
-// Install flow (fail-closed):
+// Trust classification: a plugin name that resolves through the
+// built-in registry (plugin.OfficialRegistry — the maleolabs-maintained
+// list) is OFFICIAL and full-trust: it installs without a prompt. Every
+// other source is THIRD-PARTY and requires explicit consent after its
+// source and capabilities are surfaced. `--repo <owner/name>` pins an
+// arbitrary GitHub repository; with it the name is third-party by
+// definition (the registry is bypassed, even for a maleolabs repo).
 //
-//  1. `eka plugin install <name>` resolves the name through the official
-//     registry (plugin.OfficialRegistry). An unknown name refuses with
+// Install flow (fail-closed, both tiers):
+//
+//  1. `eka plugin install <name> [--repo owner/name]` resolves the
+//     source repository: the registry for an official name, the
+//     --repo value for a third-party one. An unknown name refuses with
 //     the list of known plugins before any network access.
 //  2. The latest release of the plugin's repository is resolved via the
 //     GitHub REST API (a minimal, well-formed User-Agent; a rate-limited
@@ -20,16 +30,22 @@ package cmd
 //     come from one release.
 //  4. The downloaded binary's SHA-256 is verified against the checksum
 //     entry. ANY mismatch, missing entry or malformed entry refuses and
-//     removes the partial download — never install unverified.
-//  5. The verified binary is installed as eka-<name> (0755; .exe on
-//     windows) into the plugin directory ($EKA_PLUGIN_DIR or
+//     removes the partial download — never install unverified. The
+//     checksum gate applies to BOTH tiers.
+//  5. The STAGED binary's manifest is inspected before anything moves
+//     into place (bounded by pluginSmokeCheckTimeout — a hung plugin
+//     refuses): it must parse into plugin.Manifest with a matching
+//     name. This verifies the download AND supplies the capabilities
+//     the third-party consent surfaces.
+//  6. A third-party plugin prints its source and capabilities and asks
+//     for explicit consent (--yes consents non-interactively; outside a
+//     terminal --yes is required — the CLI never auto-consents
+//     silently). Declining removes the staged download and refuses.
+//  7. The verified, consented binary is installed as eka-<name> (0755;
+//     .exe on windows) into the plugin directory ($EKA_PLUGIN_DIR or
 //     ~/.eka/plugins), matching the Discover "eka-*" executable
 //     contract.
-//  6. Smoke check: the installed binary is run with "manifest" (bounded
-//     by pluginSmokeCheckTimeout — a hung plugin refuses) and the output
-//     must parse into plugin.Manifest with a matching name; a broken
-//     manifest removes the installed binary and refuses.
-//  7. Re-install overwrites the previous binary cleanly (with a printed
+//  8. Re-install overwrites the previous binary cleanly (with a printed
 //     notice).
 //
 // Hardening (review findings): all network reads are bounded
@@ -44,7 +60,7 @@ package cmd
 //	0  installed
 //	1  refusal (unknown plugin, unresolved release, checksum
 //	   mismatch/missing/malformed, broken manifest, unsupported
-//	   platform)
+//	   platform, consent not given)
 //	2  usage or internal error
 //
 // The network endpoints are package-level vars (not consts) so the
@@ -144,15 +160,18 @@ func pluginCheckRedirect(req *http.Request, via []*http.Request) error {
 func newPluginCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plugin",
-		Short: "Install and manage official EKA plugins",
-		Long: `Install and manage official EKA plugins: verified extensions of the
-CLI (the first one is the eka-mcp plugin, which provides MCP server
+		Short: "Install and manage EKA plugins",
+		Long: `Install and manage EKA plugins: verified extensions of the CLI
+(the first one is the eka-mcp plugin, which provides MCP server
 capabilities and artifact installation).
 
 The plugin command is distribution convenience, like eka update: it
-never touches the EKA workspace or the canonical store. Official
-plugins are resolved through the CLI's built-in registry and every
-downloaded binary is SHA-256 verified against the release's
+never touches the EKA workspace or the canonical store. Plugins are
+classified by the two-tier trust model: names resolved through the
+CLI's built-in registry are OFFICIAL and full-trust (no prompt), any
+other plugin is THIRD-PARTY and requires explicit consent after its
+source and capabilities are shown. Every downloaded binary — official
+or third-party — is SHA-256 verified against the release's
 SHA256SUMS.txt before it is installed (fail-closed: a mismatch
 refuses).
 
@@ -169,39 +188,66 @@ refuses).
 	return cmd
 }
 
-// newPluginInstallCommand builds the `eka plugin install` command.
+// newPluginInstallCommand builds `eka plugin install <name> [--repo
+// owner/name] [--yes]`.
 func newPluginInstallCommand() *cobra.Command {
-	return &cobra.Command{
+	f := &pluginInstallFlags{}
+	cmd := &cobra.Command{
 		Use:   "install <name>",
-		Short: "Install an official EKA plugin",
-		Long: `Install an official EKA plugin: the plugin's latest release asset
+		Short: "Install an official or third-party EKA plugin",
+		Long: `Install a plugin: the plugin's latest release asset
 (eka-<name>-<os>-<arch>[.exe]) is downloaded from GitHub, verified
 against the release's SHA256SUMS.txt (fail-closed: a missing or
-mismatched checksum refuses the install), installed as an executable
-"eka-<name>" into the plugin directory ($EKA_PLUGIN_DIR or
-~/.eka/plugins) and smoke-checked by running its manifest. A broken
-manifest removes the installed binary and refuses.
+mismatched checksum refuses the install), inspected (its manifest must
+parse and name the plugin), installed as an executable "eka-<name>"
+into the plugin directory ($EKA_PLUGIN_DIR or ~/.eka/plugins).
+
+Two-tier trust model: a name resolved through the CLI's built-in
+registry is OFFICIAL and installs without a prompt. Every other
+plugin is THIRD-PARTY: its source and capabilities are shown and
+explicit consent is required before the install — --yes consents
+non-interactively, and outside a terminal --yes is required (the CLI
+never auto-consents silently).
+
+--repo <owner/name> installs from an arbitrary GitHub repository; the
+name is then third-party by definition (the registry is bypassed) and
+the consent flow applies.
 
 Unknown plugin names refuse with the list of official plugins.
 Re-installing an already-installed plugin overwrites it cleanly.`,
-		Example: `  eka plugin install mcp   install the official eka-mcp plugin`,
-		Args:    cobra.ExactArgs(1),
+		Example: `  eka plugin install mcp                       install the official eka-mcp plugin
+  eka plugin install mybot --repo acme/eka-mybot   install a third-party plugin with consent`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, err := newPluginInstallRunner()
 			if err != nil {
 				return err // Exit 2: internal.
 			}
-			return r.run(cmd, args[0])
+			return r.run(cmd, args[0], f)
 		},
 	}
+	cmd.Flags().StringVar(&f.repo, "repo", "", "install from an arbitrary GitHub repository (owner/name); the plugin is then third-party and requires consent")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "consent to a third-party install without the prompt")
+	return cmd
+}
+
+// pluginInstallFlags carries the flag set of `eka plugin install`.
+type pluginInstallFlags struct {
+	// repo pins an arbitrary GitHub source repository (owner/name);
+	// with it the name is third-party by definition.
+	repo string
+	// yes consents to a third-party install without the interactive
+	// prompt (the source/capabilities are still shown).
+	yes bool
 }
 
 // pluginInstallRunner carries the injectable execution context of one
 // `eka plugin install` run: the registry lookup, the network endpoints
 // (API + download root), the HTTP client, the plugin directory, the
-// platform and the CLI version (User-Agent). Production builds it from
-// the package defaults (newPluginInstallRunner); tests construct it
-// directly against an httptest server.
+// platform, the CLI version (User-Agent) and the third-party consent
+// decision. Production builds it from the package defaults
+// (newPluginInstallRunner); tests construct it directly against an
+// httptest server.
 type pluginInstallRunner struct {
 	resolve      func(string) (plugin.Repo, bool)
 	apiBase      string // GitHub API root ("https://api.github.com")
@@ -211,12 +257,19 @@ type pluginInstallRunner struct {
 	goos         string
 	goarch       string
 	version      string // CLI version (User-Agent)
+	// consent decides whether a third-party install proceeds when --yes
+	// was NOT given. Production (pluginConsentPrompt) enforces the
+	// determinism gate (a non-terminal run refuses — never auto-consent)
+	// and prompts interactively on a terminal; tests inject a
+	// deterministic stub to exercise the consent branches without a real
+	// terminal.
+	consent func(*cobra.Command, *ui.Style, string) (bool, error)
 }
 
 // newPluginInstallRunner assembles the production runner: the pinned
 // GitHub endpoints, the standard client, the plugin directory
-// ($EKA_PLUGIN_DIR or <home>/.eka/plugins) and the build
-// platform/version.
+// ($EKA_PLUGIN_DIR or <home>/.eka/plugins), the build
+// platform/version and the production consent prompt.
 func newPluginInstallRunner() (*pluginInstallRunner, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -238,6 +291,7 @@ func newPluginInstallRunner() (*pluginInstallRunner, error) {
 		goos:         runtime.GOOS,
 		goarch:       runtime.GOARCH,
 		version:      version,
+		consent:      pluginConsentPrompt,
 	}, nil
 }
 
@@ -267,17 +321,18 @@ func (r *pluginInstallRunner) taggedBase(repo plugin.Repo, tag string) string {
 	return base + "/" + tag
 }
 
-// run executes one install: resolve the name through the registry,
-// resolve the latest release, verify the checksum fail-closed, download,
-// install and smoke-check the plugin.
-func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
+// run executes one install under the two-tier trust model: classify
+// the plugin (registry name = official, --repo = third-party), resolve
+// the latest release, verify the checksum fail-closed (both tiers),
+// inspect the staged manifest, obtain explicit consent for third-party
+// plugins and finalize the install.
+func (r *pluginInstallRunner) run(cmd *cobra.Command, name string, f *pluginInstallFlags) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
 
-	repo, ok := r.resolve(name)
-	if !ok {
-		return refuse(cmd, "plugin install refused: unknown plugin %q — official plugins: %s",
-			name, strings.Join(plugin.OfficialRegistry.Names(), ", "))
+	repo, thirdParty, err := r.resolveInstallRepo(cmd, name, f.repo)
+	if err != nil {
+		return err
 	}
 	asset, err := platformAssetName("eka-"+name, r.goos, r.goarch)
 	if err != nil {
@@ -290,7 +345,7 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 	target := r.installTarget(name)
 	replacing := fileExists(target)
 
-	r.renderHeader(s, name, repo, asset, tag)
+	r.renderHeader(s, name, repo, asset, tag, thirdParty)
 	if replacing {
 		fmt.Fprintln(s.W, s.Warning("replacing the existing eka-"+name+" installation"))
 	}
@@ -300,29 +355,81 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 		return refuse(cmd, "plugin install refused: %s", err)
 	}
 	// Leftover cleanup: after a successful rename the temp path no
-	// longer exists and the deferred removal is a no-op.
+	// longer exists and the deferred removal is a no-op; a refusal
+	// (consent declined, broken manifest) removes the staged download.
 	defer os.Remove(tmp)
+
+	// The STAGED binary's manifest is inspected BEFORE anything moves
+	// into place: it verifies the verified download (both tiers) and
+	// supplies the capabilities/source the third-party consent
+	// surfaces. A broken or mismatched manifest refuses with the
+	// staged download removed — the plugin directory is never touched
+	// by a broken binary.
+	m, err := r.inspectStaged(name, tmp)
+	if err != nil {
+		return refuse(cmd, "plugin install refused: %s", err)
+	}
+
+	if thirdParty {
+		r.renderThirdPartyInfo(s, repo, m)
+		if !f.yes {
+			ok, err := r.consent(cmd, s, name)
+			if err != nil {
+				return refuse(cmd, "plugin install refused: %s", err)
+			}
+			if !ok {
+				return refuse(cmd, "plugin install refused: consent to install the third-party plugin %q declined", name)
+			}
+		}
+	}
 
 	if err := os.Rename(tmp, target); err != nil {
 		return refuse(cmd, "plugin install refused: cannot install %s: %s%s", target, err, r.windowsInstallHint())
-	}
-
-	// Smoke check: the installed binary must answer "manifest" with a
-	// parseable plugin.Manifest whose name matches. A broken plugin is
-	// removed — an installed plugin that cannot describe itself must
-	// never be left behind.
-	if err := r.smokeCheck(name, target); err != nil {
-		r.removeInstalled(s, target)
-		return refuse(cmd, "plugin install refused: %s", err)
 	}
 
 	fmt.Fprintf(s.W, "%s\n", s.Success(ui.IconDone+" installed: "+target))
 	sm.Add("Plugin", name)
 	sm.Add("Repo", repo.String())
 	sm.Add("Version", tag)
+	if thirdParty {
+		sm.Add("Trust", "third-party (consent given)")
+	}
 	sm.Add("Installed", target)
 	sm.Render()
 	return nil
+}
+
+// resolveInstallRepo classifies the install and resolves its source
+// repository: --repo pins an arbitrary GitHub repository (the name is
+// third-party by definition — the registry is bypassed, even for a
+// maleolabs repo), otherwise the name resolves through the official
+// registry (official when listed; an unknown name refuses with the
+// list of official plugins, before any network access).
+func (r *pluginInstallRunner) resolveInstallRepo(cmd *cobra.Command, name, repoFlag string) (plugin.Repo, bool, error) {
+	if repoFlag != "" {
+		repo, err := parsePluginRepo(repoFlag)
+		if err != nil {
+			return plugin.Repo{}, true, refuse(cmd, "plugin install refused: %s", err)
+		}
+		return repo, true, nil // --repo: third-party by definition.
+	}
+	repo, ok := r.resolve(name)
+	if !ok {
+		return plugin.Repo{}, false, refuse(cmd, "plugin install refused: unknown plugin %q — official plugins: %s",
+			name, strings.Join(plugin.OfficialRegistry.Names(), ", "))
+	}
+	return repo, false, nil // registry-listed: official, full-trust.
+}
+
+// parsePluginRepo parses and validates a --repo value: the canonical
+// "owner/name" GitHub reference. Any other shape is a refusal.
+func parsePluginRepo(s string) (plugin.Repo, error) {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
+		strings.ContainsAny(parts[0], " \t\n") || strings.ContainsAny(parts[1], " \t\n") {
+		return plugin.Repo{}, fmt.Errorf("invalid --repo %q (want owner/name)", s)
+	}
+	return plugin.Repo{Owner: parts[0], Name: parts[1]}, nil
 }
 
 // installTarget is the installed binary path of a plugin: the plugin
@@ -418,15 +525,39 @@ func (r *pluginInstallRunner) downloadVerified(s *ui.Style, repo plugin.Repo, ta
 
 // renderHeader prints the context header (the single-operation
 // interaction model): the accent heading and the Plugin/Repo/Version/
-// Asset labels followed by the pipeline line.
-func (r *pluginInstallRunner) renderHeader(s *ui.Style, name string, repo plugin.Repo, asset, tag string) {
+// Asset labels followed by the pipeline line. A third-party install
+// carries a "Trust third-party" row — the tier is visible before any
+// download.
+func (r *pluginInstallRunner) renderHeader(s *ui.Style, name string, repo plugin.Repo, asset, tag string, thirdParty bool) {
 	fmt.Fprintln(s.W)
 	fmt.Fprintln(s.W, s.Accent("Install"))
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Plugin"), name)
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Repo"), repo.String())
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Version"), tag)
 	fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Asset"), asset)
+	if thirdParty {
+		fmt.Fprintf(s.W, "  %-7s   %s\n", s.Info("Trust"), "third-party")
+	}
 	fmt.Fprintf(s.W, "  %s\n", s.Accent("↓ Install"))
+}
+
+// renderThirdPartyInfo surfaces the trust surface of a third-party
+// install — the source repository and the capabilities (plus the
+// summary) the staged binary's manifest declares — immediately before
+// the consent decision. It renders for --yes runs too: automation must
+// still see what it consented to.
+func (r *pluginInstallRunner) renderThirdPartyInfo(s *ui.Style, repo plugin.Repo, m plugin.Manifest) {
+	fmt.Fprintln(s.W)
+	fmt.Fprintln(s.W, s.Warning("Third-party plugin"))
+	fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Source"), "https://github.com/"+repo.String())
+	if m.Description != "" {
+		fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Summary"), m.Description)
+	}
+	caps := m.Capabilities
+	if len(caps) == 0 {
+		caps = []string{"none declared"}
+	}
+	fmt.Fprintf(s.W, "  %-12s   %s\n", s.Info("Capabilities"), strings.Join(caps, ", "))
 }
 
 // windowsInstallHint explains the Windows installation caveat on the
@@ -438,33 +569,49 @@ func (r *pluginInstallRunner) windowsInstallHint() string {
 	return ""
 }
 
-// smokeCheck runs the installed plugin's manifest (bounded by
+// inspectStaged runs the STAGED binary's manifest (bounded by
 // pluginSmokeCheckTimeout — a hung plugin refuses with a clear error
-// instead of wedging the CLI) and verifies it parses into
-// plugin.Manifest with the requested name.
-func (r *pluginInstallRunner) smokeCheck(name, target string) error {
+// instead of wedging the CLI), verifies it parses into plugin.Manifest
+// with the requested name, and returns it. The staged binary is the
+// checksum-verified download; a broken or mismatched manifest refuses
+// BEFORE anything is moved into the plugin directory.
+func (r *pluginInstallRunner) inspectStaged(name, tmp string) (plugin.Manifest, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pluginSmokeCheckTimeout)
 	defer cancel()
-	m, err := (plugin.Plugin{Exe: target}).ManifestContext(ctx)
+	m, err := (plugin.Plugin{Exe: tmp}).ManifestContext(ctx)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("installed plugin %s timed out after %s answering \"manifest\" (killed)", target, pluginSmokeCheckTimeout)
+			return plugin.Manifest{}, fmt.Errorf("the downloaded plugin %q timed out after %s answering \"manifest\" (killed)", name, pluginSmokeCheckTimeout)
 		}
-		return fmt.Errorf("installed plugin %s failed the manifest smoke check: %w", target, err)
+		return plugin.Manifest{}, fmt.Errorf("the downloaded plugin %q failed the smoke check: %w", name, err)
 	}
 	if m.Name != name {
-		return fmt.Errorf("installed plugin %s reports manifest name %q, want %q", target, m.Name, name)
+		return plugin.Manifest{}, fmt.Errorf("the downloaded plugin reports manifest name %q, want %q", m.Name, name)
 	}
-	return nil
+	return m, nil
 }
 
-// removeInstalled removes a failed install. A removal failure is
-// surfaced as a warning — never silently ignored — but does not mask
-// the original refusal.
-func (r *pluginInstallRunner) removeInstalled(s *ui.Style, target string) {
-	if err := os.Remove(target); err != nil {
-		fmt.Fprintf(s.W, "%s\n", s.Warning(fmt.Sprintf("warning: cannot remove the broken plugin at %s: %s", target, err)))
+// pluginConsentPrompt is the production third-party consent decision
+// (the runner's consent default). A non-terminal run (pipes, CI)
+// without --yes refuses — the CLI never auto-consents silently
+// (fail-closed): the run stops with a refusal naming the --yes escape
+// hatch. On a real terminal the user is prompted explicitly
+// (ui.Select, defaulting to "abort"; Esc/q/Ctrl-C decline). It is
+// only invoked when --yes was NOT given.
+func pluginConsentPrompt(cmd *cobra.Command, s *ui.Style, name string) (bool, error) {
+	if !(s.TTY && isTTYReader(cmd.InOrStdin())) {
+		return false, fmt.Errorf("the third-party plugin %q requires explicit consent; pass --yes to consent non-interactively", name)
 	}
+	value, err := ui.Select(s, cmd.InOrStdin(), cmd.OutOrStdout(),
+		fmt.Sprintf("Install the third-party plugin %q?", name),
+		[]ui.MenuItem{{Title: "install", Value: "install"}, {Title: "abort", Value: "abort"}}, 1)
+	if err != nil {
+		if errors.Is(err, ui.ErrCancelled) {
+			return false, nil // cancelled = declined
+		}
+		return false, fmt.Errorf("cannot read the consent: %w", err) // Exit 2: internal.
+	}
+	return value == "install", nil
 }
 
 // latestTag resolves the latest release version of the plugin's

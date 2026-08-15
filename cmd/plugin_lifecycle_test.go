@@ -239,7 +239,7 @@ func TestPluginUpdateSingle(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp"); err != nil {
+	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if errb.String() != "" {
@@ -269,17 +269,19 @@ func TestPluginUpdateSingle(t *testing.T) {
 	}
 }
 
-// TestPluginUpdateUnknownName: an unregistered name refuses with the
-// list of official plugins, before any network access.
+// TestPluginUpdateUnknownName: a name that is neither registry-listed
+// nor installed (no manifest source to resolve a repository from)
+// refuses with the official list and the reinstall hint, before any
+// network access.
 func TestPluginUpdateUnknownName(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "nope")
+	err := r.runUpdate(updateTestCommand(&out, &errb), "nope", false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
-	if !strings.Contains(errb.String(), "unknown plugin \"nope\"") || !strings.Contains(errb.String(), "mcp") {
-		t.Errorf("refusal must name the plugin and list official plugins, got %q", errb.String())
+	if !strings.Contains(errb.String(), "\"nope\" is not registry-listed") || !strings.Contains(errb.String(), "mcp") || !strings.Contains(errb.String(), "--repo") {
+		t.Errorf("refusal must name the plugin, list official plugins and hint the reinstall, got %q", errb.String())
 	}
 }
 
@@ -288,7 +290,7 @@ func TestPluginUpdateUnknownName(t *testing.T) {
 func TestPluginUpdateNotInstalled(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp")
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -309,7 +311,7 @@ func TestPluginUpdateChecksumMismatchKeepsOld(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp")
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -325,10 +327,11 @@ func TestPluginUpdateChecksumMismatchKeepsOld(t *testing.T) {
 	}
 }
 
-// TestPluginUpdateBrokenNewManifestRestoresOld: the new binary passes
-// the checksum but fails the manifest smoke check — the update
-// refuses and the OLD binary is restored (nothing is left half
-// updated).
+// TestPluginUpdateBrokenNewManifestKeepsOld: the new binary passes
+// the checksum but fails the manifest inspection — the update
+// refuses and the OLD binary is untouched (the staged download is
+// inspected before the swap, so the old binary is never moved; no
+// .old or temp debris remains).
 func TestPluginUpdateBrokenNewManifestRestoresOld(t *testing.T) {
 	body := []byte(`#!/bin/sh
 printf '%s' 'this is not json'
@@ -341,7 +344,7 @@ printf '%s' 'this is not json'
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp")
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -436,7 +439,7 @@ func TestPluginUpdateWindowsExe(t *testing.T) {
 	r := testPluginInstallRunner(srv, dir)
 	r.goos = "windows"
 	var out, errb bytes.Buffer
-	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp"); err != nil {
+	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "eka-mcp.exe"))
@@ -607,7 +610,7 @@ func TestPluginUpdateReplaceFailureExit2(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp")
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
 	if code := exitCodeOf(err); code != 2 {
 		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
 	}
