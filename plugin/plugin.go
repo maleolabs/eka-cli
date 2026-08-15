@@ -22,6 +22,7 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,9 +116,14 @@ func DefaultPluginPaths(home string) []string {
 }
 
 // PluginDir returns the single directory plugins are installed into:
-// $EKA_PLUGIN_DIR when set, else <home>/.eka/plugins ("" when neither is
-// available). It is the first entry of DefaultPluginPaths — the install
-// target of `eka plugin install`.
+// $EKA_PLUGIN_DIR when set, else <home>/.eka/plugins. It is the first
+// entry of DefaultPluginPaths — the install target of `eka plugin
+// install`.
+//
+// Invariant: home is the user home directory (os.UserHomeDir), which is
+// never empty in the install path; PluginDir returns "" only when
+// neither $EKA_PLUGIN_DIR nor a home is available. Callers must treat
+// "" as a refusal — never fall back to the current directory.
 func PluginDir(home string) string {
 	paths := DefaultPluginPaths(home)
 	if len(paths) == 0 {
@@ -190,9 +196,19 @@ func pluginName(exe string) string {
 	return strings.TrimPrefix(base, "eka-")
 }
 
-// Manifest runs "manifest --json" and parses the result.
+// Manifest runs "manifest --json" and parses the result. The plugin
+// process is not bounded by this method (the unbounded form — the
+// normal contract path); callers that need a deadline or output cap,
+// such as the install smoke check, use ManifestContext.
 func (p Plugin) Manifest() (Manifest, error) {
-	out, err := p.run("manifest")
+	return p.ManifestContext(context.Background())
+}
+
+// ManifestContext runs "manifest --json" bounded by ctx (e.g. a
+// timeout) and parses the result. The plugin's stdout is capped at
+// maxPluginOutputSize; a larger output refuses (fail-closed).
+func (p Plugin) ManifestContext(ctx context.Context) (Manifest, error) {
+	out, err := p.runContext(ctx, "manifest")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("plugin %q manifest failed: %w", pluginName(p.Exe), err)
 	}
@@ -224,15 +240,69 @@ func (p Plugin) Install(opts InstallOptions) (InstallResult, error) {
 	return r, nil
 }
 
-// run executes the plugin executable with the given arguments, returning
-// the stdout bytes on success (stderr is surfaced on failure).
+// run executes the plugin executable with the given arguments without a
+// deadline (see runContext).
 func (p Plugin) run(args ...string) ([]byte, error) {
-	cmd := exec.Command(p.Exe, args...)
-	var stdout, stderr bytes.Buffer
+	return p.runContext(context.Background(), args...)
+}
+
+// maxPluginOutputSize caps the stdout a plugin may write for one
+// invocation (a manifest or install result is a few KiB; anything
+// larger is a broken or hostile plugin). It bounds the memory of the
+// contract subprocesses — a spewing plugin is refused, never buffered
+// into exhaustion.
+const maxPluginOutputSize = 1 << 20 // 1 MiB
+
+// runContext executes the plugin executable with the given arguments,
+// bounded by ctx and by maxPluginOutputSize on stdout: it returns the
+// stdout bytes on success (stderr is surfaced on failure). A plugin
+// that hangs past ctx's deadline, or writes more than
+// maxPluginOutputSize, is refused — a hung or spewing plugin must not
+// wedge the CLI or exhaust memory.
+func (p Plugin) runContext(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, p.Exe, args...)
+	var stdout limitedBuffer
+	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if stdout.overflow {
+			return nil, fmt.Errorf("plugin output exceeds %d bytes", maxPluginOutputSize)
+		}
 		return nil, errors.New(strings.TrimSpace(stderr.String()))
 	}
-	return stdout.Bytes(), nil
+	if stdout.overflow {
+		return nil, fmt.Errorf("plugin output exceeds %d bytes", maxPluginOutputSize)
+	}
+	return stdout.buf.Bytes(), nil
+}
+
+// limitedBuffer writes into an internal buffer up to
+// maxPluginOutputSize bytes; further writes are counted as overflow and
+// refused (the plugin is killed via SIGPIPE when the pipe drains), so a
+// spewing plugin cannot exhaust memory.
+type limitedBuffer struct {
+	buf      bytes.Buffer
+	overflow bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.overflow {
+		return len(p), nil
+	}
+	remaining := maxPluginOutputSize - b.buf.Len()
+	if remaining <= 0 {
+		b.overflow = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.overflow = true
+		b.buf.Write(p[:remaining])
+		return len(p), nil
+	}
+	b.buf.Write(p)
+	return len(p), nil
 }

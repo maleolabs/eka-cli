@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maleolabs/eka-cli/plugin"
 )
@@ -451,5 +452,282 @@ func TestPluginCommandTree(t *testing.T) {
 	code, _, errText = runIn([]string{"plugin", "install"})
 	if code != 2 {
 		t.Fatalf("plugin install without a name: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+}
+
+// shrinkPluginSmokeCheckTimeout shrinks the manifest smoke-check
+// deadline for the duration of the test (a hung-plugin test must not
+// wait the production 30s).
+func shrinkPluginSmokeCheckTimeout(t *testing.T, v time.Duration) {
+	t.Helper()
+	old := pluginSmokeCheckTimeout
+	pluginSmokeCheckTimeout = v
+	t.Cleanup(func() { pluginSmokeCheckTimeout = old })
+}
+
+// TestPluginInstallSmokeCheckTimeout: a plugin whose manifest hangs is
+// killed by the smoke-check deadline and refuses with a clear timeout
+// error; the installed binary is removed.
+func TestPluginInstallSmokeCheckTimeout(t *testing.T) {
+	shrinkPluginSmokeCheckTimeout(t, 300*time.Millisecond)
+	body := []byte("#!/bin/sh\nwhile true; do :; done\n")
+	srv := newFakePluginReleaseServer(t, plugin.Repo{Owner: "maleolabs", Name: "eka-mcp"},
+		"v1.0.0", "eka-mcp-linux-amd64", sha256Hex(body), body)
+	dir := t.TempDir()
+
+	r := testPluginInstallRunner(srv, dir)
+	var out, errb bytes.Buffer
+	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "timed out") {
+		t.Errorf("refusal must report the timeout, got %q", errb.String())
+	}
+	if names := pluginDirEntries(t, dir); len(names) != 0 {
+		t.Errorf("a timed-out plugin must be removed, found %v", names)
+	}
+}
+
+// TestPluginInstallHugeChecksumsRefused: a SHA256SUMS.txt larger than
+// maxChecksumsSize refuses (bounded read) before anything is installed.
+func TestPluginInstallHugeChecksumsRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repos/") {
+			w.Write([]byte(`{"tag_name":"v1.0.0"}`))
+			return
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/maleolabs/eka-mcp/releases/download/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[0] != "v1.0.0" {
+			http.NotFound(w, r)
+			return
+		}
+		if parts[1] == "SHA256SUMS.txt" {
+			w.Write(bytes.Repeat([]byte("a"), 2<<20)) // 2 MiB, past the 1 MiB cap
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
+	r.client = srv.Client()
+	var out, errb bytes.Buffer
+	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "exceeds") {
+		t.Errorf("refusal must report the oversized checksums file, got %q", errb.String())
+	}
+	if names := pluginDirEntries(t, dir); len(names) != 0 {
+		t.Errorf("nothing must be installed, found %v", names)
+	}
+}
+
+// TestPluginInstallHugeAssetRefused: an asset over pluginMaxAssetSize
+// refuses (bounded download) — both when the server declares the size
+// via Content-Length (early refusal) and when it lies or chunks (the
+// streaming cap stops the read).
+func TestPluginInstallHugeAssetRefused(t *testing.T) {
+	old := pluginMaxAssetSize
+	pluginMaxAssetSize = 1024
+	t.Cleanup(func() { pluginMaxAssetSize = old })
+
+	// Variant A: declared Content-Length over the cap — refused before
+	// any byte is written.
+	bodyA := bytes.Repeat([]byte("a"), 2048)
+	srvA := newFakePluginReleaseServer(t, plugin.Repo{Owner: "maleolabs", Name: "eka-mcp"},
+		"v1.0.0", "eka-mcp-linux-amd64", sha256Hex(bodyA), bodyA)
+	dirA := t.TempDir()
+	rA := testPluginInstallRunner(srvA, dirA)
+	var outA, errbA bytes.Buffer
+	errA := rA.run(updateTestCommand(&outA, &errbA), "mcp")
+	if code := exitCodeOf(errA); code != 1 {
+		t.Fatalf("variant A: exit = %d, want 1 (refusal)\nstderr: %s", code, errbA.String())
+	}
+	if !strings.Contains(errbA.String(), "exceed") {
+		t.Errorf("variant A: refusal must report the oversized asset, got %q", errbA.String())
+	}
+	if names := pluginDirEntries(t, dirA); len(names) != 0 {
+		t.Errorf("variant A: the partial download must be cleaned up, found %v", names)
+	}
+
+	// Variant B: no Content-Length (chunked) — the streaming cap stops
+	// the read at cap+1 and refuses.
+	bodyB := bytes.Repeat([]byte("b"), 2048)
+	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repos/") {
+			w.Write([]byte(`{"tag_name":"v1.0.0"}`))
+			return
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/maleolabs/eka-mcp/releases/download/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[0] != "v1.0.0" {
+			http.NotFound(w, r)
+			return
+		}
+		switch parts[1] {
+		case "SHA256SUMS.txt":
+			w.Write([]byte(sha256Hex(bodyB) + "  binaries/eka-mcp-linux-amd64\n"))
+		case "eka-mcp-linux-amd64":
+			// Write in two parts with a flush in between: the response
+			// can no longer carry a Content-Length (chunked), so the
+			// streaming cap is what must stop the oversized body.
+			w.Write(bodyB[:512])
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			w.Write(bodyB[512:])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srvB.Close)
+	dirB := t.TempDir()
+	rB := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srvB.URL, downloadRoot: srvB.URL}, dirB)
+	rB.client = srvB.Client()
+	var outB, errbB bytes.Buffer
+	errB := rB.run(updateTestCommand(&outB, &errbB), "mcp")
+	if code := exitCodeOf(errB); code != 1 {
+		t.Fatalf("variant B: exit = %d, want 1 (refusal)\nstderr: %s", code, errbB.String())
+	}
+	if !strings.Contains(errbB.String(), "exceed") {
+		t.Errorf("variant B: refusal must report the oversized asset, got %q", errbB.String())
+	}
+	if names := pluginDirEntries(t, dirB); len(names) != 0 {
+		t.Errorf("variant B: the partial download must be cleaned up, found %v", names)
+	}
+}
+
+// TestPluginInstallRedirectRefused: a redirect to a non-HTTPS scheme
+// (here file://) is refused by the redirect policy — a release response
+// must never point the client at a local file.
+func TestPluginInstallRedirectRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
+	r.client = &http.Client{CheckRedirect: pluginCheckRedirect}
+	var out, errb bytes.Buffer
+	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "non-HTTPS scheme") {
+		t.Errorf("refusal must report the refused redirect, got %q", errb.String())
+	}
+}
+
+// TestPluginInstallRedirectChainCapped: a redirect loop is capped at
+// maxPluginRedirects — it must not spin forever (the HTTPS-only policy
+// allows HTTPS hops, so the count cap is what stops the loop).
+func TestPluginInstallRedirectChainCapped(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/next", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, dir)
+	r.client = &http.Client{Transport: srv.Client().Transport, CheckRedirect: pluginCheckRedirect}
+	var out, errb bytes.Buffer
+	err := r.run(updateTestCommand(&out, &errb), "mcp")
+	if code := exitCodeOf(err); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "stopped after") {
+		t.Errorf("a redirect loop must be capped, got %q", errb.String())
+	}
+}
+
+// TestPluginInstallWindowsExe: on windows the installed binary carries
+// the .exe suffix (eka-mcp.exe), mirroring the asset name — the smoke
+// check runs the same installed path (the fake "exe" is a shell script,
+// so the whole flow works on this platform).
+func TestPluginInstallWindowsExe(t *testing.T) {
+	body := []byte(pluginManifestScript)
+	srv := newFakePluginReleaseServer(t, plugin.Repo{Owner: "maleolabs", Name: "eka-mcp"},
+		"v1.0.0", "eka-mcp-windows-amd64.exe", sha256Hex(body), body)
+	dir := t.TempDir()
+
+	r := testPluginInstallRunner(srv, dir)
+	r.goos = "windows"
+	var out, errb bytes.Buffer
+	if err := r.run(updateTestCommand(&out, &errb), "mcp"); err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
+	}
+	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-mcp.exe" {
+		t.Errorf("the installed binary must be eka-mcp.exe, found %v", names)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "eka-mcp.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o755 {
+		t.Errorf("installed binary mode = %v, want 0755", fi.Mode().Perm())
+	}
+}
+
+// TestPluginInstallUsesGHToken: when GH_TOKEN is set, the GitHub API
+// request carries Authorization: Bearer <token> (raises the API rate
+// limit).
+func TestPluginInstallUsesGHToken(t *testing.T) {
+	body := []byte(pluginManifestScript)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repos/") {
+			if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+				t.Errorf("Authorization = %q, want Bearer test-token", got)
+			}
+			w.Write([]byte(`{"tag_name":"v1.0.0"}`))
+			return
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/maleolabs/eka-mcp/releases/download/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[0] != "v1.0.0" {
+			http.NotFound(w, r)
+			return
+		}
+		switch parts[1] {
+		case "SHA256SUMS.txt":
+			w.Write([]byte(sha256Hex(body) + "  binaries/eka-mcp-linux-amd64\n"))
+		case "eka-mcp-linux-amd64":
+			w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("GH_TOKEN", "test-token")
+
+	r := testPluginInstallRunner(&fakePluginReleaseServer{apiBase: srv.URL, downloadRoot: srv.URL}, t.TempDir())
+	r.client = srv.Client()
+	var out, errb bytes.Buffer
+	if err := r.run(updateTestCommand(&out, &errb), "mcp"); err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
+	}
+}
+
+// TestPluginInstallFailedCleanupSurfacesWarning: when removing a
+// failed install fails, the failure is surfaced as a warning — never
+// silently ignored (the refusal itself is returned by the caller).
+func TestPluginInstallFailedCleanupSurfacesWarning(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "eka-mcp")
+	// A non-empty directory at the target makes os.Remove fail (the
+	// smoke-check-failed cleanup path), simulating a stuck removal.
+	if err := os.MkdirAll(filepath.Join(target, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &pluginInstallRunner{}
+	var out, errb bytes.Buffer
+	r.removeInstalled(styleFor(updateTestCommand(&out, &errb)), target)
+	if !strings.Contains(out.String(), "warning: cannot remove the broken plugin") {
+		t.Errorf("a removal failure must surface a warning, got %q", out.String())
 	}
 }

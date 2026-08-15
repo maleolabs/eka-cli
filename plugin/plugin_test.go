@@ -1,10 +1,13 @@
 package plugin
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The plugin package tests are hermetic: a fake plugin executable (a
@@ -90,6 +93,63 @@ func TestDiscoverEmpty(t *testing.T) {
 	}
 	if len(plugins) != 0 {
 		t.Errorf("plugins = %+v, want none", plugins)
+	}
+}
+
+// TestManifestOutputTooLargeRefused: a plugin that writes more than
+// maxPluginOutputSize to stdout is refused — a spewing plugin must not
+// exhaust memory (bounded read, fail-closed).
+func TestManifestOutputTooLargeRefused(t *testing.T) {
+	bin := t.TempDir()
+	// 64 × 64 KiB of 'x' (4 MiB) on stdout — well past the 1 MiB cap.
+	script := `#!/bin/sh
+dd if=/dev/zero bs=65536 count=64 2>/dev/null | tr '\000' 'x'
+`
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := (Plugin{Exe: exe}).Manifest()
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("an oversized manifest output must refuse, got err = %v", err)
+	}
+}
+
+// TestManifestContextTimeout: a plugin that hangs past the context
+// deadline is killed and the deadline error is surfaced — a hung plugin
+// must not wedge the caller.
+func TestManifestContextTimeout(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+while true; do :; done
+`
+	exe := filepath.Join(bin, "eka-mcp")
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := (Plugin{Exe: exe}).ManifestContext(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a hung plugin must surface the deadline error, got err = %v", err)
+	}
+}
+
+// TestPluginDir: the install-target accessor — $EKA_PLUGIN_DIR wins,
+// the home fallback is <home>/.eka/plugins, and "" (the documented
+// refusal case — never install into the current directory) is returned
+// only when neither is available.
+func TestPluginDir(t *testing.T) {
+	t.Setenv("EKA_PLUGIN_DIR", "")
+	if got := PluginDir(""); got != "" {
+		t.Errorf("PluginDir(\"\") = %q, want \"\" (callers must refuse)", got)
+	}
+	if got, want := PluginDir("/home/user"), filepath.Join("/home/user", ".eka", "plugins"); got != want {
+		t.Errorf("PluginDir(\"/home/user\") = %q, want %q", got, want)
+	}
+	t.Setenv("EKA_PLUGIN_DIR", "/custom/plugins")
+	if got := PluginDir(""); got != "/custom/plugins" {
+		t.Errorf("PluginDir with EKA_PLUGIN_DIR = %q, want /custom/plugins", got)
 	}
 }
 

@@ -21,14 +21,23 @@ package cmd
 //  4. The downloaded binary's SHA-256 is verified against the checksum
 //     entry. ANY mismatch, missing entry or malformed entry refuses and
 //     removes the partial download — never install unverified.
-//  5. The verified binary is installed as eka-<name> (0755) into the
-//     plugin directory ($EKA_PLUGIN_DIR or ~/.eka/plugins), matching the
-//     Discover "eka-*" executable contract.
-//  6. Smoke check: the installed binary is run with "manifest" and the
-//     output must parse into plugin.Manifest with a matching name; a
-//     broken manifest removes the installed binary and refuses.
+//  5. The verified binary is installed as eka-<name> (0755; .exe on
+//     windows) into the plugin directory ($EKA_PLUGIN_DIR or
+//     ~/.eka/plugins), matching the Discover "eka-*" executable
+//     contract.
+//  6. Smoke check: the installed binary is run with "manifest" (bounded
+//     by pluginSmokeCheckTimeout — a hung plugin refuses) and the output
+//     must parse into plugin.Manifest with a matching name; a broken
+//     manifest removes the installed binary and refuses.
 //  7. Re-install overwrites the previous binary cleanly (with a printed
 //     notice).
+//
+// Hardening (review findings): all network reads are bounded
+// (SHA256SUMS.txt at 1 MiB, the asset at 1 GiB via Content-Length
+// agreement AND a streaming cap), the manifest subprocess output is
+// capped at 1 MiB, redirects are HTTPS-only and capped at 10, and a
+// GH_TOKEN is sent as Authorization: Bearer when set (raises the API
+// rate limit).
 //
 // Exit codes:
 //
@@ -69,20 +78,33 @@ var (
 	pluginAPIBase      = "https://api.github.com"
 	pluginDownloadRoot = "https://github.com"
 	// pluginClient bounds the connection phases (dial, TLS handshake,
-	// response headers — a dead host refuses fast). Per-request
+	// response headers — a dead host refuses fast) and the redirect
+	// chain (pluginCheckRedirect: HTTPS-only + capped). Per-request
 	// deadlines (pluginRequestTimeout for metadata, pluginDownloadTimeout
 	// for the asset body) are applied per request; there is deliberately
 	// no Client.Timeout — a global cap would kill a slow-but-progressing
 	// download mid-body (see the update command for the same design).
-	pluginClient = &http.Client{Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: pluginConnectTimeout}).DialContext,
-		TLSHandshakeTimeout:   pluginTLSHandshakeTimeout,
-		ResponseHeaderTimeout: pluginResponseHeaderTimeout,
-	}}
+	pluginClient = &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: pluginConnectTimeout}).DialContext,
+			TLSHandshakeTimeout:   pluginTLSHandshakeTimeout,
+			ResponseHeaderTimeout: pluginResponseHeaderTimeout,
+		},
+		CheckRedirect: pluginCheckRedirect,
+	}
 	// Per-request deadlines (vars so the tests can shrink them).
 	pluginRequestTimeout  = 60 * time.Second
 	pluginDownloadTimeout = 10 * time.Minute
+	// pluginSmokeCheckTimeout bounds the manifest smoke check of an
+	// installed plugin: a hung plugin must refuse with a clear error
+	// instead of wedging the CLI (var so tests can shrink it).
+	pluginSmokeCheckTimeout = 30 * time.Second
+	// pluginMaxAssetSize caps a downloaded plugin asset (1 GiB; a real
+	// plugin binary is tens of MB). Var (not const) so tests can shrink
+	// it. Both the Content-Length agreement and a streaming cap enforce
+	// it — a lying or chunked server cannot push more.
+	pluginMaxAssetSize = int64(1 << 30) // 1 GiB
 )
 
 // Connection-phase timeouts of the plugin client: they bound dialing,
@@ -93,6 +115,30 @@ const (
 	pluginTLSHandshakeTimeout   = 10 * time.Second
 	pluginResponseHeaderTimeout = 30 * time.Second
 )
+
+// maxPluginRedirects caps the redirect chain of the install client.
+// Setting CheckRedirect replaces Go's default cap, so the count limit
+// is re-implemented explicitly here.
+const maxPluginRedirects = 10
+
+// maxChecksumsSize caps SHA256SUMS.txt (a few KiB in practice; anything
+// larger is refused — bounded read, fail-closed).
+const maxChecksumsSize = 1 << 20 // 1 MiB
+
+// pluginCheckRedirect is the install client's redirect policy: refuse
+// redirects to non-HTTPS schemes (a release response must never point
+// the client at a local file or a plaintext endpoint) and cap the chain
+// length (a redirect loop must not spin forever). Package-level so
+// tests can apply it to their own clients.
+func pluginCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxPluginRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxPluginRedirects)
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refused redirect to non-HTTPS scheme %q", req.URL.Scheme)
+	}
+	return nil
+}
 
 // newPluginCommand builds the `eka plugin` command group.
 func newPluginCommand() *cobra.Command {
@@ -167,12 +213,19 @@ func newPluginInstallRunner() (*pluginInstallRunner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot resolve the home directory: %w", err)
 	}
+	dir := plugin.PluginDir(home)
+	if dir == "" {
+		// Defense in depth: never install into the current directory.
+		// PluginDir returns "" only when neither $EKA_PLUGIN_DIR nor a
+		// home is available; with a resolved home this is unreachable.
+		return nil, errors.New("cannot resolve the plugin directory (set EKA_PLUGIN_DIR)")
+	}
 	return &pluginInstallRunner{
 		resolve:      plugin.OfficialRegistry.Lookup,
 		apiBase:      pluginAPIBase,
 		downloadRoot: pluginDownloadRoot,
 		client:       pluginClient,
-		pluginDir:    plugin.PluginDir(home),
+		pluginDir:    dir,
 		goos:         runtime.GOOS,
 		goarch:       runtime.GOARCH,
 		version:      version,
@@ -234,6 +287,9 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 		return refuse(cmd, "plugin install refused: SHA256SUMS.txt of %s carries no entry for %s (fail-closed)", repo, asset)
 	}
 	target := filepath.Join(r.pluginDir, "eka-"+name)
+	if r.goos == "windows" {
+		target += ".exe" // the installed name mirrors the asset suffix
+	}
 	replacing := fileExists(target)
 	size := r.assetSize(repo, tag, asset)
 
@@ -300,7 +356,7 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string) error {
 	// removed — an installed plugin that cannot describe itself must
 	// never be left behind.
 	if err := r.smokeCheck(name, target); err != nil {
-		os.Remove(target)
+		r.removeInstalled(s, target)
 		return refuse(cmd, "plugin install refused: %s", err)
 	}
 
@@ -330,22 +386,38 @@ func (r *pluginInstallRunner) renderHeader(s *ui.Style, name string, repo plugin
 // platform where it applies.
 func (r *pluginInstallRunner) windowsInstallHint() string {
 	if r.goos == "windows" {
-		return " (on Windows a file in use cannot always be overwritten; remove the existing eka-<name> first)"
+		return " (on Windows a file in use cannot always be overwritten; remove the existing eka-<name>.exe first)"
 	}
 	return ""
 }
 
-// smokeCheck runs the installed plugin's manifest and verifies it parses
-// into plugin.Manifest with the requested name.
+// smokeCheck runs the installed plugin's manifest (bounded by
+// pluginSmokeCheckTimeout — a hung plugin refuses with a clear error
+// instead of wedging the CLI) and verifies it parses into
+// plugin.Manifest with the requested name.
 func (r *pluginInstallRunner) smokeCheck(name, target string) error {
-	m, err := (plugin.Plugin{Exe: target}).Manifest()
+	ctx, cancel := context.WithTimeout(context.Background(), pluginSmokeCheckTimeout)
+	defer cancel()
+	m, err := (plugin.Plugin{Exe: target}).ManifestContext(ctx)
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("installed plugin %s timed out after %s answering \"manifest\" (killed)", target, pluginSmokeCheckTimeout)
+		}
 		return fmt.Errorf("installed plugin %s failed the manifest smoke check: %w", target, err)
 	}
 	if m.Name != name {
 		return fmt.Errorf("installed plugin %s reports manifest name %q, want %q", target, m.Name, name)
 	}
 	return nil
+}
+
+// removeInstalled removes a failed install. A removal failure is
+// surfaced as a warning — never silently ignored — but does not mask
+// the original refusal.
+func (r *pluginInstallRunner) removeInstalled(s *ui.Style, target string) {
+	if err := os.Remove(target); err != nil {
+		fmt.Fprintf(s.W, "%s\n", s.Warning(fmt.Sprintf("warning: cannot remove the broken plugin at %s: %s", target, err)))
+	}
 }
 
 // latestTag resolves the latest release version of the plugin's
@@ -360,6 +432,11 @@ func (r *pluginInstallRunner) latestTag(repo plugin.Repo) (string, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "eka-cli/"+r.version)
+	// A GH_TOKEN raises the GitHub API rate limit; the header is only
+	// sent when the environment provides it.
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return "", err
@@ -388,7 +465,8 @@ func (r *pluginInstallRunner) latestTag(repo plugin.Repo) (string, error) {
 
 // fetchChecksums downloads the release's SHA256SUMS.txt from the
 // tag-pinned base, so checksum and asset always come from the same
-// release.
+// release. The read is bounded at maxChecksumsSize — a larger file is
+// refused (fail-closed).
 func (r *pluginInstallRunner) fetchChecksums(repo plugin.Repo, tag string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pluginRequestTimeout)
 	defer cancel()
@@ -400,9 +478,12 @@ func (r *pluginInstallRunner) fetchChecksums(repo plugin.Repo, tag string) (stri
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("SHA256SUMS.txt returned %s", resp.Status)
 	}
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumsSize+1))
 	if err != nil {
 		return "", err
+	}
+	if len(b) > maxChecksumsSize {
+		return "", fmt.Errorf("SHA256SUMS.txt exceeds %d bytes (refusing)", maxChecksumsSize)
 	}
 	return string(b), nil
 }
@@ -441,7 +522,10 @@ func (r *pluginInstallRunner) do(ctx context.Context, method, url string) (*http
 // bytes are reported to bar per read chunk, the total comes from the
 // resolution step (Content-Length), 0 renders an indeterminate bar. The
 // request carries the generous pluginDownloadTimeout — the body read is
-// bounded by it, never by a connection-phase timeout.
+// bounded by it, never by a connection-phase timeout. The body is
+// additionally bounded at pluginMaxAssetSize: a server-declared
+// Content-Length over the cap refuses before any byte is written, and a
+// streaming cap stops a chunked or lying server at cap+1 bytes.
 func (r *pluginInstallRunner) downloadAsset(w io.Writer, repo plugin.Repo, tag, asset string, bar *ui.DownloadBar) error {
 	ctx, cancel := context.WithTimeout(context.Background(), pluginDownloadTimeout)
 	defer cancel()
@@ -453,8 +537,21 @@ func (r *pluginInstallRunner) downloadAsset(w io.Writer, repo plugin.Repo, tag, 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}
-	_, err = io.Copy(&barWriter{w: w, bar: bar}, resp.Body)
-	return err
+	// Content-Length agreement: a declared size over the cap refuses
+	// before any byte is written.
+	if resp.ContentLength > pluginMaxAssetSize {
+		return fmt.Errorf("asset %s is %d bytes, exceeding the %d-byte limit", asset, resp.ContentLength, pluginMaxAssetSize)
+	}
+	// Streaming cap: even without (or despite) Content-Length, at most
+	// cap+1 bytes are read.
+	n, err := io.Copy(&barWriter{w: w, bar: bar}, io.LimitReader(resp.Body, pluginMaxAssetSize+1))
+	if err != nil {
+		return err
+	}
+	if n > pluginMaxAssetSize {
+		return fmt.Errorf("asset %s exceeds the %d-byte limit (download aborted)", asset, pluginMaxAssetSize)
+	}
+	return nil
 }
 
 // fileExists reports whether path exists (a broken symlink or a
