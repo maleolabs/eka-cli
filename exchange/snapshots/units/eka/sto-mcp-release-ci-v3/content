@@ -1,0 +1,1 @@
+{"description":"Add the eka-mcp release pipeline (anvil, following eka-cli): cross-platform binaries `eka-mcp-\u003cos\u003e-\u003carch\u003e[.exe]`, SHA256SUMS.txt, GitHub release on tag.","acceptanceCriteria":"A tag push produces a GitHub release with eka-mcp binaries + SHA256SUMS.txt that `eka plugin install mcp` can consume."}
