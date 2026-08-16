@@ -1040,10 +1040,14 @@ func TestViewRetrievalFlagErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"view", "board", "--active"}, "the board projection supports --offset/--limit/--page only"},
-		{[]string{"view", "board", "--container", "wave-0"}, "the board projection supports --offset/--limit/--page only"},
-		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination; containers: pagination and filters)"},
-		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination; containers: pagination and filters)"},
+		{[]string{"view", "board", "--active"}, "the board projection supports --offset/--limit/--page/--member/--json only"},
+		{[]string{"view", "board", "--container", "wave-0"}, "the board projection supports --offset/--limit/--page/--member/--json only"},
+		{[]string{"view", "board", "--json", "--limit", "2"}, "board --json does not compose with pagination"},
+		{[]string{"view", "containers", "--json"}, "--json is a board-projection flag"},
+		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
+		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
+		{[]string{"view", "execution", "--member", "alice"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
+		{[]string{"view", "execution", "--json"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
 	}
 	for _, c := range cases {
 		code, out, errText := runIn(c.args)
@@ -1063,7 +1067,7 @@ func TestViewRetrievalFlagErrors(t *testing.T) {
 	t.Setenv("EKA_HOME", t.TempDir())
 	chdirInto(t, t.TempDir())
 	code, _, errText := runIn([]string{"view", "board", "--active"})
-	if code != 2 || !strings.Contains(errText, "supports --offset/--limit/--page only") {
+	if code != 2 || !strings.Contains(errText, "supports --offset/--limit/--page/--member/--json only") {
 		t.Errorf("board --active without a workspace: exit = %d, %q; want 2 + the usage error", code, errText)
 	}
 }

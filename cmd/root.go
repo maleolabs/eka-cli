@@ -1,9 +1,10 @@
 // Package cmd implements the EKA CLI as a thin Cobra command layer.
 //
 // The command tree (root, validate, init, export, import, get, view,
-// watch, sync, project, status, feedback, update, note, plugin) is the
-// only part of the codebase that knows about argument parsing, flags,
-// help text, output rendering and exit codes. It contains no domain
+// watch, sync, project, status, feedback, update, note, assign,
+// unassign, reassign, plugin) is the only part of the codebase that
+// knows about argument parsing, flags, help text, output rendering and
+// exit codes. It contains no domain
 // logic: validate delegates to the Authoring API (runtime.Authoring),
 // init delegates to the bootstrap engine, export/import delegate to the
 // exchange engine, get delegates to the machine interface (machine/),
@@ -24,9 +25,19 @@
 // representation-independent reference-parsing helper ParseReference —
 // authoring validation itself runs through runtime.Authoring),
 // bootstrap (init), feedback (the standalone ADR-026 feedback module),
-// plugin (the plugin contract, registry and install flow) and ui. Tests
-// MAY import store/workspace/sync for seeding and corruption fixtures
-// (test-only, documented).
+// plugin (the plugin contract, registry and install flow) and ui.
+// Tests MAY import store/workspace/sync for seeding and corruption
+// fixtures (test-only, documented).
+//
+// Two documented exceptions exist, each justified in its file: the
+// workspace registry writes of `eka project register` (cmd/project.go
+// — the Runtime's WorkspaceService does not expose the metadata
+// registration path), and the assignment edge writes of
+// cmd/assigned.go (the Authoring API's relate is edge-add only, so
+// `eka unassign`/`eka reassign` mirror the relate published-path
+// re-point and the draft rewrite at the store/workspace layer; the
+// mirror stays a faithful copy of the runtime mechanism so the two
+// cannot drift).
 //
 // Layout rationale: the reusable engines stay where they are
 // (bootstrap/, conformance/, exchange/, ...). There is deliberately no
@@ -194,7 +205,7 @@ Exit codes:
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
-		newPluginCommand())
+		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand())
 	root.AddCommand(newAuthoringCommands()...)
 	// The root help and the landing Commands list are grouped by intent
 	// (Authoring / Repository & Exchange / Knowledge Access / Runtime &

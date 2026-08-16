@@ -121,7 +121,9 @@ func renderBoard(s *ui.Style, g *view.Graph, cols view.StateColumns) {
 	for _, col := range cols {
 		labels := make([]ui.Card, 0, len(col.WorkItems))
 		for _, wi := range col.WorkItems {
-			labels = append(labels, boardCard(short(wi), g.NumberLabel(wi.Identity), wi.Type, tag(wi.Identity), budget,
+			// The execution board keeps its container-tag layout (the
+			// assignee tag belongs to the board projection, ADR-029).
+			labels = append(labels, boardCard(short(wi), g.NumberLabel(wi.Identity), wi.Type, tag(wi.Identity), "", budget,
 				stateColor(s, col.State), typeBadgeColor(s, wi.Type), s.Accent, wi.NotesCount))
 		}
 		board.AddCards(boardTitle(col.State), stateColor(s, col.State), labels)

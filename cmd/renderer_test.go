@@ -221,7 +221,7 @@ func TestBoardCard(t *testing.T) {
 		{"markdown-syntax-highlighting", "", "sto", "unassigned", 0, "markdown-syntax-highlighting\n[sto] · unassigned\n0 notes"},
 	}
 	for _, c := range cases {
-		got := boardCard(c.id, c.number, c.typeToken, c.tag, budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), c.typeToken), nil, c.notes)
+		got := boardCard(c.id, c.number, c.typeToken, c.tag, "", budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), c.typeToken), nil, c.notes)
 		if cardText(got) != c.want {
 			t.Errorf("boardCard(%q, %q, %q, %q, %d) = %q, want %q", c.id, c.number, c.typeToken, c.tag, budget, cardText(got), c.want)
 		}
@@ -236,13 +236,13 @@ func TestBoardCardNarrowBudget(t *testing.T) {
 	if budget != 10 {
 		t.Fatalf("BoardItemBudget(80, 5) = %d, want 10", budget)
 	}
-	got := boardCard("markdown-syntax-highlighting", "", "sto", "wave-7", budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), "sto"), nil, 0)
+	got := boardCard("markdown-syntax-highlighting", "", "sto", "wave-7", "", budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), "sto"), nil, 0)
 	want := "markdown-…\nwave-7\n0 notes"
 	if cardText(got) != want {
 		t.Errorf("boardCard on 80-col = %q, want %q (tag intact, badge dropped, notes on own line)", cardText(got), want)
 	}
 	// Number label is never truncated; the name is truncated to fit.
-	got2 := boardCard("markdown-syntax-highlighting", "#7", "sto", "wave-7", budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), "sto"), nil, 0)
+	got2 := boardCard("markdown-syntax-highlighting", "#7", "sto", "wave-7", "", budget, nil, typeBadgeColor(ui.NewStyle(&bytes.Buffer{}, false), "sto"), nil, 0)
 	want2 := "#7 markdo…\nwave-7\n0 notes"
 	if cardText(got2) != want2 {
 		t.Errorf("boardCard with overflow numberLabel = %q, want %q (number kept, name truncated)", cardText(got2), want2)
@@ -257,7 +257,7 @@ func TestBoardCardSegments(t *testing.T) {
 	colored := &ui.Style{Color: true, W: &bytes.Buffer{}}
 	state := colored.Progress // in-progress presentation
 	badge := typeBadgeColor(colored, "bug")
-	card := boardCard("fix-login", "#3", "bug", "wave-7", ui.BoardItemBudget(0, 5), state, badge, colored.Accent, 2)
+	card := boardCard("fix-login", "#3", "bug", "wave-7", "", ui.BoardItemBudget(0, 5), state, badge, colored.Accent, 2)
 	if len(card) != 3 {
 		t.Fatalf("card lines = %d, want 3", len(card))
 	}
