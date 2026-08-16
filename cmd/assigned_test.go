@@ -513,7 +513,10 @@ func TestAssignOnDraftMutatesFile(t *testing.T) {
 }
 
 // TestAssignmentDeterministicOutput: the same assignment operation
-// produces byte-identical output across runs.
+// produces byte-identical output across runs. The published-path
+// Object Hash line embeds the Updated date (time.Now), so two runs on
+// different days produce different hashes — the comparison normalizes
+// that line away; everything else must be byte-identical.
 func TestAssignmentDeterministicOutput(t *testing.T) {
 	var outputs []string
 	for i := 0; i < 2; i++ {
@@ -524,7 +527,204 @@ func TestAssignmentDeterministicOutput(t *testing.T) {
 		}
 		outputs = append(outputs, out)
 	}
-	if outputs[0] != outputs[1] {
+	if stripObjectHash(outputs[0]) != stripObjectHash(outputs[1]) {
 		t.Errorf("assign output is not deterministic:\n--- run 1 ---\n%s\n--- run 2 ---\n%s", outputs[0], outputs[1])
+	}
+}
+
+// stripObjectHash removes the Object Hash line of the published-path
+// summary: the hash embeds the Updated date (time.Now), so two runs on
+// different days produce different hashes. The rest of the assignment
+// output is byte-deterministic.
+func stripObjectHash(out string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "Object Hash") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestUnassignRejectsToUsage: `eka unassign --to` is a usage error
+// (exit 2) — unassign removes the assigned-to edge and never re-points
+// it, so --to (an assign/reassign option) is refused instead of being
+// silently ignored.
+func TestUnassignRejectsToUsage(t *testing.T) {
+	assignmentEnv(t)
+	code, out, errText := runIn([]string{"unassign", "sto:item-a", "--to", "mbr:alice"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, "unassign does not take --to") {
+		t.Errorf("stderr = %q, want the --to usage refusal", errText)
+	}
+	if got := assignedTo(t, "acme/sto:item-a"); len(got) != 0 {
+		t.Errorf("a refused unassign must not write, assigned-to = %v", got)
+	}
+}
+
+// --- The member-scoped board (`eka view board --member me|<mbr-id>`,
+// ADR-029 Decision 3): the advisory member filter with its assignee
+// tags, the dedicated 'No assignee' bucket and the machine keys. ---
+
+// TestViewBoardMemberMeHappyPath: `--member me` resolves the operator
+// identity from `git config user.name` to exactly one member line and
+// renders the member-scoped board: the member's assigned items in
+// their state columns (the assignee tag on the card) plus the
+// dedicated 'No assignee' bucket. The container-axis "Unassigned"
+// insight is suppressed in member views — the "No Assignee" bucket
+// replaces it there.
+func TestViewBoardMemberMeHappyPath(t *testing.T) {
+	assignmentEnv(t)
+	if code, _, errText := runIn([]string{"assign", "sto:item-a", "--to", "mbr:alice"}); code != 0 {
+		t.Fatalf("assign: exit = %d\nstderr: %s", code, errText)
+	}
+	gitIdentityEnv(t, "alice")
+	code, out, errText := runIn([]string{"view", "board", "--member", "me"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	for _, want := range []string{
+		"Member       acme/mbr:alice",
+		"2 work items in member scope · 1 item without an assignee",
+		"│ ▸ #1 item-a",
+		"│   [sto] · unassigned · alice", // the assignee tag on the card
+		"│ No Assignee (1)",
+		"│ ▸ #2 item-b",  // the no-edge item surfaces in the bucket
+		"No Assignee: 1", // the member-axis insight
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output must contain %q:\n%s", want, out)
+		}
+	}
+	// The container-axis "Unassigned" insight is suppressed in member
+	// views (the "No Assignee" bucket replaces it there).
+	if strings.Contains(out, "Unassigned:") {
+		t.Errorf("member view must not carry the container-axis Unassigned insight:\n%s", out)
+	}
+}
+
+// TestViewBoardMemberMeZeroMatchRefused: `--member me` with an operator
+// identity that matches NO member line is a deterministic refusal
+// (exit 2) listing the available members.
+func TestViewBoardMemberMeZeroMatchRefused(t *testing.T) {
+	assignmentEnv(t)
+	gitIdentityEnv(t, "ghost")
+	code, out, errText := runIn([]string{"view", "board", "--member", "me"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, `the operator identity "ghost" matches 0 member line(s)`) {
+		t.Errorf("stderr = %q, want the zero-match refusal", errText)
+	}
+	for _, want := range []string{"acme/mbr:alice", "acme/mbr:bob"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("stderr must list the available member %q:\n%s", want, errText)
+		}
+	}
+}
+
+// TestViewBoardMemberMeMultipleMatchRefused: `--member me` with an
+// operator identity that matches MORE than one member line is a
+// deterministic refusal (exit 2) listing the available members.
+func TestViewBoardMemberMeMultipleMatchRefused(t *testing.T) {
+	assignmentEnv(t)
+	// A second member line authored by alice: the operator identity
+	// "alice" then matches both mbr:alice and mbr:alice-dup.
+	gitIdentityEnv(t, "alice")
+	if code, _, errText := runIn([]string{"new", "mbr:alice-dup", "--content-file", mbrBody(t)}); code != 0 {
+		t.Fatalf("new mbr:alice-dup: exit = %d\nstderr: %s", code, errText)
+	}
+	if code, _, errText := runIn([]string{"publish", "mbr:alice-dup"}); code != 0 {
+		t.Fatalf("publish mbr:alice-dup: exit = %d\nstderr: %s", code, errText)
+	}
+	code, out, errText := runIn([]string{"view", "board", "--member", "me"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, `the operator identity "alice" matches 2 member line(s)`) {
+		t.Errorf("stderr = %q, want the multiple-match refusal", errText)
+	}
+	for _, want := range []string{"acme/mbr:alice", "acme/mbr:alice-dup", "acme/mbr:bob"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("stderr must list the available member %q:\n%s", want, errText)
+		}
+	}
+}
+
+// TestViewBoardMemberUnresolvableRefused: an unresolvable --member id
+// is a deterministic refusal (exit 2) listing the available members.
+func TestViewBoardMemberUnresolvableRefused(t *testing.T) {
+	assignmentEnv(t)
+	code, out, errText := runIn([]string{"view", "board", "--member", "ghost"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if !strings.Contains(errText, `member "ghost" not found`) {
+		t.Errorf("stderr = %q, want the not-found refusal", errText)
+	}
+	for _, want := range []string{"acme/mbr:alice", "acme/mbr:bob"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("stderr must list the available member %q:\n%s", want, errText)
+		}
+	}
+}
+
+// TestViewBoardMemberJSONPinnedKeys: the member-scoped board machine
+// document (schema eka-board-member-v1) carries the pinned member-axis
+// keys — "assignee" (the member's assigned items) and "no-assignee"
+// (the dedicated 'No assignee' bucket, never "unassigned").
+func TestViewBoardMemberJSONPinnedKeys(t *testing.T) {
+	assignmentEnv(t)
+	if code, _, errText := runIn([]string{"assign", "sto:item-a", "--to", "mbr:alice"}); code != 0 {
+		t.Fatalf("assign: exit = %d\nstderr: %s", code, errText)
+	}
+	code, out, errText := runIn([]string{"view", "board", "--member", "alice", "--json"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("--json: invalid JSON: %v\n%s", err, out)
+	}
+	if doc["schema"] != "eka-board-member-v1" {
+		t.Errorf("--json schema = %v, want eka-board-member-v1", doc["schema"])
+	}
+	if doc["member"] != "acme/mbr:alice" {
+		t.Errorf("--json member = %v, want acme/mbr:alice", doc["member"])
+	}
+	assignee, _ := doc["assignee"].([]any)
+	if len(assignee) != 1 || assignee[0] != "acme/sto:item-a" {
+		t.Errorf("--json assignee = %v, want [acme/sto:item-a]", doc["assignee"])
+	}
+	noAssignee, _ := doc["no-assignee"].([]any)
+	if len(noAssignee) != 1 || noAssignee[0] != "acme/sto:item-b" {
+		t.Errorf("--json no-assignee = %v, want [acme/sto:item-b]", doc["no-assignee"])
+	}
+}
+
+// TestViewBoardMemberNoAssigneeNeverHidden: every work item WITHOUT an
+// assigned-to edge surfaces in the 'No assignee' bucket of the
+// member-scoped board — never silently excluded (ADR-029 Decision 3).
+// A member with no assigned items still sees the full unassigned work.
+func TestViewBoardMemberNoAssigneeNeverHidden(t *testing.T) {
+	assignmentEnv(t)
+	code, out, errText := runIn([]string{"view", "board", "--member", "bob"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	for _, want := range []string{
+		"2 work items in member scope · 2 items without an assignee",
+		"│ No Assignee (2)",
+		"│ ▸ #1 item-a",
+		"│ ▸ #2 item-b",
+		"No Assignee: 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output must contain %q:\n%s", want, out)
+		}
 	}
 }

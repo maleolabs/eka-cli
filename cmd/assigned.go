@@ -174,10 +174,11 @@ R13 assigned-to sub-check; cross-repository assignment is refused). An
 unresolvable member is refused with the repository's known member
 lines listed.
 
-Assigning an item whose R13 gate is in force (in-review / done) runs
-the standard publish validation: the added edge must satisfy the
-conditional assigned-to checks, and the item's other gates must hold —
-a blocked assignment is refused with the validation report.
+Assigning runs the standard publish validation: the would-be unit is
+checked at CKO level (Rule 5 reference resolution with the store
+resolver, plus the structural checks). The R13 transition gates and
+the conditional assigned-to sub-check run at sync time, not at
+publish — a blocked assignment is refused with the validation report.
 
 Exit codes:
   0  assigned (published, draft-mutated, or unchanged — already
@@ -257,6 +258,13 @@ Exit codes:
 	cmd.Flags().String(flagAssignBy, "", "operation authority name (default: `git config user.name`)")
 	cmd.Flags().String(flagAssignByKind, "", "author identity kind: user, agent, or worker (default: user)")
 	cmd.Flags().Bool(flagAssignJSON, false, "emit the deterministic machine report (schema eka-assignment-v1)")
+	if action == actionUnassign {
+		// --to is an assign/reassign option: unassign removes the
+		// assigned-to edge and never re-points it. Hidden so the
+		// unassign help does not advertise it; passing it anyway is
+		// refused as a usage error (runAssignment).
+		cmd.Flags().MarkHidden(flagAssignTo)
+	}
 	return cmd
 }
 
@@ -268,6 +276,12 @@ func runAssignment(cmd *cobra.Command, args []string, action assignmentAction) e
 	jsonOut, _ := cmd.Flags().GetBool(flagAssignJSON)
 	byFlag, _ := cmd.Flags().GetString(flagAssignBy)
 	byKindFlag, _ := cmd.Flags().GetString(flagAssignByKind)
+	if action == actionUnassign && cmd.Flags().Changed(flagAssignTo) {
+		// --to is an assign/reassign option; unassign removes the edge
+		// and never re-points it — passing --to is a usage error, not
+		// a silently ignored option.
+		return assignmentUsage(cmd, jsonOut, action, "unassign does not take --to <mbr>: the assigned-to edge is removed, not re-pointed")
+	}
 	if (action == actionAssign || action == actionReassign) && strings.TrimSpace(to) == "" {
 		return assignmentUsage(cmd, jsonOut, action, fmt.Sprintf("%s requires --to <mbr>: the member line to assign to", action))
 	}
@@ -459,7 +473,7 @@ func (e *assignmentRefusal) Error() string {
 }
 
 // assignmentValidationError reports that the would-be unit failed
-// CKO-level validation (the standard publish gate); nothing was
+// CKO-level validation (the standard publish validation); nothing was
 // written. The Report is carried so the command renders the findings.
 type assignmentValidationError struct {
 	// Target is the line form the assignment addressed.
@@ -845,8 +859,14 @@ func writeAssignmentPublished(st *store.Store, line []*exchange.Unit, lineForm, 
 	next.Relationships = replaceAssignedTo(current.Relationships, assignee)
 	next.Updated = time.Now().Format("2006-01-02")
 
-	// The standard publish gate (mirror of relatePublished): the
+	// The standard publish validation (mirror of relatePublished): the
 	// would-be unit must validate at CKO level with the store resolver.
+	// ValidateCKO runs with SkipGates — the R13 transition gates and
+	// the conditional assigned-to sub-check are NOT evaluated here
+	// (they run at sync time); only Rule 5 reference resolution and
+	// the structural checks apply. The single-assignee, provenance and
+	// resolvability rules are enforced by the CLI's own resolution
+	// (resolveMemberTarget) before this point.
 	resolver := &assignmentStoreResolver{st: st}
 	report, err := conformance.ValidateCKO(&next, conformance.ValidateCKOOptions{
 		Resolve: resolver.Resolve,
