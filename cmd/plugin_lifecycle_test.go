@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/plugin"
+	"github.com/maleolabs/eka-core/plugin"
 )
 
 // The plugin lifecycle tests are hermetic: list/remove run against

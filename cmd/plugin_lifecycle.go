@@ -48,7 +48,7 @@ import (
 	"strings"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-cli/plugin"
+	"github.com/maleolabs/eka-core/plugin"
 	"github.com/spf13/cobra"
 )
 
