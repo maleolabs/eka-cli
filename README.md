@@ -145,7 +145,7 @@ with checksum verification, no interactive prompt. **Third-party** plugins
 require explicit **consent** before they are installed or executed — the user
 must approve the plugin before the CLI will act on it.
 
-Plugins import the contract types from `github.com/maleolabs/eka-cli/plugin`
+Plugins import the contract types from `github.com/maleolabs/eka-core/plugin`
 (`Manifest`, `Artifact`, `InstallOptions`, `InstallResult`,
 `ContractVersion`) to implement their executable side; they never import the
 CLI's internal packages.

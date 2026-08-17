@@ -9,7 +9,8 @@
 // init delegates to the bootstrap engine, export/import delegate to the
 // exchange engine, get delegates to the machine interface (machine/),
 // feedback delegates to the standalone feedback module (feedback/),
-// plugin delegates to the plugin contract + registry (plugin/), and
+// plugin delegates to the plugin contract + registry
+// (github.com/maleolabs/eka-core/plugin), and
 // every runtime command (sync, view, watch, project, status, integrity)
 // delegates to the Runtime Kernel services (the runtime package) — the
 // CLI is a CLIENT of the Runtime.
@@ -25,7 +26,8 @@
 // representation-independent reference-parsing helper ParseReference —
 // authoring validation itself runs through runtime.Authoring),
 // bootstrap (init), feedback (the standalone ADR-026 feedback module),
-// plugin (the plugin contract, registry and install flow) and ui.
+// plugin (the plugin contract and registry from eka-core, plus the
+// install flow) and ui.
 // Tests MAY import store/workspace/sync for seeding and corruption
 // fixtures (test-only, documented).
 //

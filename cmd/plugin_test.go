@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maleolabs/eka-cli/plugin"
+	"github.com/maleolabs/eka-core/plugin"
 )
 
 // The plugin install tests are hermetic: every network request goes to

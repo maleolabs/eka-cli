@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/dustin/go-humanize v1.0.1
-	github.com/maleolabs/eka-core v1.2.1-0.20260816084757-fca16ecdde44
+	github.com/maleolabs/eka-core v1.2.1-0.20260817063006-80ba3d698faa
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
