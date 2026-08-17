@@ -28,6 +28,11 @@ const (
 	groupKnowledgeAccess    = "knowledge-access"
 	groupRuntimeWorkspace   = "runtime-workspace"
 	groupUtility            = "utility"
+	// groupPlugins is the DYNAMIC group of plugin-registered commands
+	// (B1 deferred registration, ADR-031): it is added to the root only
+	// when plugin commands were registered, so a plugin-free CLI renders
+	// exactly the five static intent groups.
+	groupPlugins = "plugins"
 )
 
 // commandGroups is the ordered set of intent groups rendered by
@@ -92,6 +97,31 @@ func assignCommandGroups(root *cobra.Command) {
 	for _, c := range root.Commands() {
 		c.GroupID = commandGroupsByName[c.Name()]
 	}
+}
+
+// commandGroupsFor returns the display group list of root: the static
+// intent groups plus the dynamic Plugins group when root carries
+// plugin-registered commands (B1 deferred registration, ADR-031). The
+// root help (cmd.Groups()) and the landing use the same list, so the
+// two never drift apart.
+func commandGroupsFor(root *cobra.Command) []*cobra.Group {
+	groups := make([]*cobra.Group, 0, len(commandGroups)+1)
+	groups = append(groups, commandGroups...)
+	if hasPluginCommands(root) {
+		groups = append(groups, &cobra.Group{ID: groupPlugins, Title: "Plugins"})
+	}
+	return groups
+}
+
+// hasPluginCommands reports whether root carries any plugin-registered
+// command (GroupID groupPlugins).
+func hasPluginCommands(root *cobra.Command) bool {
+	for _, c := range root.Commands() {
+		if c.GroupID == groupPlugins {
+			return true
+		}
+	}
+	return false
 }
 
 // renderCommandGroups renders a grouped command list: for every group in

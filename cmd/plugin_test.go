@@ -128,6 +128,37 @@ func pluginDirEntries(t *testing.T, dir string) []string {
 	return names
 }
 
+// assertPluginSidecar verifies the G2 checksum sidecar of an installed
+// plugin: the file .eka-<name>.sha256 carries exactly the SHA-256 of
+// the installed binary exe.
+func assertPluginSidecar(t *testing.T, dir, name, exe string) {
+	t.Helper()
+	sum, err := sha256File(exe)
+	if err != nil {
+		t.Fatalf("hash the installed binary: %v", err)
+	}
+	got, err := os.ReadFile(pluginSidecarPath(dir, name))
+	if err != nil {
+		t.Fatalf("checksum sidecar missing: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != sum {
+		t.Errorf("sidecar = %q, want the binary SHA-256 %q", strings.TrimSpace(string(got)), sum)
+	}
+}
+
+// writePluginSidecarFor simulates the sidecar `eka plugin install`
+// finalize writes: the SHA-256 of the given binary.
+func writePluginSidecarFor(t *testing.T, dir, name, exe string) {
+	t.Helper()
+	sum, err := sha256File(exe)
+	if err != nil {
+		t.Fatalf("hash %s: %v", exe, err)
+	}
+	if err := writePluginChecksum(dir, name, sum); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+}
+
 // TestPluginInstallHappyPath: the full flow — resolve mcp through the
 // registry, download the verified asset, install it as an executable
 // eka-mcp, smoke-check the manifest and leave no temp debris. The
@@ -157,8 +188,11 @@ func TestPluginInstallHappyPath(t *testing.T) {
 	if fi.Mode().Perm() != 0o755 {
 		t.Errorf("installed binary mode = %v, want 0755", fi.Mode().Perm())
 	}
-	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-mcp" {
-		t.Errorf("plugin dir must hold only eka-mcp, found %v", names)
+	// The G2 checksum sidecar is written at finalize (the
+	// dispatch-time verification record) — invisible to the eka-* scans.
+	assertPluginSidecar(t, dir, "mcp", target)
+	if names := pluginDirEntries(t, dir); len(names) != 2 || names[0] != ".eka-mcp.sha256" || names[1] != "eka-mcp" {
+		t.Errorf("plugin dir must hold eka-mcp + the checksum sidecar, found %v", names)
 	}
 	for _, want := range []string{
 		"Install", "Plugin    mcp", "Repo      maleolabs/eka-mcp", "Version   v1.0.0",
@@ -664,8 +698,8 @@ func TestPluginInstallWindowsExe(t *testing.T) {
 	if err := r.run(updateTestCommand(&out, &errb), "mcp", &pluginInstallFlags{}); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
-	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-mcp.exe" {
-		t.Errorf("the installed binary must be eka-mcp.exe, found %v", names)
+	if names := pluginDirEntries(t, dir); len(names) != 2 || names[0] != ".eka-mcp.sha256" || names[1] != "eka-mcp.exe" {
+		t.Errorf("the installed binary must be eka-mcp.exe + the checksum sidecar, found %v", names)
 	}
 	fi, err := os.Stat(filepath.Join(dir, "eka-mcp.exe"))
 	if err != nil {
@@ -674,6 +708,7 @@ func TestPluginInstallWindowsExe(t *testing.T) {
 	if fi.Mode().Perm() != 0o755 {
 		t.Errorf("installed binary mode = %v, want 0755", fi.Mode().Perm())
 	}
+	assertPluginSidecar(t, dir, "mcp", filepath.Join(dir, "eka-mcp.exe"))
 }
 
 // TestPluginInstallUsesGHToken: when GH_TOKEN is set, the GitHub API

@@ -120,9 +120,10 @@ func TestPluginInstallThirdPartyConsentYes(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}
 	}
-	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-helper" {
-		t.Errorf("plugin dir must hold only eka-helper, found %v", names)
+	if names := pluginDirEntries(t, dir); len(names) != 2 || names[0] != ".eka-helper.sha256" || names[1] != "eka-helper" {
+		t.Errorf("plugin dir must hold eka-helper + the checksum sidecar, found %v", names)
 	}
+	assertPluginSidecar(t, dir, "helper", target)
 }
 
 // TestPluginInstallThirdPartyConsentAccepted: without --yes, the

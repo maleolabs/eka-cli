@@ -46,8 +46,10 @@ func writeLifecyclePlugin(t *testing.T, dir, name string, body []byte) string {
 // deterministic (name-ascending) order.
 func TestPluginListDiscoveredInstalledTier(t *testing.T) {
 	pluginDir := t.TempDir()
-	// Installed official plugin (in the plugin dir).
-	writeLifecyclePlugin(t, pluginDir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	// Installed official plugin (in the plugin dir), with the G2
+	// checksum sidecar a verified install writes.
+	exe := writeLifecyclePlugin(t, pluginDir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	writePluginSidecarFor(t, pluginDir, "mcp", exe)
 	pathDir := t.TempDir()
 	// Third-party plugin on PATH only (not installed).
 	writeLifecyclePlugin(t, pathDir, "eka-helper", []byte(lifecycleManifestScript("0.2.0", "github.com/someone/eka-helper")))
@@ -58,8 +60,10 @@ func TestPluginListDiscoveredInstalledTier(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstderr: %s", code, errText)
 	}
-	if errText != "" {
-		t.Errorf("stderr must be empty, got %q", errText)
+	// The PATH-only third-party plugin is visibly refused for
+	// registration (G3, ADR-031) — the list itself still reports it.
+	if !strings.Contains(errText, `plugin "helper" is on PATH`) || !strings.Contains(errText, "not installed in the plugin directory") {
+		t.Errorf("a PATH-only plugin must be visibly refused for registration, got %q", errText)
 	}
 	for _, want := range []string{
 		"NAME", "VERSION", "SOURCE", "TRUST", "INSTALLED", "PATH",
@@ -117,7 +121,8 @@ func TestPluginListEmpty(t *testing.T) {
 // state; two runs are byte-identical.
 func TestPluginListJSON(t *testing.T) {
 	pluginDir := t.TempDir()
-	writeLifecyclePlugin(t, pluginDir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	exe := writeLifecyclePlugin(t, pluginDir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	writePluginSidecarFor(t, pluginDir, "mcp", exe)
 	pathDir := t.TempDir()
 	writeLifecyclePlugin(t, pathDir, "eka-helper", []byte(lifecycleManifestScript("0.2.0", "github.com/someone/eka-helper")))
 	t.Setenv("EKA_PLUGIN_DIR", pluginDir)
@@ -126,6 +131,11 @@ func TestPluginListJSON(t *testing.T) {
 	code, out, errText := runIn([]string{"plugin", "list", "--json"})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	// The PATH-only third-party plugin is visibly refused for
+	// registration (G3, ADR-031) — the JSON report still carries it.
+	if !strings.Contains(errText, `plugin "helper" is on PATH`) {
+		t.Errorf("a PATH-only plugin must be visibly refused for registration, got %q", errText)
 	}
 	if !strings.HasSuffix(out, "\n") {
 		t.Errorf("--json output must end with a newline, got %q", out)
@@ -162,7 +172,9 @@ func TestPluginListJSON(t *testing.T) {
 // refuses (exit 1, not installed).
 func TestPluginRemoveInstalled(t *testing.T) {
 	dir := t.TempDir()
-	writeLifecyclePlugin(t, dir, "eka-mcp", []byte("old-binary"))
+	exe := writeLifecyclePlugin(t, dir, "eka-mcp", []byte("old-binary"))
+	// The G2 checksum sidecar a verified install wrote.
+	writePluginSidecarFor(t, dir, "mcp", exe)
 	// Stale marker of a completed update.
 	writeLifecyclePlugin(t, dir, "eka-mcp.old", []byte("stale"))
 	r := &pluginRemoveRunner{pluginDir: dir, goos: "linux"}
@@ -180,7 +192,7 @@ func TestPluginRemoveInstalled(t *testing.T) {
 		t.Errorf("stderr must be empty, got %q", errb.String())
 	}
 	if names := pluginDirEntries(t, dir); len(names) != 0 {
-		t.Errorf("the binary and the stale .old marker must be removed, found %v", names)
+		t.Errorf("the binary, its checksum sidecar and the stale .old marker must be removed, found %v", names)
 	}
 
 	// Second remove: not installed → refusal.
@@ -261,6 +273,9 @@ func TestPluginUpdateSingle(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(dir, "eka-mcp")); err != nil || fi.Mode().Perm() != 0o755 {
 		t.Errorf("updated binary mode = %v, want 0755 (err %v)", fi.Mode().Perm(), err)
 	}
+	// The updated binary's checksum sidecar is recorded (the G2
+	// dispatch-time verification record).
+	assertPluginSidecar(t, dir, "mcp", filepath.Join(dir, "eka-mcp"))
 	// No temp or .old debris.
 	for _, name := range pluginDirEntries(t, dir) {
 		if strings.HasPrefix(name, ".eka-plugin-") || strings.HasSuffix(name, ".old") {
@@ -446,8 +461,9 @@ func TestPluginUpdateWindowsExe(t *testing.T) {
 	if err != nil || !bytes.Equal(got, body) {
 		t.Errorf("eka-mcp.exe must be the new verified asset (err %v)", err)
 	}
-	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-mcp.exe" {
-		t.Errorf("no .old or temp debris may remain, found %v", names)
+	assertPluginSidecar(t, dir, "mcp", filepath.Join(dir, "eka-mcp.exe"))
+	if names := pluginDirEntries(t, dir); len(names) != 2 || names[0] != ".eka-mcp.sha256" || names[1] != "eka-mcp.exe" {
+		t.Errorf("no .old or temp debris may remain (the sidecar is expected), found %v", names)
 	}
 }
 
@@ -550,7 +566,8 @@ func TestPluginListWindowsExeTier(t *testing.T) {
 // show a phantom "mcp.old" entry.
 func TestPluginListSkipsOldMarkers(t *testing.T) {
 	dir := t.TempDir()
-	writeLifecyclePlugin(t, dir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	exe := writeLifecyclePlugin(t, dir, "eka-mcp", []byte(lifecycleManifestScript("1.0.0", "github.com/maleolabs/eka-mcp")))
+	writePluginSidecarFor(t, dir, "mcp", exe)
 	writeLifecyclePlugin(t, dir, "eka-mcp.old", []byte("stale"))
 	t.Setenv("EKA_PLUGIN_DIR", dir)
 	t.Setenv("PATH", t.TempDir())
