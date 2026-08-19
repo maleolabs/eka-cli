@@ -88,7 +88,7 @@ Exit codes:
 	}
 	cmd.Flags().Bool("override", false,
 		"align the repository identity to the content namespace when they differ (machine override)")
-	cmd.AddCommand(newSyncPullCommand(), newSyncPushCommand())
+	cmd.AddCommand(newSyncPullCommand(), newSyncPushCommand(), newSyncAdoptCommand())
 	return cmd
 }
 
@@ -159,22 +159,95 @@ written atomically: the entries are staged in
 push leaves the previous snapshot untouched. A repository with no
 stored objects is a no-op.
 
+--adopt (ADR-032 Option C2): before pushing, the workspace-native
+units of the repository's project (published via ` + "`eka publish`" + `,
+provenance source_repo = "runtime") are re-attributed to the
+repository provenance, so this push carries them into the snapshot and
+a clone on another device receives them. The immutable payloads are
+never touched — adopt is a reference-only re-attribution.
+
 Exit codes:
   0  push succeeded (or no-op)
   2  usage or internal error`,
 		Example: `  eka sync push
-  eka sync push /path/to/repo`,
+  eka sync push /path/to/repo
+  eka sync push --adopt`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			override, err := cmd.Flags().GetBool("override")
 			if err != nil {
 				return fmt.Errorf("sync push failed: %w", err)
 			}
-			return runSync(cmd, args, runtime.SyncOptions{Push: true, Override: override})
+			adopt, err := cmd.Flags().GetBool("adopt")
+			if err != nil {
+				return fmt.Errorf("sync push failed: %w", err)
+			}
+			return runSync(cmd, args, runtime.SyncOptions{Push: true, Override: override, AdoptBeforePush: adopt})
 		},
 	}
 	cmd.Flags().Bool("override", false,
 		"align the repository identity to the content namespace when they differ (machine override)")
+	cmd.Flags().Bool("adopt", false,
+		"adopt workspace-native units into the repository before pushing (ADR-032)")
+	return cmd
+}
+
+// newSyncAdoptCommand builds `eka sync adopt [path] [target ...]`.
+func newSyncAdoptCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "adopt [path] [target ...]",
+		Short: "Adopt workspace-native units into the repository",
+		Long: `Re-attribute the workspace-native units of the EKA repository at path
+to the repository provenance (ADR-032 Option C2).
+
+Units published via ` + "`eka publish`" + ` live in the workspace
+canonical store under the workspace-native provenance sentinel
+(source_repo = "runtime") and never enter a repository snapshot — a
+clone on another device only receives the snapshot's units. Adopt
+moves the REFERENCE of such units to the repository provenance, so the
+next push assembles them into the snapshot. The immutable payloads are
+never touched: adopt is a reference-only re-attribution, with no
+validation or note gates.
+
+Without targets every workspace-native unit of the repository's
+project AND namespace is adopted; a unit whose namespace differs from
+the repository namespace is left in place and reported as ignored (a
+repository is one platform). With targets only the matching units are
+adopted: each target is a reference of the form <namespace>/<type>:<id>
+or <type>:<id> (optional :<instance-version> suffix); the namespace
+must equal the repository namespace. A target matching no
+workspace-native unit is refused.
+
+--dry-run computes the identical result (adopted count, skipped and
+ignored units) without changing the store — the repository is not
+registered by a dry run either.
+
+Exit codes:
+  0  adopt succeeded (or no workspace-native units)
+  2  usage or internal error (invalid target, namespace mismatch, no
+     matching workspace-native unit, or the path is not an EKA
+     repository)`,
+		Example: `  eka sync adopt
+  eka sync adopt /path/to/repo
+  eka sync adopt . eka-sync-fixture/sto:runtime-only
+  eka sync adopt --dry-run`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return fmt.Errorf("sync adopt failed: %w", err)
+			}
+			path := "."
+			var targets []string
+			if len(args) > 0 {
+				path = args[0]
+				targets = args[1:]
+			}
+			return runSyncAdopt(cmd, path, targets, dryRun)
+		},
+	}
+	cmd.Flags().Bool("dry-run", false,
+		"count and list the adoptable units without changing the store")
 	return cmd
 }
 
@@ -263,6 +336,80 @@ func runSync(cmd *cobra.Command, args []string, opts runtime.SyncOptions) error 
 	return nil
 }
 
+// runSyncAdopt resolves the workspace and repository path, runs the
+// adopt engine through the Authoring API and renders the report.
+// Errors map to the exit code contract: adopt has no validation or
+// integrity failure class, so every refusal (invalid target, namespace
+// mismatch, no matching workspace-native unit) and internal failure is
+// exit 2.
+func runSyncAdopt(cmd *cobra.Command, path string, targets []string, dryRun bool) error {
+	r, err := runtime.Ensure()
+	if err != nil {
+		return err // Exit 2: workspace resolution.
+	}
+	defer r.Close()
+
+	s := styleFor(cmd)
+	spinner := ui.NewSpinner(s, "Adopting workspace-native units...")
+	result, err := runtime.Authoring.SyncAdopt(r, path, targets, dryRun)
+	spinner.Stop()
+	if err != nil {
+		return err // Exit 2: usage/internal.
+	}
+	renderAdoptReport(s, r, path, result)
+	return nil
+}
+
+// renderAdoptReport renders the adopt outcome: the Runtime context
+// header and the closing summary. The repository identity is resolved
+// through the workspace registry (the adopt result itself carries only
+// the counts).
+func renderAdoptReport(s *ui.Style, r *runtime.Runtime, path string, res *runtime.SyncAdoptResult) {
+	repoName, projectID := "", ""
+	if repo, found, err := r.Workspace.FindRepo(path); err == nil && found {
+		repoName, projectID = repo.Name, repo.ProjectID
+	}
+
+	ui.NewHeader(s, "Adopt").
+		Add("Workspace", r.Path()).
+		Add("Project", projectID).
+		Add("Repository", repoName).
+		Add("Pipeline", "Adopt").
+		Render()
+
+	ui.NewSummary(s).
+		Add("Repository", repoName).
+		Add("Project", projectID).
+		Add("Status", adoptStatus(res)).
+		Add("Adopted", plural(res.Units, "unit", "units")).
+		Render()
+
+	if len(res.Skipped) > 0 {
+		for _, form := range res.Skipped {
+			fmt.Fprintf(s.W, "  %s %s\n", ui.IconBullet, s.Warning("skipped: "+form+" (the repository already references a different payload)"))
+		}
+	}
+	if len(res.Ignored) > 0 {
+		for _, form := range res.Ignored {
+			fmt.Fprintf(s.W, "  %s %s\n", ui.IconBullet, s.Info("ignored: "+form+" (namespace differs from the repository namespace)"))
+		}
+	}
+}
+
+// adoptStatus classifies the adopt outcome deterministically.
+func adoptStatus(res *runtime.SyncAdoptResult) string {
+	switch {
+	case res.DryRun:
+		return "dry run (no changes)"
+	case res.Units == 0 && len(res.Skipped) == 0 && len(res.Ignored) == 0:
+		return "no workspace-native units"
+	case res.Units == 0:
+		return "no adoptable units"
+	default:
+		return "adopted"
+	}
+}
+
 // renderSyncReport renders the sync outcome: the Runtime context
 // header and the closing summary.
 func renderSyncReport(s *ui.Style, r *runtime.SyncResult) {
@@ -281,6 +428,14 @@ func renderSyncReport(s *ui.Style, r *runtime.SyncResult) {
 		Add("Push", pushDetail(r)).
 		Add("Snapshot", snapshotDetail(r)).
 		Render()
+
+	if r.AdoptedUnits > 0 || len(r.AdoptedSkipped) > 0 {
+		adopted := plural(r.AdoptedUnits, "unit", "units")
+		if len(r.AdoptedSkipped) > 0 {
+			adopted += fmt.Sprintf(", %d skipped", len(r.AdoptedSkipped))
+		}
+		fmt.Fprintf(s.W, "  %s %s\n", ui.IconBullet, s.Info("adopted before push: "+adopted))
+	}
 
 	if len(r.Warnings) > 0 {
 		for _, w := range r.Warnings {
