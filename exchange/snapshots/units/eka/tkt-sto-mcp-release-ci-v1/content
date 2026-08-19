@@ -1,0 +1,1 @@
+{"commands":"\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n\nAdd the eka-mcp release pipeline: binaries `eka-mcp-\u003cos\u003e-\u003carch\u003e[.exe]` + SHA256SUMS.txt + GitHub release on tag.","projectedStatus":"Projected from sto:mcp-release-ci (owner state, read on refresh)."}

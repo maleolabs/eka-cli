@@ -1,0 +1,1 @@
+{"commands":"\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n\nExtend eka-mcp `manifest --json` with `capabilities: [\"install\",\"mcp\"]` and `source`.","projectedStatus":"Projected from sto:mcp-manifest-capabilities (owner state, read on refresh)."}

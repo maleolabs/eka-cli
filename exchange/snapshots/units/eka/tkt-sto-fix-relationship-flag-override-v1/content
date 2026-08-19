@@ -1,0 +1,1 @@
+{"commands":"\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n\nFix the relationship flag override so repeated flags accumulate (or error) instead of silently overriding.","projectedStatus":"Projected from sto:fix-relationship-flag-override (owner state, read on refresh)."}

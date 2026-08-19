@@ -1,0 +1,1 @@
+{"description":"Implement `eka plugin list` (discovered + installed + trust tier), `eka plugin remove`, and `eka plugin update [name|--all]`.","acceptanceCriteria":"list shows trust tier; remove deletes from plugin dir; update re-downloads to latest release."}

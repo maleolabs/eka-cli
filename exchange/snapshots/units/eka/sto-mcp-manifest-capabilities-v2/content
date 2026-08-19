@@ -1,0 +1,1 @@
+{"description":"Extend eka-mcp `manifest --json` to include `capabilities: [\"install\",\"mcp\"]` and `source` (github.com/maleolabs/eka-mcp), matching the extended plugin.Manifest contract.","acceptanceCriteria":"`eka-mcp manifest --json` emits capabilities + source; the cli plugin.Manifest parses them."}
