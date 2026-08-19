@@ -4,12 +4,47 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/maleolabs/eka-core/plugin"
 )
+
+// testOrigPath is the PATH before TestMain pinned it. gitIdentityEnv
+// restores it for the duration of the git-identity tests: the pin must
+// not break `git config user.name` resolution (eka-core runs git via
+// exec.Command, which needs git on PATH).
+var testOrigPath string
+
+// TestMain pins the plugin directory and PATH to empty temp dirs for
+// the whole package (H1 test hermeticity): registration runs against
+// the real $EKA_PLUGIN_DIR/~/.eka/plugins and the real PATH on every
+// Execute()/newRootCommand(), so without this pin the package's tests
+// would probe the developer's installed plugins and any eka-* on PATH
+// (TestCommandGroupMembership, TestExitCodeUsage, TestRootHelpShowsGroups
+// etc. must not depend on the machine). Tests that need a real plugin
+// dir or PATH override them with t.Setenv (restored after the test);
+// the pin is the baseline. The original PATH is preserved in
+// testOrigPath for the git-identity tests (gitIdentityEnv restores it).
+func TestMain(m *testing.M) {
+	pluginDir, err := os.MkdirTemp("", "eka-plugin-dir-")
+	if err != nil {
+		panic(err)
+	}
+	pathDir, err := os.MkdirTemp("", "eka-path-")
+	if err != nil {
+		panic(err)
+	}
+	testOrigPath = os.Getenv("PATH")
+	os.Setenv("EKA_PLUGIN_DIR", pluginDir)
+	os.Setenv("PATH", pathDir)
+	code := m.Run()
+	os.RemoveAll(pluginDir)
+	os.RemoveAll(pathDir)
+	os.Exit(code)
+}
 
 // The B1 command-registration tests (sto:mcp-command-registration,
 // ADR-031) are hermetic: fake plugin executables (shell scripts
@@ -255,11 +290,17 @@ func TestPluginDispatchAntiTOCTOU(t *testing.T) {
 // match its recorded checksum at registration time never registers —
 // skipped with a visible warning, the CLI still works (G2 defense in
 // depth: a tampered binary is caught before it can even appear).
+//
+// M1 (verify-before-execute): the tampered binary's manifest probe
+// must NOT run — the checksum is read and verified FIRST, so a
+// tampered binary never has its own code executed. The counter file
+// pins that order: it stays empty after registration.
 func TestPluginRegistrationSkipsTamperedBinary(t *testing.T) {
 	dir := t.TempDir()
+	probeCounter := filepath.Join(t.TempDir(), "probe-count")
 	body := registrationPluginScript(
 		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}),
-		"", 0)
+		probeCounter, 0)
 	exe := writeLifecyclePlugin(t, dir, "eka-mcp", body)
 	// Record the checksum of the ORIGINAL content, then swap in a
 	// DIFFERENT binary that still answers a valid manifest (so the
@@ -272,7 +313,7 @@ func TestPluginRegistrationSkipsTamperedBinary(t *testing.T) {
 	// what refuses it).
 	tampered := bytes.Replace(registrationPluginScript(
 		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}),
-		"", 0), []byte("#!/bin/sh\n"), []byte("#!/bin/sh\n# tampered\n"), 1)
+		probeCounter, 0), []byte("#!/bin/sh\n"), []byte("#!/bin/sh\n# tampered\n"), 1)
 	if err := os.WriteFile(exe, tampered, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +329,11 @@ func TestPluginRegistrationSkipsTamperedBinary(t *testing.T) {
 	}
 	if strings.Contains(out, "mcp-serve") {
 		t.Errorf("a tampered binary must not register commands:\n%s", out)
+	}
+	// M1: the manifest probe must NOT have run on the tampered
+	// binary — the checksum was verified first.
+	if b, err := os.ReadFile(probeCounter); err == nil && strings.Count(string(b), "\n") != 0 {
+		t.Errorf("the tampered binary's manifest probe must not run (verify-before-execute), got probe count %d", strings.Count(string(b), "\n"))
 	}
 }
 
@@ -311,6 +357,36 @@ func TestPluginPathOnlyRefused(t *testing.T) {
 	if !strings.Contains(errText, "on PATH") || !strings.Contains(errText, "not installed in the plugin directory") ||
 		!strings.Contains(errText, "eka plugin install mcp") {
 		t.Errorf("the PATH-only refusal must be deterministic, got %q", errText)
+	}
+	if strings.Contains(out, "Plugins") || strings.Contains(out, "mcp-serve") {
+		t.Errorf("a PATH-only plugin must not register commands:\n%s", out)
+	}
+}
+
+// TestPluginPathOnlyRefusedWithoutPluginDir (L1): a PATH-only plugin
+// is refused even when the plugin directory does NOT exist on disk —
+// the PATH scan/refusals run unconditionally, not only after the
+// dir-existence fast path. On a machine without ~/.eka/plugins, PATH-only
+// eka-* used to get no visible refusal at all.
+func TestPluginPathOnlyRefusedWithoutPluginDir(t *testing.T) {
+	pathDir := t.TempDir()
+	body := registrationPluginScript(
+		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}),
+		"", 0)
+	writeLifecyclePlugin(t, pathDir, "eka-mcp", body)
+	// EKA_PLUGIN_DIR points at a directory that does not exist: the
+	// dir-existence fast path returns nil, but the PATH scan must
+	// still run and refuse the PATH-only plugin.
+	t.Setenv("EKA_PLUGIN_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("PATH", pathDir)
+
+	code, out, errText := runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "on PATH") || !strings.Contains(errText, "not installed in the plugin directory") ||
+		!strings.Contains(errText, "eka plugin install mcp") {
+		t.Errorf("the PATH-only refusal must be deterministic even without a plugin dir, got %q", errText)
 	}
 	if strings.Contains(out, "Plugins") || strings.Contains(out, "mcp-serve") {
 		t.Errorf("a PATH-only plugin must not register commands:\n%s", out)
@@ -618,4 +694,70 @@ func TestPluginRegistrationDispatchMemoized(t *testing.T) {
 	// The binary was not tampered — the memoized expected checksum
 	// still matches (a tampered binary would refuse here).
 	_ = exe
+}
+
+// TestPluginRegistrationCommandCountCap (L2): a manifest declaring
+// more than pluginMaxCommandCount commands is refused with a visible
+// warning and skipped — a single plugin must not inflate the command
+// tree arbitrarily.
+func TestPluginRegistrationCommandCountCap(t *testing.T) {
+	dir := t.TempDir()
+	specs := make([]pluginCommandSpec, pluginMaxCommandCount+1)
+	for i := range specs {
+		specs[i] = pluginCommandSpec{Name: "cmd" + strconv.Itoa(i), Description: "x"}
+	}
+	body := registrationPluginScript(registrationManifest("mcp", specs...), "", 0)
+	installRegistrationPlugin(t, dir, "eka-mcp", body)
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	t.Setenv("PATH", t.TempDir())
+
+	code, out, errText := runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0 (registration never breaks the CLI)\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "exceeding the cap of") || !strings.Contains(errText, "not registered") {
+		t.Errorf("the cap refusal must be deterministic, got %q", errText)
+	}
+	if strings.Contains(out, "Plugins") {
+		t.Errorf("an over-capped plugin must not register commands:\n%s", out)
+	}
+}
+
+// TestPluginRegistrationStderrOverflow (M2): a plugin whose manifest
+// probe spews more than pluginMaxManifestSize bytes on stderr AND fails
+// is refused with a bounded message and a truncation notice — the probe
+// itself is bounded (a spewing plugin cannot exhaust memory), and the
+// failure surfaces the truncation instead of an unbounded dump.
+func TestPluginRegistrationStderrOverflow(t *testing.T) {
+	dir := t.TempDir()
+	// The probe must FAIL (exit 1) while spewing stderr: only then does
+	// the failure path surface the bounded stderr with the truncation
+	// notice (a spewing plugin that exits 0 is refused by the JSON
+	// parse instead — a different, already-covered path).
+	body := []byte("#!/bin/sh\nprintf '%s' 'this is not json'\n")
+	// 4 MiB of stderr — well over the 1 MiB cap (each line writes a
+	// 1 KiB chunk, so the script stays small).
+	chunk := strings.Repeat("x", 1024)
+	for i := 0; i < 4*1024; i++ {
+		body = append(body, []byte("printf '"+chunk+"' >&2\n")...)
+	}
+	body = append(body, []byte("exit 1\n")...)
+	exe := writeLifecyclePlugin(t, dir, "eka-mcp", body)
+	writePluginSidecarFor(t, dir, "mcp", exe)
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	t.Setenv("PATH", t.TempDir())
+
+	code, out, errText := runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0 (registration never breaks the CLI)\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "is broken") || !strings.Contains(errText, "not registered") {
+		t.Errorf("the skip must warn about the broken plugin, got %q", errText)
+	}
+	if !strings.Contains(errText, truncatedStderrSuffix) {
+		t.Errorf("the refusal must surface the stderr truncation notice, got %q", errText)
+	}
+	if strings.Contains(out, "Plugins") {
+		t.Errorf("a spewing plugin must not register commands:\n%s", out)
+	}
 }

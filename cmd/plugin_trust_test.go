@@ -526,6 +526,12 @@ func TestPluginSubprocessEnvMinimal(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GH_TOKEN", "super-secret")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+	// The TestMain PATH pin (plugin-registration hermeticity) is lifted
+	// for this test: the fake plugin dumps its environment with `env`,
+	// which must resolve on PATH.
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
 	// The fake exe dumps its environment into a file under
 	// EKA_PLUGIN_DIR (a whitelisted variable) while answering the
 	// manifest.

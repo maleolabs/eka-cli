@@ -98,6 +98,12 @@ var pluginManifestCacheTTL = 30 * time.Second
 // maxPluginOutputSize contract.
 const pluginMaxManifestSize = 1 << 20 // 1 MiB
 
+// pluginMaxCommandCount caps the number of commands a single plugin
+// manifest may declare (L2): a manifest declaring more is refused with
+// a visible warning and skipped — a single plugin must not inflate the
+// command tree arbitrarily.
+const pluginMaxCommandCount = 100
+
 // pluginCommandSpec is one command of the B1 dispatch-protocol
 // extension: an additive "commands" array on the v1 manifest contract
 // (the contract field stays "v1" — the extension is backward
@@ -164,6 +170,11 @@ var (
 	// root construction, before the streams exist). Guarded by
 	// pluginRegMu.
 	pluginRegWarnings []string
+	// pluginPathScanMu guards pluginPathScanCache, the memoized PATH
+	// scan (L3): keyed by the PATH env value, so a changed PATH
+	// re-scans.
+	pluginPathScanMu    sync.Mutex
+	pluginPathScanCache = map[string][]pathOnlyFinding{}
 )
 
 // pluginRegistryOfficial reports whether a plugin name is official
@@ -184,25 +195,28 @@ func registerPluginCommands(root *cobra.Command) []*cobra.Command {
 		return nil
 	}
 	dir := plugin.PluginDir(home)
+	// L1: the PATH scan/refusals run UNCONDITIONALLY — a plugin found
+	// only on PATH must be visibly refused even when the plugin
+	// directory is missing or empty, not only after the dir-existence
+	// fast path (on a machine without ~/.eka/plugins, PATH-only eka-*
+	// used to get no visible refusal at all).
+	pathOnlyRefusals(dir)
 	if dir == "" {
 		return nil
 	}
-	// Fast path: no plugin directory — nothing can be installed, no
-	// probe cost on a plugin-free machine.
+	// Fast path: no plugin directory on disk — nothing can be installed,
+	// no probe cost on a plugin-free machine.
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return nil
 	}
 
-	// G3: a plugin found on PATH without a registry install is refused
-	// with a deterministic message (never silently skipped, never
-	// trusted); a PATH copy shadowing an installed plugin is ignored
-	// with a warning.
-	pathOnlyRefusals(dir)
-
+	// L3: the plugin-directory scan is memoized per process (the dir
+	// path is the key; a reinstall writes into the same dir, and the
+	// per-plugin cache invalidates on the new binary identity).
 	var registered []*cobra.Command
 	for _, name := range installedOfficialNamesIn(dir) {
 		exe := installedExePath(dir, name)
-		entry := pluginRegEntryFor(root, exe, name, dir)
+		entry := pluginRegEntryFor(exe, name, dir)
 		if entry == nil {
 			continue
 		}
@@ -235,8 +249,54 @@ func registerPluginCommands(root *cobra.Command) []*cobra.Command {
 // repeated root constructions print it once. The plugin-directory
 // instance itself (when the plugin dir is on PATH) is the same file
 // and is skipped silently.
+//
+// L3: the PATH scan itself is memoized per process (keyed by the PATH
+// env value) — scanning every PATH dir on every root construction is
+// wasteful; the cache is keyed by the env value, so a changed PATH
+// (e.g. between test runs) re-scans.
 func pathOnlyRefusals(dir string) {
-	for _, pathDir := range filepath.SplitList(os.Getenv("PATH")) {
+	for _, f := range pathOnlyScan(os.Getenv("PATH"), dir) {
+		if f.path == installedExePath(dir, f.name) {
+			continue // the installed instance itself (plugin dir on PATH).
+		}
+		if f.installed {
+			// The plugin-dir instance wins (G3): the PATH copy is
+			// shadowed and never used for dispatch — visible, so a
+			// stale PATH copy cannot silently diverge from the
+			// installed plugin.
+			pluginRegWarnKey(f.path, fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", f.name, f.path))
+			continue
+		}
+		// PATH-only plugin: refused deterministically — it was never
+		// installed through the verified install path, so its
+		// commands never register.
+		pluginRegWarnKey(f.path, fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", f.name, f.path, f.name))
+	}
+}
+
+// pathOnlyFinding is one "eka-*" executable found on PATH during the
+// memoized PATH scan.
+type pathOnlyFinding struct {
+	name      string
+	path      string
+	installed bool // true when pluginInstalledIn(dir, name) — a PATH copy shadowing an installed plugin
+}
+
+// pathOnlyScan scans PATH for "eka-*" executables; the result is
+// memoized per process by the PATH env value (L3). dir is the plugin
+// directory used to classify each find as installed-shadow or
+// PATH-only; it is captured at scan time and is constant for a given
+// PATH value within a process.
+func pathOnlyScan(pathEnv, dir string) []pathOnlyFinding {
+	pluginPathScanMu.Lock()
+	if f, ok := pluginPathScanCache[pathEnv]; ok {
+		pluginPathScanMu.Unlock()
+		return f
+	}
+	pluginPathScanMu.Unlock()
+
+	var findings []pathOnlyFinding
+	for _, pathDir := range filepath.SplitList(pathEnv) {
 		if pathDir == "" {
 			continue
 		}
@@ -255,26 +315,18 @@ func pathOnlyRefusals(dir string) {
 			if name == "" || name == "eka" || strings.HasSuffix(name, ".old") {
 				continue
 			}
-			p := filepath.Join(pathDir, e.Name())
-			if p == installedExePath(dir, name) {
-				continue // the installed instance itself (plugin dir on PATH).
-			}
-			if pluginInstalledIn(dir, name, runtime.GOOS) {
-				// The plugin-dir instance wins (G3): the PATH copy is
-				// shadowed and never used for dispatch — visible, so a
-				// stale PATH copy cannot silently diverge from the
-				// installed plugin.
-				refusal := fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", name, p)
-				pluginRegWarnKey(p, refusal)
-				continue
-			}
-			// PATH-only plugin: refused deterministically — it was never
-			// installed through the verified install path, so its
-			// commands never register.
-			refusal := fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", name, p, name)
-			pluginRegWarnKey(p, refusal)
+			findings = append(findings, pathOnlyFinding{
+				name:      name,
+				path:      filepath.Join(pathDir, e.Name()),
+				installed: pluginInstalledIn(dir, name, runtime.GOOS),
+			})
 		}
 	}
+
+	pluginPathScanMu.Lock()
+	pluginPathScanCache[pathEnv] = findings
+	pluginPathScanMu.Unlock()
+	return findings
 }
 
 // installedOfficialNamesIn lists the plugin-directory entries that are
@@ -318,13 +370,16 @@ func installedExePath(dir, name string) string {
 }
 
 // pluginRegEntryFor returns the registration record of one installed
-// plugin, probing and verifying it on a cache miss: the manifest probe
-// (bounded by pluginProbeTimeout), the sidecar checksum read and the
-// registration-time binary verification (G2). The record is cached per
-// process (TTL + binary identity), so repeated root constructions
-// reuse it without re-probing (acceptance criteria: manifest cached
-// with TTL, invalidated on reinstall, per-process memoize).
-func pluginRegEntryFor(root *cobra.Command, exe, name, dir string) *pluginRegEntry {
+// plugin, probing and verifying it on a cache miss. The order is
+// deliberate (M1, verify-before-execute): the sidecar checksum is read
+// and the binary's SHA-256 is verified BEFORE the manifest probe runs —
+// a tampered or unverifiable binary never has its own code executed.
+// Only a verified binary is probed (bounded by pluginProbeTimeout).
+// The record is cached per process (TTL + binary identity), so
+// repeated root constructions reuse it without re-probing
+// (acceptance criteria: manifest cached with TTL, invalidated on
+// reinstall, per-process memoize).
+func pluginRegEntryFor(exe, name, dir string) *pluginRegEntry {
 	pluginRegMu.Lock()
 	if e, ok := pluginRegCache[exe]; ok && pluginRegEntryValid(e) {
 		pluginRegMu.Unlock()
@@ -332,33 +387,47 @@ func pluginRegEntryFor(root *cobra.Command, exe, name, dir string) *pluginRegEnt
 	}
 	pluginRegMu.Unlock()
 
-	// Slow path (cache miss): probe the plugin (a bounded subprocess —
-	// never under the lock) and read the sidecar.
+	// Slow path (cache miss): verify the binary, then probe it (a
+	// bounded subprocess — never under the lock).
 	entry := &pluginRegEntry{path: exe, recorded: time.Now()}
 	if fi, err := os.Stat(exe); err == nil {
 		entry.size, entry.modTime = fi.Size(), fi.ModTime()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pluginProbeTimeout)
-	defer cancel()
-	m, err := probePluginManifest(ctx, exe, name)
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			entry.refusal = fmt.Sprintf("plugin %q timed out after %s answering \"manifest\" — its commands are not registered", name, pluginProbeTimeout)
-		} else {
-			entry.refusal = fmt.Sprintf("plugin %q is broken (manifest probe failed: %s) — its commands are not registered", name, err)
-		}
+	// M1: verify-before-execute — read the sidecar and verify the
+	// binary's SHA-256 FIRST. A tampered binary (or one with no
+	// recorded checksum) is refused here, before the manifest probe
+	// ever runs the plugin's own code (defense in depth: the probe is
+	// the plugin's binary; never run it on an unverifiable binary).
+	sum, ok := readPluginChecksum(dir, name)
+	if !ok {
+		entry.refusal = fmt.Sprintf("plugin %q has no recorded checksum — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
+	} else if got, err := sha256File(exe); err != nil || !strings.EqualFold(got, sum) {
+		// G2 at registration: a binary that does not match the
+		// checksum recorded at install never registers (defense in
+		// depth — dispatch re-verifies anyway).
+		entry.refusal = fmt.Sprintf("plugin %q does not match the checksum recorded at install — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
 	} else {
-		entry.manifest = m
-		sum, ok := readPluginChecksum(dir, name)
-		if !ok {
-			entry.refusal = fmt.Sprintf("plugin %q has no recorded checksum — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
-		} else if got, err := sha256File(exe); err != nil || !strings.EqualFold(got, sum) {
-			// G2 at registration: a binary that does not match the
-			// checksum recorded at install never registers (defense in
-			// depth — dispatch re-verifies anyway).
-			entry.refusal = fmt.Sprintf("plugin %q does not match the checksum recorded at install — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
+		entry.checksum = sum
+		// Only after the checksum verifies do we probe the manifest —
+		// a verified binary may still be broken or hung, which is a
+		// skip (visible warning), not a refusal.
+		ctx, cancel := context.WithTimeout(context.Background(), pluginProbeTimeout)
+		defer cancel()
+		m, err := probePluginManifest(ctx, exe, name)
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				entry.refusal = fmt.Sprintf("plugin %q timed out after %s answering \"manifest\" — its commands are not registered", name, pluginProbeTimeout)
+			} else {
+				entry.refusal = fmt.Sprintf("plugin %q is broken (manifest probe failed: %s) — its commands are not registered", name, err)
+			}
 		} else {
-			entry.checksum = sum
+			entry.manifest = m
+			// L2: cap the command count — a single plugin must not
+			// inflate the command tree arbitrarily.
+			if len(m.Commands) > pluginMaxCommandCount {
+				entry.refusal = fmt.Sprintf("plugin %q declares %d commands, exceeding the cap of %d — its commands are not registered", name, len(m.Commands), pluginMaxCommandCount)
+				entry.manifest.Commands = nil
+			}
 		}
 	}
 
@@ -397,11 +466,15 @@ func pluginRegEntryValid(e *pluginRegEntry) bool {
 // ManifestContext does (contract version, name). The probe runs the
 // executable itself because the B1 extension lives in the manifest
 // JSON, which the core parse does not expose raw.
+//
+// M2: stderr is bounded (pluginMaxManifestSize, same cap as stdout) —
+// a spewing plugin cannot exhaust memory, and the failure message
+// surfaces a truncation notice instead of an unbounded dump.
 func probePluginManifest(ctx context.Context, exe, wantName string) (pluginCommandManifest, error) {
 	cmd := exec.CommandContext(ctx, exe, "manifest", "--json")
 	cmd.Env = pluginDispatchEnv()
 	var out pluginLimitedBuffer
-	var errb bytes.Buffer
+	var errb pluginLimitedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
@@ -411,7 +484,25 @@ func probePluginManifest(ctx context.Context, exe, wantName string) (pluginComma
 		if out.overflow {
 			return pluginCommandManifest{}, fmt.Errorf("manifest output exceeds %d bytes", pluginMaxManifestSize)
 		}
-		return pluginCommandManifest{}, errors.New(strings.TrimSpace(errb.String()))
+		msg := strings.TrimSpace(errb.buf.String())
+		if errb.overflow {
+			// The buffer bounds memory at pluginMaxManifestSize, but the
+			// embedded content is additionally truncated to a small
+			// display cap: a hostile plugin must not control the size of
+			// the CLI's warning output.
+			if len(msg) > maxProbeStderrMessage {
+				msg = msg[:maxProbeStderrMessage] + "..."
+			}
+			if msg != "" {
+				msg += " " + truncatedStderrSuffix
+			} else {
+				msg = truncatedStderrSuffix
+			}
+		}
+		if msg == "" {
+			return pluginCommandManifest{}, errors.New("manifest probe failed with no output")
+		}
+		return pluginCommandManifest{}, errors.New(msg)
 	}
 	if out.overflow {
 		return pluginCommandManifest{}, fmt.Errorf("manifest output exceeds %d bytes", pluginMaxManifestSize)
@@ -428,6 +519,16 @@ func probePluginManifest(ctx context.Context, exe, wantName string) (pluginComma
 	}
 	return m, nil
 }
+
+// truncatedStderrSuffix is appended to a probe failure message when the
+// plugin's stderr exceeded the bounded buffer (M2).
+const truncatedStderrSuffix = "[stderr truncated]"
+
+// maxProbeStderrMessage caps the stderr content embedded in a probe
+// failure message (M2): the buffer bounds memory at
+// pluginMaxManifestSize, but the warning itself must stay small — a
+// hostile plugin must not control the CLI's warning output size.
+const maxProbeStderrMessage = 200
 
 // pluginDispatchEnv is the bounded environment whitelist granted to a
 // plugin subprocess — the CLI-side mirror of the eka-core runner's
@@ -641,6 +742,11 @@ func pluginSidecarPath(dir, name string) string {
 // finalize; the sidecar is the dispatch-time verification record (G2
 // anti-TOCTOU) and the reinstall invalidation trigger for the
 // registration cache.
+//
+// fsync before rename: the sidecar is the G2 verification record — a
+// rename that lands before the data is durable can leave a stale
+// sidecar behind a crash, so the temp file is fsync'd (data + metadata)
+// before the atomic rename.
 func writePluginChecksum(dir, name, sum string) error {
 	path := pluginSidecarPath(dir, name)
 	tmp, err := os.CreateTemp(dir, ".eka-"+name+".sha256-*")
@@ -654,6 +760,9 @@ func writePluginChecksum(dir, name, sum string) error {
 		return err
 	}
 	if _, err := tmp.WriteString(sum + "\n"); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Sync(); err != nil {
 		return fail(err)
 	}
 	if err := tmp.Close(); err != nil {
