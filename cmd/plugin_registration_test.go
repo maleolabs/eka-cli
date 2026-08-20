@@ -856,15 +856,19 @@ func TestPluginRegistrationStderrOverflow(t *testing.T) {
 	// notice (a spewing plugin that exits 0 is refused by the JSON
 	// parse instead — a different, already-covered path).
 	body := []byte("#!/bin/sh\nprintf '%s' 'this is not json'\n")
-	// 4 MiB of stderr — well over the 1 MiB cap (each line writes a
-	// 1 KiB chunk, so the script stays small).
+	// 1.5 MiB of stderr — just over the 1 MiB cap, so the truncation
+	// path still triggers, but small enough to drain well within the 2s
+	// probe deadline even under race instrumentation (a 4 MiB spew was
+	// marginal there and flaked the race gate: the probe timed out
+	// before the CLI finished draining the pipe). Each line writes a
+	// 1 KiB chunk, so the script stays small.
 	chunk := strings.Repeat("x", 1024)
 	// The first chunk carries a terminal-control sequence (ESC [2J — a
 	// screen clear): the embedded stderr must be sanitized (M3), so no
 	// raw ESC byte reaches the warning output.
 	first := "\033[2J" + strings.Repeat("x", 1024-4)
 	body = append(body, []byte("printf '"+first+"' >&2\n")...)
-	for i := 0; i < 4*1024-1; i++ {
+	for i := 0; i < 1536-1; i++ {
 		body = append(body, []byte("printf '"+chunk+"' >&2\n")...)
 	}
 	body = append(body, []byte("exit 1\n")...)
