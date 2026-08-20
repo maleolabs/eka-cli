@@ -457,6 +457,36 @@ func TestPluginPathScanClassificationFollowsDir(t *testing.T) {
 	}
 }
 
+// TestPluginPathOnlyRefusalSanitizesPath (F2): a PATH dir name
+// carrying terminal-control bytes (e.g. a shared bin dir named
+// "\x1b[2J") must not inject raw ESC into the refusal warning — the
+// embedded path is sanitized (sanitizeTerminal), so no screen clear /
+// fake prompt / OSC-52 can reach stderr on every invocation.
+func TestPluginPathOnlyRefusalSanitizesPath(t *testing.T) {
+	base := t.TempDir()
+	pathDir := filepath.Join(base, "\x1b[2J")
+	if err := os.MkdirAll(pathDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := registrationPluginScript(
+		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}),
+		"", 0)
+	writeLifecyclePlugin(t, pathDir, "eka-mcp", body)
+	t.Setenv("EKA_PLUGIN_DIR", t.TempDir())
+	t.Setenv("PATH", pathDir)
+
+	code, _, errText := runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "not installed in the plugin directory") {
+		t.Errorf("the PATH-only refusal must still fire, got %q", errText)
+	}
+	if strings.Contains(errText, "\x1b") {
+		t.Errorf("the embedded path must be sanitized (no raw ESC in the warning), got %q", errText)
+	}
+}
+
 // TestPluginCollisionBuiltinRefused: a plugin command colliding with a
 // built-in refuses deterministically — the built-in wins, the plugin
 // command is not registered, and the refusal is a visible warning
@@ -561,6 +591,52 @@ func TestPluginRegistrationProbeTimeout(t *testing.T) {
 	}
 	if strings.Contains(out, "Plugins") {
 		t.Errorf("a hung plugin must not register commands:\n%s", out)
+	}
+}
+
+// TestPluginRegistrationProbeGrandchildPipe (F1): a plugin that spawns
+// a background child inheriting stdout/stderr and exits cleanly with a
+// valid manifest must not wedge the probe — the probe is bounded (the
+// WaitDelay forcibly closes the inherited pipe write-ends, so Run()
+// returns ErrWaitDelay instead of hanging) and the leftover grandchild
+// is reaped. Without the fix, exec.Wait() blocks on the grandchild's
+// pipe and every eka invocation hangs (acceptance criterion: probe
+// timeout <= 2s — a hung plugin is killed, not waited on).
+func TestPluginRegistrationProbeGrandchildPipe(t *testing.T) {
+	dir := t.TempDir()
+	// The grandchild is a pure shell busy loop (no external command):
+	// the TestMain PATH pin must not kill it instantly — it must hold
+	// the probe's stdout/stderr write-ends open until the probe is
+	// bounded.
+	body := []byte(`#!/bin/sh
+( while true; do :; done ) &
+printf '%s' '{"contract":"v1","name":"mcp","version":"1.0.0","description":"fake","artifacts":[],"capabilities":["install","mcp"],"source":"github.com/maleolabs/eka-mcp","commands":[{"name":"mcp-serve","description":"x","args":[]}]}'
+`)
+	exe := writeLifecyclePlugin(t, dir, "eka-mcp", body)
+	writePluginSidecarFor(t, dir, "mcp", exe)
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	t.Setenv("PATH", t.TempDir())
+
+	start := time.Now()
+	code, out, errText := runIn([]string{"--help"})
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	// The probe must return within the deadline (2s) plus slack — not
+	// hang on the grandchild's inherited pipes.
+	if elapsed > 3*time.Second {
+		t.Errorf("probe must return within the deadline, took %s", elapsed)
+	}
+	// The probe is bounded but did not complete cleanly: the plugin is
+	// refused with a visible deterministic warning (fail-closed — a
+	// probe that leaves pipe-holding background children never
+	// registers), and the CLI keeps working.
+	if !strings.Contains(errText, "background child") || !strings.Contains(errText, "not registered") {
+		t.Errorf("the skip must explain the pipe-holding grandchild, got %q", errText)
+	}
+	if strings.Contains(out, "mcp-serve") {
+		t.Errorf("a plugin leaving a pipe-holding grandchild must not register commands:\n%s", out)
 	}
 }
 

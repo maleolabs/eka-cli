@@ -84,6 +84,15 @@ import (
 // tests can shrink it.
 var pluginProbeTimeout = 2 * time.Second
 
+// probeWaitDelay bounds the probe's pipes after the direct child has
+// exited (F1): a pipe-inheriting grandchild (a daemonized sidecar, a
+// backgrounded subshell) holds the stdout/stderr write-ends open, so
+// exec.Wait() would block forever even though the child itself exited
+// cleanly — WaitDelay forcibly closes the pipes and Run() returns
+// ErrWaitDelay. Small: it only costs time when a grandchild actually
+// holds the pipes (a normal probe finishes before the timer fires).
+var probeWaitDelay = 100 * time.Millisecond
+
 // pluginManifestCacheTTL bounds the per-process registration cache: a
 // cached probe is reused for this long and only while the binary's
 // file identity (size + mtime) is unchanged — a reinstall writes a new
@@ -275,14 +284,16 @@ func pathOnlyRefusals(dir string) {
 			// The plugin-dir instance wins (G3): the PATH copy is
 			// shadowed and never used for dispatch — visible, so a
 			// stale PATH copy cannot silently diverge from the
-			// installed plugin.
-			pluginRegWarnKey(f.path+"\x00installed", fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", f.name, f.path))
+			// installed plugin. The path is sanitized (F2): a PATH dir
+			// or file name carrying terminal-control bytes must not
+			// inject raw ESC into the warning.
+			pluginRegWarnKey(f.path+"\x00installed", fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", f.name, sanitizeTerminal(f.path)))
 			continue
 		}
 		// PATH-only plugin: refused deterministically — it was never
 		// installed through the verified install path, so its
-		// commands never register.
-		pluginRegWarnKey(f.path+"\x00path-only", fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", f.name, f.path, f.name))
+		// commands never register. The path is sanitized (F2).
+		pluginRegWarnKey(f.path+"\x00path-only", fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", f.name, sanitizeTerminal(f.path), f.name))
 	}
 }
 
@@ -517,13 +528,35 @@ func pluginRegEntryValid(e *pluginRegEntry) bool {
 func probePluginManifest(ctx context.Context, exe, wantName string) (pluginCommandManifest, error) {
 	cmd := exec.CommandContext(ctx, exe, "manifest", "--json")
 	cmd.Env = pluginDispatchEnv()
+	// F1 (security review): the deadline must bound the WHOLE probe, not
+	// just the direct child. A pipe-inheriting grandchild (a daemonized
+	// sidecar, a backgrounded subshell) holds the probe's stdout/stderr
+	// write-ends open, so exec.Wait() would block past the deadline and
+	// wedge every eka invocation. probeKillGroup makes the probe its own
+	// process group and kills the group on deadline (the never-exit
+	// case); WaitDelay bounds the clean-exit case (the child exited but
+	// a grandchild still holds the pipes — exec's Cancel never fires
+	// then, so the pipes are forcibly closed and Run() returns
+	// ErrWaitDelay). On windows probeKillGroup is a no-op (Setpgid is
+	// not in the stdlib syscall package; job objects are out of stdlib
+	// scope — WaitDelay still bounds the probe).
+	probeKillGroup(cmd)
+	cmd.WaitDelay = probeWaitDelay
 	var out pluginLimitedBuffer
 	var errb pluginLimitedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	// F1: reap any process-group member that survived the run (the
+	// ErrWaitDelay case — a clean-exit plugin's background child must
+	// not leak past the probe). A no-op when the group is empty.
+	probeKillGroupRemnants(cmd)
+	if err != nil {
 		if ctx.Err() != nil {
 			return pluginCommandManifest{}, ctx.Err()
+		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return pluginCommandManifest{}, errors.New("manifest probe left a background child holding the probe pipes")
 		}
 		if out.overflow {
 			return pluginCommandManifest{}, fmt.Errorf("manifest output exceeds %d bytes", pluginMaxManifestSize)
@@ -821,6 +854,15 @@ func writePluginChecksum(dir, name, sum string) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return err
+	}
+	// F4 (security review): fsync the directory best-effort so the
+	// rename itself is durable — the file fsync above covers the data,
+	// but the directory entry needs its own sync on crash-consistent
+	// filesystems. Best-effort: a directory fsync failure must never
+	// fail the install.
+	if d, err := os.Open(dir); err == nil {
+		d.Sync()
+		d.Close()
 	}
 	return nil
 }
