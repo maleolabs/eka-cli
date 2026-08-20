@@ -142,10 +142,13 @@ type pluginCommandManifest struct {
 // parsed manifest + expected checksum for a registered plugin, or the
 // deterministic refusal message. The entry is valid for
 // pluginManifestCacheTTL and only while the file's identity (size +
-// mtime) matches — a reinstall writes a new binary, so it invalidates
-// the entry (acceptance criterion: invalidated on reinstall).
+// mtime) and the recorded checksum still match — a reinstall writes a
+// new binary and a new sidecar, so it invalidates the entry
+// (acceptance criterion: invalidated on reinstall).
 type pluginRegEntry struct {
 	path     string
+	name     string // plugin name (sidecar lookup for the M2 reinstall check)
+	dir      string // plugin directory (sidecar lookup for the M2 reinstall check)
 	manifest pluginCommandManifest
 	checksum string // expected SHA-256 (sidecar), "" when refused
 	refusal  string // deterministic refusal message, "" when registered
@@ -190,16 +193,17 @@ var pluginRegistryOfficial = plugin.OfficialRegistry.IsOfficial
 // missing checksum, collision, PATH-only find) is a visible
 // deterministic warning on stderr and a skip.
 func registerPluginCommands(root *cobra.Command) []*cobra.Command {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
+	dir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		dir = plugin.PluginDir(home)
 	}
-	dir := plugin.PluginDir(home)
 	// L1: the PATH scan/refusals run UNCONDITIONALLY — a plugin found
 	// only on PATH must be visibly refused even when the plugin
 	// directory is missing or empty, not only after the dir-existence
 	// fast path (on a machine without ~/.eka/plugins, PATH-only eka-*
-	// used to get no visible refusal at all).
+	// used to get no visible refusal at all). They run before the
+	// UserHomeDir check too (L2): a machine where the home directory
+	// cannot be resolved still gets the PATH refusals (dir is "" then).
 	pathOnlyRefusals(dir)
 	if dir == "" {
 		return nil
@@ -245,49 +249,60 @@ func registerPluginCommands(root *cobra.Command) []*cobra.Command {
 // instance is refused (PATH-only — never installed through the
 // verified install path, so its commands never register) or ignored
 // with a warning (a PATH copy shadowing an installed plugin). The
-// refusal is memoized per process (keyed by the found path), so
-// repeated root constructions print it once. The plugin-directory
-// instance itself (when the plugin dir is on PATH) is the same file
-// and is skipped silently.
+// refusal is memoized per process (keyed by the found path + the
+// classification), so repeated root constructions print it once. The
+// plugin-directory instance itself (when the plugin dir is on PATH) is
+// the same file and is skipped silently.
 //
 // L3: the PATH scan itself is memoized per process (keyed by the PATH
 // env value) — scanning every PATH dir on every root construction is
 // wasteful; the cache is keyed by the env value, so a changed PATH
 // (e.g. between test runs) re-scans.
 func pathOnlyRefusals(dir string) {
-	for _, f := range pathOnlyScan(os.Getenv("PATH"), dir) {
+	for _, f := range pathOnlyScan(os.Getenv("PATH")) {
 		if f.path == installedExePath(dir, f.name) {
 			continue // the installed instance itself (plugin dir on PATH).
 		}
-		if f.installed {
+		// M1 (review finding): the installed/path-only classification
+		// is recomputed HERE, at refusal time, against the CURRENT
+		// plugin directory — the memoized PATH scan is keyed by the
+		// PATH env value only, and the classification depends on dir,
+		// so it must not be captured at scan time (a stale scan would
+		// misclassify after the plugin is installed). The warning memo
+		// key carries the classification, so the same path can emit
+		// the correct message per dir within one process.
+		if pluginInstalledIn(dir, f.name, runtime.GOOS) {
 			// The plugin-dir instance wins (G3): the PATH copy is
 			// shadowed and never used for dispatch — visible, so a
 			// stale PATH copy cannot silently diverge from the
 			// installed plugin.
-			pluginRegWarnKey(f.path, fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", f.name, f.path))
+			pluginRegWarnKey(f.path+"\x00installed", fmt.Sprintf("plugin %q is also on PATH (%s) — the installed plugin is used and the PATH copy is ignored", f.name, f.path))
 			continue
 		}
 		// PATH-only plugin: refused deterministically — it was never
 		// installed through the verified install path, so its
 		// commands never register.
-		pluginRegWarnKey(f.path, fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", f.name, f.path, f.name))
+		pluginRegWarnKey(f.path+"\x00path-only", fmt.Sprintf("plugin %q is on PATH (%s) but not installed in the plugin directory — its commands are not registered; install it with: eka plugin install %s", f.name, f.path, f.name))
 	}
 }
 
 // pathOnlyFinding is one "eka-*" executable found on PATH during the
-// memoized PATH scan.
+// memoized PATH scan. The installed/path-only classification is NOT
+// captured here (M1): it depends on the plugin directory, which can
+// change within a process, while the scan cache is keyed by the PATH
+// env value only — pathOnlyRefusals recomputes the classification at
+// refusal time.
 type pathOnlyFinding struct {
-	name      string
-	path      string
-	installed bool // true when pluginInstalledIn(dir, name) — a PATH copy shadowing an installed plugin
+	name string
+	path string
 }
 
 // pathOnlyScan scans PATH for "eka-*" executables; the result is
-// memoized per process by the PATH env value (L3). dir is the plugin
-// directory used to classify each find as installed-shadow or
-// PATH-only; it is captured at scan time and is constant for a given
-// PATH value within a process.
-func pathOnlyScan(pathEnv, dir string) []pathOnlyFinding {
+// memoized per process by the PATH env value (L3). The scan is
+// deliberately classification-free (M1): the installed/path-only
+// decision depends on the plugin directory, which is not part of the
+// cache key — pathOnlyRefusals recomputes it against the current dir.
+func pathOnlyScan(pathEnv string) []pathOnlyFinding {
 	pluginPathScanMu.Lock()
 	if f, ok := pluginPathScanCache[pathEnv]; ok {
 		pluginPathScanMu.Unlock()
@@ -316,9 +331,8 @@ func pathOnlyScan(pathEnv, dir string) []pathOnlyFinding {
 				continue
 			}
 			findings = append(findings, pathOnlyFinding{
-				name:      name,
-				path:      filepath.Join(pathDir, e.Name()),
-				installed: pluginInstalledIn(dir, name, runtime.GOOS),
+				name: name,
+				path: filepath.Join(pathDir, e.Name()),
 			})
 		}
 	}
@@ -349,7 +363,16 @@ func installedOfficialNamesIn(dir string) []string {
 		if runtime.GOOS == "windows" {
 			name = strings.TrimSuffix(name, ".exe")
 		}
-		if name == "" || name == "eka" || strings.HasSuffix(name, ".old") || !pluginRegistryOfficial(name) {
+		if name == "" || name == "eka" || strings.HasSuffix(name, ".old") {
+			continue
+		}
+		if !pluginRegistryOfficial(name) {
+			// L3 (review finding): a third-party plugin installed in
+			// the plugin directory is never a registration candidate
+			// (G1) — the silent skip becomes a visible once-per-process
+			// hint, so the user understands why its commands are not
+			// registered.
+			pluginRegWarnKey(filepath.Join(dir, e.Name()), fmt.Sprintf("plugin %q is not from the official registry — its commands are not registered", name))
 			continue
 		}
 		names = append(names, name)
@@ -389,7 +412,7 @@ func pluginRegEntryFor(exe, name, dir string) *pluginRegEntry {
 
 	// Slow path (cache miss): verify the binary, then probe it (a
 	// bounded subprocess — never under the lock).
-	entry := &pluginRegEntry{path: exe, recorded: time.Now()}
+	entry := &pluginRegEntry{path: exe, name: name, dir: dir, recorded: time.Now()}
 	if fi, err := os.Stat(exe); err == nil {
 		entry.size, entry.modTime = fi.Size(), fi.ModTime()
 	}
@@ -401,7 +424,13 @@ func pluginRegEntryFor(exe, name, dir string) *pluginRegEntry {
 	sum, ok := readPluginChecksum(dir, name)
 	if !ok {
 		entry.refusal = fmt.Sprintf("plugin %q has no recorded checksum — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
-	} else if got, err := sha256File(exe); err != nil || !strings.EqualFold(got, sum) {
+	} else if got, err := sha256File(exe); err != nil {
+		// L1 (review finding): an unreadable binary is a distinct
+		// failure from a checksum mismatch — the message must not
+		// claim the binary "does not match" when it cannot even be
+		// read for verification.
+		entry.refusal = fmt.Sprintf("plugin %q cannot be read for verification — its commands are not registered (reinstall it with: eka plugin install %s)", name, name)
+	} else if !strings.EqualFold(got, sum) {
 		// G2 at registration: a binary that does not match the
 		// checksum recorded at install never registers (defense in
 		// depth — dispatch re-verifies anyway).
@@ -444,10 +473,16 @@ func pluginRegEntryFor(exe, name, dir string) *pluginRegEntry {
 }
 
 // pluginRegEntryValid reports whether a cached entry is still usable:
-// within the TTL and with an unchanged binary identity (size + mtime).
-// A reinstall writes a new binary — a new identity — so it
+// within the TTL, with an unchanged binary identity (size + mtime) and
+// — for a registered entry — a sidecar that still records the same
+// checksum. A reinstall writes a new binary and a new sidecar, so it
 // invalidates the entry immediately (acceptance criterion: invalidated
 // on reinstall).
+//
+// M2 (review finding): size + mtime alone is flaky on
+// coarse-granularity filesystems (a reinstall within the same second
+// can keep both unchanged); the sidecar is written by the install
+// finalize, so its content is the authoritative reinstall signal.
 func pluginRegEntryValid(e *pluginRegEntry) bool {
 	if time.Since(e.recorded) > pluginManifestCacheTTL {
 		return false
@@ -456,7 +491,16 @@ func pluginRegEntryValid(e *pluginRegEntry) bool {
 	if err != nil {
 		return false
 	}
-	return fi.Size() == e.size && fi.ModTime().Equal(e.modTime)
+	if fi.Size() != e.size || !fi.ModTime().Equal(e.modTime) {
+		return false
+	}
+	if e.checksum != "" {
+		sum, ok := readPluginChecksum(e.dir, e.name)
+		if !ok || !strings.EqualFold(sum, e.checksum) {
+			return false
+		}
+	}
+	return true
 }
 
 // probePluginManifest runs the plugin's "manifest --json" bounded by
@@ -484,14 +528,19 @@ func probePluginManifest(ctx context.Context, exe, wantName string) (pluginComma
 		if out.overflow {
 			return pluginCommandManifest{}, fmt.Errorf("manifest output exceeds %d bytes", pluginMaxManifestSize)
 		}
-		msg := strings.TrimSpace(errb.buf.String())
+		// M3 (review finding): the plugin's stderr is attacker-controlled
+		// text — it is sanitized (terminal-control bytes neutralized)
+		// before it can reach the CLI's warning output, exactly like the
+		// manifest's description (sanitizeTerminal invariant).
+		msg := sanitizeTerminal(strings.TrimSpace(errb.buf.String()))
 		if errb.overflow {
 			// The buffer bounds memory at pluginMaxManifestSize, but the
 			// embedded content is additionally truncated to a small
 			// display cap: a hostile plugin must not control the size of
-			// the CLI's warning output.
-			if len(msg) > maxProbeStderrMessage {
-				msg = msg[:maxProbeStderrMessage] + "..."
+			// the CLI's warning output. Truncation is rune-safe (a
+			// multi-byte rune must not be split).
+			if r := []rune(msg); len(r) > maxProbeStderrMessage {
+				msg = string(r[:maxProbeStderrMessage]) + "..."
 			}
 			if msg != "" {
 				msg += " " + truncatedStderrSuffix

@@ -416,6 +416,47 @@ func TestPluginPathShadowWarns(t *testing.T) {
 	}
 }
 
+// TestPluginPathScanClassificationFollowsDir (M1): the memoized PATH
+// scan is keyed by the PATH env value only, while the
+// installed/path-only classification depends on the plugin directory —
+// the classification is recomputed at refusal time, so the same PATH
+// yields the correct message per dir within one process (a stale
+// scan-time classification would misreport after the plugin is
+// installed).
+func TestPluginPathScanClassificationFollowsDir(t *testing.T) {
+	pathDir := t.TempDir()
+	body := registrationPluginScript(
+		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}),
+		"", 0)
+	writeLifecyclePlugin(t, pathDir, "eka-mcp", body)
+	t.Setenv("PATH", pathDir)
+
+	// Same PATH, empty plugin dir: PATH-only refusal.
+	t.Setenv("EKA_PLUGIN_DIR", t.TempDir())
+	code, _, errText := runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "on PATH") || !strings.Contains(errText, "not installed in the plugin directory") {
+		t.Errorf("PATH-only refusal expected with an empty plugin dir, got %q", errText)
+	}
+
+	// Same PATH value, plugin now installed in the dir: the same
+	// memoized scan must classify it as a shadow warning — not repeat
+	// the PATH-only refusal.
+	dir := t.TempDir()
+	installRegistrationPlugin(t, dir, "eka-mcp",
+		registrationPluginScript(registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "x"}), "", 0))
+	t.Setenv("EKA_PLUGIN_DIR", dir)
+	code, _, errText = runIn([]string{"--help"})
+	if code != 0 {
+		t.Fatalf("--help: exit = %d, want 0\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, "is also on PATH") || !strings.Contains(errText, "PATH copy is ignored") {
+		t.Errorf("the shadow warning expected with the plugin installed, got %q", errText)
+	}
+}
+
 // TestPluginCollisionBuiltinRefused: a plugin command colliding with a
 // built-in refuses deterministically — the built-in wins, the plugin
 // command is not registered, and the refusal is a visible warning
@@ -636,9 +677,13 @@ func TestPluginRegistrationCacheTTLAndReinstall(t *testing.T) {
 		t.Fatalf("probe count after cached construction = %d, want 1 (memoized)", got)
 	}
 
-	// Reinstall: a new binary (new identity) invalidates the cache —
-	// the next construction re-probes.
-	exe2 := installRegistrationPlugin(t, dir, "eka-mcp", registrationPluginScript(manifest, counter, 0))
+	// Reinstall: a new binary invalidates the cache — the next
+	// construction re-probes. The new binary has the SAME SIZE as the
+	// old one (only the description byte differs), so size+mtime alone
+	// could miss it on a coarse-granularity filesystem — the sidecar
+	// comparison (M2) is what makes the invalidation deterministic.
+	reinstalled := registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "y"})
+	exe2 := installRegistrationPlugin(t, dir, "eka-mcp", registrationPluginScript(reinstalled, counter, 0))
 	if exe2 != exe {
 		t.Fatal("reinstall must write the same exe path")
 	}
@@ -738,7 +783,12 @@ func TestPluginRegistrationStderrOverflow(t *testing.T) {
 	// 4 MiB of stderr — well over the 1 MiB cap (each line writes a
 	// 1 KiB chunk, so the script stays small).
 	chunk := strings.Repeat("x", 1024)
-	for i := 0; i < 4*1024; i++ {
+	// The first chunk carries a terminal-control sequence (ESC [2J — a
+	// screen clear): the embedded stderr must be sanitized (M3), so no
+	// raw ESC byte reaches the warning output.
+	first := "\033[2J" + strings.Repeat("x", 1024-4)
+	body = append(body, []byte("printf '"+first+"' >&2\n")...)
+	for i := 0; i < 4*1024-1; i++ {
 		body = append(body, []byte("printf '"+chunk+"' >&2\n")...)
 	}
 	body = append(body, []byte("exit 1\n")...)
@@ -756,6 +806,9 @@ func TestPluginRegistrationStderrOverflow(t *testing.T) {
 	}
 	if !strings.Contains(errText, truncatedStderrSuffix) {
 		t.Errorf("the refusal must surface the stderr truncation notice, got %q", errText)
+	}
+	if strings.Contains(errText, "\x1b") {
+		t.Errorf("the embedded stderr must be sanitized (no raw ESC in the warning), got %q", errText)
 	}
 	if strings.Contains(out, "Plugins") {
 		t.Errorf("a spewing plugin must not register commands:\n%s", out)
