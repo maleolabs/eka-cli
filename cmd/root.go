@@ -95,6 +95,10 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root.SetIn(stdin)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	// The registration warnings collected during root construction are
+	// flushed to the caller's stderr (registration runs before the
+	// streams exist).
+	flushPluginRegWarnings(stderr)
 
 	err := root.Execute()
 	if err == nil {
@@ -187,7 +191,7 @@ Exit codes:
 				fmt.Fprintf(styleFor(cmd).W, "eka %s\n", version)
 				return nil
 			}
-			printLanding(styleFor(cmd))
+			printLanding(cmd, styleFor(cmd))
 			return nil
 		},
 		// The CLI owns all error output: SilenceErrors + SilenceUsage on
@@ -218,6 +222,15 @@ Exit codes:
 	// here, so the fresh-tree command list stays built-in-free).
 	root.AddGroup(commandGroups...)
 	assignCommandGroups(root)
+	// B1 deferred registration (ADR-031): the commands of installed
+	// official plugins are registered into the tree at construction
+	// time, grouped under the dynamic Plugins group. Registration never
+	// fails the CLI — every problem is a visible warning and a skip.
+	// The dynamic group is added only when plugin commands exist, so a
+	// plugin-free CLI renders exactly the five static intent groups.
+	if pluginCmds := registerPluginCommands(root); len(pluginCmds) > 0 {
+		root.AddGroup(&cobra.Group{ID: groupPlugins, Title: "Plugins"})
+	}
 	root.SetHelpCommandGroupID(groupUtility)
 	root.SetCompletionCommandGroupID(groupUtility)
 	// The output container wraps the help text of EVERY command
@@ -246,7 +259,7 @@ Exit codes:
 // corner. Deterministic on non-TTY output; on a color TTY the heading
 // and section/group headers are accent-colored, command names Info and
 // the help hints Dim.
-func printLanding(s *ui.Style) {
+func printLanding(cmd *cobra.Command, s *ui.Style) {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Accent("Engineering Knowledge Architecture (EKA)"))
 	fmt.Fprintln(&b)
@@ -256,7 +269,17 @@ func printLanding(s *ui.Style) {
 	fmt.Fprintf(&b, "%s\n", s.Dim("New here? Run 'eka init' to bootstrap a repository."))
 	fmt.Fprintln(&b)
 	fmt.Fprint(&b, s.Accent("Commands"))
-	renderCommandGroups(s, &b, commandGroups, newRootCommand().Commands())
+	// The landing renders the current tree's commands minus the cobra
+	// built-ins ExecuteC creates (help/completion join the tree at
+	// Execute time) — the same built-in-free list a fresh tree yields.
+	cmds := make([]*cobra.Command, 0, len(cmd.Commands()))
+	for _, c := range cmd.Commands() {
+		if c.Name() == "completion" || c.Name() == helpCommandName {
+			continue
+		}
+		cmds = append(cmds, c)
+	}
+	renderCommandGroups(s, &b, commandGroupsFor(cmd), cmds)
 	// renderCommandGroups leaves the last member line unterminated:
 	// close it and add the blank line before the next section.
 	fmt.Fprintln(&b)

@@ -441,6 +441,19 @@ func (r *pluginInstallRunner) run(cmd *cobra.Command, name string, f *pluginInst
 		os.Remove(target) // best-effort: never leave a failed install behind.
 		return refuse(cmd, "plugin install refused: cannot make %s executable: %s", target, err)
 	}
+	// The dispatch-time verification record (G2 anti-TOCTOU, ADR-031):
+	// the installed binary's SHA-256 is recorded in the sidecar so every
+	// dispatch can re-verify it. A failed record is a refusal — never
+	// leave an unverifiable install behind.
+	sum, err := sha256File(target)
+	if err != nil {
+		os.Remove(target) // best-effort: never leave an unverifiable install behind.
+		return refuse(cmd, "plugin install refused: cannot hash the installed %s: %s", target, err)
+	}
+	if err := writePluginChecksum(r.pluginDir, name, sum); err != nil {
+		os.Remove(target) // best-effort: never leave an unverifiable install behind.
+		return refuse(cmd, "plugin install refused: cannot record the checksum of %s: %s", target, err)
+	}
 
 	fmt.Fprintf(s.W, "%s\n", s.Success(ui.IconDone+" installed: "+target))
 	sm.Add("Plugin", name)

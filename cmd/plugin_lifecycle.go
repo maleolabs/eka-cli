@@ -345,6 +345,9 @@ func (r *pluginRemoveRunner) run(cmd *cobra.Command, name string) error {
 	// check passes; a leftover .old is debris and must not survive the
 	// removal. Best-effort: never a refusal.
 	os.Remove(target + ".old")
+	// The checksum sidecar travels with the binary (best-effort: debris
+	// cleanup, never a refusal).
+	removePluginChecksum(r.pluginDir, name)
 	if err := os.Remove(target); err != nil {
 		return fmt.Errorf("plugin remove failed: cannot remove %s: %w", target, err) // Exit 2: internal.
 	}
@@ -543,6 +546,17 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string, yes boo
 	// the installed binary is 0755.
 	if err := os.Chmod(target, 0o755); err != nil {
 		return fmt.Errorf("plugin update failed: cannot make %s executable: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
+	}
+	// The dispatch-time verification record (G2 anti-TOCTOU, ADR-031):
+	// the new binary's SHA-256 replaces the sidecar, so dispatch
+	// re-verifies against the NEW checksum (the registration cache is
+	// invalidated by the new binary identity).
+	sum, err := sha256File(target)
+	if err != nil {
+		return fmt.Errorf("plugin update failed: cannot hash the installed %s: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
+	}
+	if err := writePluginChecksum(r.pluginDir, name, sum); err != nil {
+		return fmt.Errorf("plugin update failed: cannot record the checksum of %s: %w%s", target, err, r.windowsInstallHint()) // Exit 2: internal.
 	}
 	os.Remove(old) // debris cleanup; the update itself succeeded
 

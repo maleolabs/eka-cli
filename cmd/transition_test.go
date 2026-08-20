@@ -28,6 +28,9 @@ import (
 // gitIdentityEnv pins `git config user.name` to a deterministic value
 // for the duration of the test (GIT_CONFIG_GLOBAL), so the --by default
 // resolution is testable without touching the user's git configuration.
+// The TestMain PATH pin (plugin-registration hermeticity) is lifted for
+// the duration of the test: eka-core resolves the identity by running
+// git via exec.Command, which needs git on PATH.
 func gitIdentityEnv(t *testing.T, name string) {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
@@ -42,6 +45,9 @@ func gitIdentityEnv(t *testing.T, name string) {
 		}
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
 }
 
 // transitionEnv builds a repository whose docs tree seeds the workspace

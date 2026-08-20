@@ -120,9 +120,10 @@ func TestPluginInstallThirdPartyConsentYes(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}
 	}
-	if names := pluginDirEntries(t, dir); len(names) != 1 || names[0] != "eka-helper" {
-		t.Errorf("plugin dir must hold only eka-helper, found %v", names)
+	if names := pluginDirEntries(t, dir); len(names) != 2 || names[0] != ".eka-helper.sha256" || names[1] != "eka-helper" {
+		t.Errorf("plugin dir must hold eka-helper + the checksum sidecar, found %v", names)
 	}
+	assertPluginSidecar(t, dir, "helper", target)
 }
 
 // TestPluginInstallThirdPartyConsentAccepted: without --yes, the
@@ -525,6 +526,12 @@ func TestPluginSubprocessEnvMinimal(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GH_TOKEN", "super-secret")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+	// The TestMain PATH pin (plugin-registration hermeticity) is lifted
+	// for this test: the fake plugin dumps its environment with `env`,
+	// which must resolve on PATH.
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
 	// The fake exe dumps its environment into a file under
 	// EKA_PLUGIN_DIR (a whitelisted variable) while answering the
 	// manifest.
