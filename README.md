@@ -163,6 +163,15 @@ CLI's internal packages.
   this CLI implements — **EKA Standard 1.0**. The standard's two-component
   version axis is independent of the CLI's semver.
 
+- **Release pipeline** — tag `vMAJOR.MINOR.PATCH` (RC suffix allowed, e.g.
+  `v1.2.3-rc.1`) triggers `.github/workflows/release.yml`:
+  semver regex check, `gh release view` duplicate guard, `anvil pipeline ci`
+  quality gate (gofmt/vet/test) before publication, and
+  `gh release create --generate-notes`. See [CONTRIBUTING.md](CONTRIBUTING.md)
+  for the full release process, tag-immutability rule (pushed tags are never
+  deleted/recreated), and ecosystem release order
+  `eka-standard -> eka-core -> eka-cli -> eka-mcp`.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Design records and ADRs live in the EKA
