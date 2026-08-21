@@ -102,6 +102,68 @@ and quality gate, but no binary build/checksum steps).
 
 See `scripts/bump.sh` (tag, push, and trigger) and `anvil.yaml` (`version`).
 
+### Consumer pre-release validation (upstream-release-exists)
+
+Every consumer release — `eka-cli` on `eka-core`, `eka-mcp` on
+`eka-cli`/`eka-core` — MUST prove the upstream release it pins exists
+before tagging. This prevents a consumer from silently building against a
+stale pseudo-version.
+
+Checklist — include explicitly in every consumer release work item:
+
+1. **Upstream release exists** — `gh release view vX.Y.Z --repo maleolabs/eka-core`
+   (or `--repo maleolabs/eka-cli`, or the `eka-standard` release asset) must
+   succeed. A 404 means the upstream has not been published — stop and publish
+   it first.
+2. **Imported-constant / asset check** — verify the consumer will build against
+   the published upstream, not a stale pin:
+   - `go list -m github.com/maleolabs/eka-core` shows `vX.Y.Z` (not
+     `v0.0.0-...` pseudo-version).
+   - `eka version --json` axes or the vendored `EKA` file (via
+     `standardembed`) matches the upstream version you expect.
+3. **No pseudo-version surprise** — `go.mod` must pin an exact published tag,
+   never a commit hash. The `go get` bump below guarantees this.
+
+### Go dependency bump (go get)
+
+After the upstream release is verified, bump the consumer's `go.mod`
+explicitly:
+
+```sh
+# from the consumer repo (e.g. eka-cli bumping to eka-core v1.2.3)
+go get github.com/maleolabs/eka-core@v1.2.3
+go mod tidy
+go vet ./...
+git add go.mod go.sum
+git commit -m "chore: bump eka-core to v1.2.3"
+```
+
+For a coordinated wave, repeat for each downstream repo before tagging it
+(`eka-mcp` similarly runs `go get github.com/maleolabs/eka-cli@v...` /
+`eka-core@v...` as needed). The bump commit lands on `develop` before the
+tag is cut, so the tagged build and every `go get` consumer resolve the
+same published module.
+
+### Go module rules
+
+- **Never delete or recreate a pushed `v*` tag.** The tag-immutability rule
+  above is a Go modules requirement: the Go checksum DB and downstream
+  `go.sum` entries are anchored to the tag's commit. Re-pushing breaks
+  `go get` resolution.
+- **Use `-rc` for trials.** Pre-releases carry a suffix — `v1.3.0-rc.1`,
+  `v1.3.0-alpha.1`, `v1.3.0-beta.1`. The suffix makes `go get` and
+  `gh release view` distinguish stable from trial builds and sets the
+  `prerelease` flag in the workflow.
+- **No major bump without `/v2` path.** Publishing `v2.0.0` requires changing
+  the module path to `github.com/maleolabs/eka-cli/v2` (and all imports).
+  Do not publish `v2` on the `v1` path.
+
+> Note: the canonical `eka-core` release docs live in the `eka-core`
+> repository. This section is the `eka-cli`-local operationalization of the
+> same one-way order; it is kept in sync with that repo's
+> `CONTRIBUTING.md`/`README.md` (deferred side — same pattern as
+> `sto:release-core-pipeline`).
+
 ## Design records
 
 Architecture decisions, design records, and ADRs are Engineering Knowledge and
