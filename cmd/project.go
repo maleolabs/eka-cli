@@ -40,6 +40,11 @@ store attributes every pulled object to its repository.
 removing a project's LAST repository deletes the empty project too
 (canonical knowledge objects stay in the workspace store).
 
+'eka project unregister <project> [--force]' unregisters a whole
+project and all its repositories (path moved, project deleted,
+cleanup). On a terminal the command prompts for confirmation;
+outside a terminal --force is required.
+
 Exit codes:
   0  success
   2  usage or internal error`,
@@ -48,7 +53,7 @@ Exit codes:
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newProjectRegisterCommand(), newProjectListCommand(), newProjectRemoveCommand())
+	cmd.AddCommand(newProjectRegisterCommand(), newProjectListCommand(), newProjectRemoveCommand(), newProjectUnregisterCommand())
 	return cmd
 }
 
@@ -420,6 +425,135 @@ Exit codes:
 			return nil
 		},
 	}
+	return cmd
+}
+
+// newProjectUnregisterCommand builds `eka project unregister <project> [--force]`.
+func newProjectUnregisterCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unregister <project> [--force]",
+		Short: "Remove a project and all its repositories from the workspace registry",
+		Long: `Remove (unregister) the whole project <project> and all its
+repositories from the EKA workspace registry. The target is the
+project id — exactly as 'eka project list' renders it.
+
+Unregistering a project deletes every repository row under that
+project; the emptied project row is deleted too. Canonical knowledge
+objects are NOT deleted: they remain in the workspace store under
+their provenance pairs, and re-registering restores provenance
+access. Use for: project deleted, path moved, cleanup.
+
+On a terminal the command prompts for confirmation when the project
+has repositories; outside a terminal --force is required (agents
+decide programmatically). The prompt defaults to abort.
+
+Exit codes:
+  0  unregistration succeeded (or aborted at the prompt)
+  2  usage or internal error (bad argument, unknown project, registry
+     failure, or --force required outside a terminal)`,
+		Example: `  eka project unregister atrium --force
+  eka project unregister eka-sync-fixture`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID := args[0]
+			if strings.Contains(projectID, "/") || strings.TrimSpace(projectID) == "" {
+				return fmt.Errorf("project unregister failed: the target must be <project>, got %q", args[0])
+			}
+			force, err := cmd.Flags().GetBool("force")
+			if err != nil {
+				return fmt.Errorf("project unregister failed: %w", err)
+			}
+
+			r, err := runtime.Ensure()
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+
+			projects, err := r.Workspace.Projects()
+			if err != nil {
+				return err
+			}
+			var known bool
+			for _, p := range projects {
+				if p.ID == projectID {
+					known = true
+					break
+				}
+			}
+			if !known {
+				ids := make([]string, 0, len(projects))
+				for _, p := range projects {
+					ids = append(ids, p.ID)
+				}
+				sort.Strings(ids)
+				if len(ids) == 0 {
+					return fmt.Errorf("project unregister failed: unknown project %q — no projects are registered; run 'eka project register' first", projectID)
+				}
+				return fmt.Errorf("project unregister failed: unknown project %q — available projects: %s", projectID, strings.Join(ids, ", "))
+			}
+			repos, err := r.Workspace.Repos(projectID)
+			if err != nil {
+				return err
+			}
+			n := len(repos)
+
+			// Confirmation: interactive when tty, otherwise require --force.
+			if n > 0 && !force {
+				sTTY := styleFor(cmd)
+				tty := sTTY.TTY && isTTYReader(cmd.InOrStdin())
+				if !tty {
+					return fmt.Errorf("project unregister failed: project %q has %s; run 'eka project unregister %s --force' to unregister or confirm interactively on a terminal", projectID, plural(n, "repository", "repositories"), projectID)
+				}
+				// Interactive confirmation (TTY): unregister vs abort, default abort.
+				prompt := fmt.Sprintf("unregister project %q (%s) and all its repositories?", projectID, plural(n, "repository", "repositories"))
+				value, err := ui.Select(sTTY, cmd.InOrStdin(), cmd.OutOrStdout(), prompt,
+					[]ui.MenuItem{
+						{Title: "unregister project " + projectID, Value: "unregister"},
+						{Title: "abort", Value: "abort"},
+					}, 1)
+				if err != nil {
+					if errors.Is(err, ui.ErrCancelled) {
+						fmt.Fprintf(sTTY.W, "Aborted; project %s kept.\n", projectID)
+						return nil
+					}
+					return fmt.Errorf("project unregister failed: %w", err)
+				}
+				if value != "unregister" {
+					fmt.Fprintf(sTTY.W, "Aborted; project %s kept.\n", projectID)
+					return nil
+				}
+			}
+
+			// Remove the whole project in one registry operation: every
+			// repository row under it and the project row itself
+			// (workspace.UnregisterProject semantics). Canonical objects
+			// stay. The count is re-read at removal time, so a repository
+			// registered between the listing above and this call is
+			// removed too — the confirmation prompt names the count seen
+			// at prompt time, the summary reports what was actually
+			// removed.
+			removedCount, err := r.Workspace.UnregisterProject(projectID)
+			if err != nil {
+				return err
+			}
+			s := styleFor(cmd)
+			ui.NewHeader(s, "Projects").
+				Add("Workspace", r.Path()).
+				Render()
+			if n == 0 {
+				fmt.Fprintf(s.W, "\n%s unregistered project %s (no repositories)\n", ui.IconBullet, s.Info(projectID))
+			} else {
+				fmt.Fprintf(s.W, "\n%s unregistered project %s (%s)\n", ui.IconBullet, s.Info(projectID), plural(removedCount, "repository", "repositories"))
+				for _, repo := range repos {
+					fmt.Fprintf(s.W, "  %s %s  (%s)\n", ui.IconBullet, s.Info(repo.Name), displayPath(repo.Path))
+				}
+			}
+			fmt.Fprintf(s.W, "\n%s\n", s.Dim("Canonical knowledge objects remain in the workspace store; re-registering restores provenance access."))
+			return nil
+		},
+	}
+	cmd.Flags().Bool("force", false, "unregister without the confirmation prompt (non-interactive runs)")
 	return cmd
 }
 
