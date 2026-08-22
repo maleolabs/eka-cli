@@ -32,7 +32,11 @@ func TestDeclarationShape(t *testing.T) {
 	if len(lines) < 2 || !strings.HasPrefix(lines[1], "Version ") {
 		t.Errorf("second line must be the Version X.Y line, got %q", lines[1])
 	}
-	if !bytes.HasSuffix(d, []byte("END OF EKA STANDARD 1.0 (SUMMARY)\n")) {
+	// The closing marker carries the same two-component version as the
+	// Version line — derived, never hardcoded, so a standard version
+	// bump cannot silently break the shape contract.
+	version := strings.TrimSpace(strings.TrimPrefix(lines[1], "Version "))
+	if !bytes.HasSuffix(d, []byte("END OF EKA STANDARD "+version+" (SUMMARY)\n")) {
 		t.Errorf("declaration must end with the END OF EKA STANDARD marker")
 	}
 }
