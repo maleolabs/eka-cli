@@ -107,6 +107,10 @@ func TestPluginListBrokenManifestVisible(t *testing.T) {
 func TestPluginListEmpty(t *testing.T) {
 	t.Setenv("EKA_PLUGIN_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
+	// HOME too: discovery falls back to ~/.eka/plugins via
+	// os.UserHomeDir, so a developer machine with an installed plugin
+	// would leak into the list without isolating the home directory.
+	t.Setenv("HOME", t.TempDir())
 	code, out, errText := runIn([]string{"plugin", "list"})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstderr: %s", code, errText)

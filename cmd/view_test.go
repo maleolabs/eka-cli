@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/runtime"
 )
 
@@ -270,7 +271,7 @@ func TestViewExecutionHappyPath(t *testing.T) {
 		"Execution",
 		"Container    eka-view-fixture/ctr:wave-1",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"• eka-view-fixture/ctr:wave-1  (active)",
@@ -374,7 +375,7 @@ func TestViewBoardHappyPath(t *testing.T) {
 		"Board",
 		"Container    all",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"6 work items across 2 containers",
@@ -869,7 +870,7 @@ func TestViewContainersHappyPath(t *testing.T) {
 	for _, want := range []string{
 		"Containers",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"NAME    PLAN  ITEMS/TICKETS  STARTED     ENDED  STATUS",
