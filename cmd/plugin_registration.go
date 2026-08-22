@@ -663,6 +663,13 @@ func (b *pluginLimitedBuffer) Write(p []byte) (int, error) {
 // A non-empty refusal return means the command was NOT registered
 // (invalid name or a collision with a built-in or another plugin's
 // command — deterministic, first-wins in sorted order).
+//
+// Help is a CLI-surface concern, not plugin behavior (ADR-031: the
+// command surface is not the behavior layer): a help-only invocation
+// (-h, --help, help as the only argument) renders the native styled
+// help instead of dispatching, so `eka <cmd> -h` matches every other
+// command's help design. Any other argument — including deeper help
+// like `<cmd> serve -h` — passes through to the plugin unchanged.
 func newPluginDispatchCommand(root *cobra.Command, exe, pluginName string, spec pluginCommandSpec, expected string) (*cobra.Command, string) {
 	if !validPluginCommandName(spec.Name) {
 		return nil, fmt.Sprintf("plugin %q declares command %q, which is not a valid command name (want lowercase letters, digits and dashes) — not registered", pluginName, spec.Name)
@@ -670,12 +677,26 @@ func newPluginDispatchCommand(root *cobra.Command, exe, pluginName string, spec 
 	if existing, taken := pluginCommandNameTaken(root, spec.Name); taken {
 		return nil, fmt.Sprintf("plugin %q command %q collides with the existing %q command — not registered", pluginName, spec.Name, existing)
 	}
+	description := sanitizeTerminal(spec.Description)
 	cmd := &cobra.Command{
-		Use:                spec.Name,
-		Short:              sanitizeTerminal(spec.Description),
-		GroupID:            groupPlugins,
+		Use:     spec.Name,
+		Short:   description,
+		GroupID: groupPlugins,
+		Long: fmt.Sprintf(`%s
+
+This command is proxied to the installed %q plugin executable. Every
+dispatch re-verifies the binary against its recorded install checksum,
+runs it with a bounded environment whitelist, and propagates its exit
+code. Arguments after the command name pass through to the plugin
+unchanged — the plugin owns its flags.
+
+Help-only forms (-h, --help) render this native help; everything else
+is dispatched to the plugin.`, description, "eka-"+pluginName),
 		DisableFlagParsing: true, // the plugin owns its flags; everything after the command name passes through
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
+				return cmd.Help()
+			}
 			return dispatchPluginCommand(cmd, exe, pluginName, spec, expected, args)
 		},
 	}
