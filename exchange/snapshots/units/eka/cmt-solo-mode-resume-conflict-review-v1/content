@@ -1,0 +1,1 @@
+{"notes":["APPROVE: td:solo-mode-resume-conflict docs — delegation-mode conflict rule correctly added byte-identical to both commands, step 4 reconciles precedence (checkpoint governs completed, fresh resolves new), never overrides store/gates, zero alex/althea, no ecosystem hardcode, gates green"],"role":"review","verdict":"approve"}

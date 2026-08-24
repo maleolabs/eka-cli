@@ -1,0 +1,1 @@
+{"notes":["review: approve — docs match release.yml (tag semver, duplicate-guard, quality gate before build, --generate-notes, tag immutability, ecosystem order standard-\u003ecore-\u003ecli-\u003emcp + go.sum integrity); style consistent, no bare install, no R0 violation; no changes to release.yml verified"],"role":"review","verdict":"approve"}
