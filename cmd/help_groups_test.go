@@ -66,8 +66,12 @@ func TestCommandGroupMembership(t *testing.T) {
 
 	// No stray members: every registered command is in exactly one group
 	// (each GroupID is registered — the panic guard), and no command is
-	// left without a group.
+	// left without a group. Hidden commands (the mcp stub when the plugin
+	// is not installed) are ignored for the 5-group layout assertion.
 	for _, c := range root.Commands() {
+		if c.Hidden {
+			continue
+		}
 		if c.GroupID == "" {
 			t.Errorf("command %q has no group", c.Name())
 			continue
