@@ -86,6 +86,7 @@ var commandGroupsByName = map[string]string{
 	"plugin":     groupUtility,
 	"completion": groupUtility,
 	"help":       groupUtility,
+
 }
 
 // assignCommandGroups sets the GroupID of every registered subcommand
@@ -93,9 +94,20 @@ var commandGroupsByName = map[string]string{
 // newRootCommand; the built-in help/completion commands (which cobra
 // only creates at Execute time) receive their Utility group through
 // SetHelpCommandGroupID/SetCompletionCommandGroupID instead.
+// Plugin-registered commands already carry groupPlugins; preserve that.
 func assignCommandGroups(root *cobra.Command) {
 	for _, c := range root.Commands() {
-		c.GroupID = commandGroupsByName[c.Name()]
+		if c.GroupID == groupPlugins {
+			continue
+		}
+		if g, ok := commandGroupsByName[c.Name()]; ok {
+			c.GroupID = g
+		} else if c.GroupID == "" {
+			// Unknown command without group (future plugin) stays
+			// without group so renderCommandGroups puts it in
+			// Additional Commands; plugin commands already have
+			// groupPlugins set via newPluginDispatchCommand.
+		}
 	}
 }
 

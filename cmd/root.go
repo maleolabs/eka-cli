@@ -126,10 +126,14 @@ func renderError(err error) string {
 
 // availableCommands lists the registered subcommands in registration
 // order, excluding the built-in help/completion commands (which a fresh
-// tree does not contain yet).
+// tree does not contain yet) and hidden commands (the mcp stub when
+// the plugin is not installed).
 func availableCommands() string {
 	names := make([]string, 0, 2)
 	for _, c := range newRootCommand().Commands() {
+		if c.Hidden {
+			continue
+		}
 		names = append(names, c.Name())
 	}
 	return strings.Join(names, ", ")
@@ -228,7 +232,25 @@ Exit codes:
 	// fails the CLI — every problem is a visible warning and a skip.
 	// The dynamic group is added only when plugin commands exist, so a
 	// plugin-free CLI renders exactly the five static intent groups.
-	if pluginCmds := registerPluginCommands(root); len(pluginCmds) > 0 {
+	pluginCmds := registerPluginCommands(root)
+	// Native mcp stub (bug:mcp-help-subcommands-hidden): `eka mcp -h`
+	// must disclose subcommands even when the plugin is not installed.
+	// When the plugin is installed its B1 dispatch command already
+	// provides `mcp`; otherwise the hidden stub ensures disclosure
+	// without affecting the root help's 5-group layout or the
+	// available-commands list.
+	hasRealMcp := false
+	for _, c := range pluginCmds {
+		if c.Name() == "mcp" {
+			hasRealMcp = true
+			break
+		}
+	}
+	if !hasRealMcp {
+		stub := newMcpStubCommand()
+		root.AddCommand(stub)
+	}
+	if len(pluginCmds) > 0 {
 		root.AddGroup(&cobra.Group{ID: groupPlugins, Title: "Plugins"})
 	}
 	root.SetHelpCommandGroupID(groupUtility)

@@ -242,6 +242,25 @@ func registerPluginCommands(root *cobra.Command) []*cobra.Command {
 		specs := append([]pluginCommandSpec(nil), entry.manifest.Commands...)
 		sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 		for _, spec := range specs {
+			// Disclosure-only commands for the mcp plugin (bug:mcp-help-subcommands-hidden):
+			// the manifest declares the actual subcommands (manifest, install, configure, serve)
+			// for help disclosure; they are not top-level `eka <subcommand>` but
+			// subcommands of `eka mcp`. The native stub `eka mcp` already
+			// discloses them statically, and `eka mcp <subcommand>` is
+			// handled by the whole-binary proxy (Args []), so skip
+			// top-level registration for disclosure entries (only those 4).
+			if name == "mcp" {
+				isDisclosure := false
+				for _, d := range mcpSubcommands {
+					if spec.Name == d {
+						isDisclosure = true
+						break
+					}
+				}
+				if isDisclosure {
+					continue
+				}
+			}
 			cmd, refusal := newPluginDispatchCommand(root, exe, name, spec, entry.checksum)
 			if refusal != "" {
 				pluginRegWarnKey(exe+"\x00"+spec.Name, refusal)
@@ -678,11 +697,7 @@ func newPluginDispatchCommand(root *cobra.Command, exe, pluginName string, spec 
 		return nil, fmt.Sprintf("plugin %q command %q collides with the existing %q command — not registered", pluginName, spec.Name, existing)
 	}
 	description := sanitizeTerminal(spec.Description)
-	cmd := &cobra.Command{
-		Use:     spec.Name,
-		Short:   description,
-		GroupID: groupPlugins,
-		Long: fmt.Sprintf(`%s
+	longBase := fmt.Sprintf(`%s
 
 This command is proxied to the installed %q plugin executable. Every
 dispatch re-verifies the binary against its recorded install checksum,
@@ -691,7 +706,19 @@ code. Arguments after the command name pass through to the plugin
 unchanged — the plugin owns its flags.
 
 Help-only forms (-h, --help) render this native help; everything else
-is dispatched to the plugin.`, description, "eka-"+pluginName),
+is dispatched to the plugin.`, description, "eka-"+pluginName)
+	// Disclosure for `eka mcp` (bug:mcp-help-subcommands-hidden): the
+	// proxy help must list the plugin's actual subcommands so
+	// `eka mcp -h` discloses the surface even though the subcommands are
+	// not cobra subcommands but whole-binary proxy arguments.
+	if spec.Name == "mcp" && pluginName == "mcp" {
+		longBase += fmt.Sprintf("\n\nSubcommands (disclosure):\n  %s", strings.Join(mcpSubcommands, ", "))
+	}
+	cmd := &cobra.Command{
+		Use:     spec.Name,
+		Short:   description,
+		GroupID: groupPlugins,
+		Long:    longBase,
 		DisableFlagParsing: true, // the plugin owns its flags; everything after the command name passes through
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
