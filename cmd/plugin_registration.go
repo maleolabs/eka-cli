@@ -715,10 +715,10 @@ is dispatched to the plugin.`, description, "eka-"+pluginName)
 		longBase += fmt.Sprintf("\n\nSubcommands (disclosure):\n  %s", strings.Join(mcpSubcommands, ", "))
 	}
 	cmd := &cobra.Command{
-		Use:     spec.Name,
-		Short:   description,
-		GroupID: groupPlugins,
-		Long:    longBase,
+		Use:                spec.Name,
+		Short:              description,
+		GroupID:            groupPlugins,
+		Long:               longBase,
 		DisableFlagParsing: true, // the plugin owns its flags; everything after the command name passes through
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {

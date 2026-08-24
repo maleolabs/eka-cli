@@ -86,7 +86,6 @@ var commandGroupsByName = map[string]string{
 	"plugin":     groupUtility,
 	"completion": groupUtility,
 	"help":       groupUtility,
-
 }
 
 // assignCommandGroups sets the GroupID of every registered subcommand
