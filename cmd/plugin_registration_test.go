@@ -225,7 +225,7 @@ func TestPluginRegistrationNoCommandsDeclared(t *testing.T) {
 func TestPluginDispatch(t *testing.T) {
 	dir := t.TempDir()
 	body := registrationPluginScript(
-		registrationManifest("mcp", pluginCommandSpec{Name: "mcp", Description: "run the server", Args: []string{"serve"}}),
+		registrationManifest("mcp", pluginCommandSpec{Name: "mcp-serve", Description: "run the server", Args: []string{"serve"}}),
 		"", 0)
 	installRegistrationPlugin(t, dir, "eka-mcp", body)
 	t.Setenv("EKA_PLUGIN_DIR", dir)
@@ -234,7 +234,7 @@ func TestPluginDispatch(t *testing.T) {
 
 	// The plugin echoes its args; the args contract is
 	// "eka-mcp serve extra arg".
-	code, out, errText := runIn([]string{"mcp", "extra", "arg"})
+	code, out, errText := runIn([]string{"mcp-serve", "extra", "arg"})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (plugin exit code propagation)\nstderr: %s", code, errText)
 	}

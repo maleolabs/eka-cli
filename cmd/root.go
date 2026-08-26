@@ -226,6 +226,11 @@ Exit codes:
 	// here, so the fresh-tree command list stays built-in-free).
 	root.AddGroup(commandGroups...)
 	assignCommandGroups(root)
+	// CLI-owned MCP entrypoint (sto:mcp-entrypoint-ux): native `eka mcp`
+	// (overview + interactive installer) and `eka mcp serve` (protocol-only)
+	// are registered BEFORE plugin dispatch so the native command wins
+	// (first-wins collision: plugin's `mcp` dispatch is then refused).
+	root.AddCommand(newMcpCommand())
 	// B1 deferred registration (ADR-031): the commands of installed
 	// official plugins are registered into the tree at construction
 	// time, grouped under the dynamic Plugins group. Registration never
@@ -233,23 +238,6 @@ Exit codes:
 	// The dynamic group is added only when plugin commands exist, so a
 	// plugin-free CLI renders exactly the five static intent groups.
 	pluginCmds := registerPluginCommands(root)
-	// Native mcp stub (bug:mcp-help-subcommands-hidden): `eka mcp -h`
-	// must disclose subcommands even when the plugin is not installed.
-	// When the plugin is installed its B1 dispatch command already
-	// provides `mcp`; otherwise the hidden stub ensures disclosure
-	// without affecting the root help's 5-group layout or the
-	// available-commands list.
-	hasRealMcp := false
-	for _, c := range pluginCmds {
-		if c.Name() == "mcp" {
-			hasRealMcp = true
-			break
-		}
-	}
-	if !hasRealMcp {
-		stub := newMcpStubCommand()
-		root.AddCommand(stub)
-	}
 	if len(pluginCmds) > 0 {
 		root.AddGroup(&cobra.Group{ID: groupPlugins, Title: "Plugins"})
 	}

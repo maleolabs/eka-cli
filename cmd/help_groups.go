@@ -84,6 +84,7 @@ var commandGroupsByName = map[string]string{
 	"version":    groupUtility,
 	"feedback":   groupUtility,
 	"plugin":     groupUtility,
+	"mcp":        groupUtility,
 	"completion": groupUtility,
 	"help":       groupUtility,
 }
