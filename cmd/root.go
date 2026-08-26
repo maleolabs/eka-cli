@@ -48,7 +48,8 @@
 // abstraction. cmd/ is a leaf: nothing imports it except
 // cmd/eka/main.go.
 //
-// Exit codes (deterministic contract, preserved from the pre-Cobra CLI):
+// Exit codes (deterministic contract, preserved from the pre-Cobra CLI).
+// Base contract (all commands):
 //
 //	0  fully compliant (warnings allowed); init completed and validates;
 //	   export produced a package
@@ -56,6 +57,15 @@
 //	   non-conformant repository; export refused the repository)
 //	2  usage or internal error (unknown command, invalid path,
 //	   unreadable scan root, bad export target, export failure)
+//
+// Extended codes for `eka mcp` (sto:mcp-entrypoint-ux — help-visible, not a new base code):
+//
+//	2  conflict (preflight: file exists not owned, version skew without --force)
+//	3  not found (unknown agent, missing plugin for serve)
+//	4  precondition failed (non-TTY without bypass, not selectable agent)
+//
+// Exit 2 is shared between generic usage and mcp conflict by design; `eka mcp --help`
+// documents the extended mapping.
 package cmd
 
 import (
@@ -70,10 +80,14 @@ import (
 )
 
 // Exit codes of the deterministic contract documented above.
+// mcp extends with 2 (conflict), 3 (not found), 4 (precondition) — see package comment.
 const (
 	exitOK    = 0
 	exitFail  = 1
 	exitUsage = 2
+	// mcp extended codes reuse exitUsage (2) for conflict; 3/4 are mcp-only:
+	exitNotFound     = 3
+	exitPrecondition = 4
 )
 
 // exitError carries an explicit exit code out of a command's RunE. Commands
@@ -177,8 +191,9 @@ lists, plan actions).
 Exit codes:
   0  fully compliant (warnings allowed)
   1  blocking violations present
-  2  usage or internal error (unknown command, invalid path,
-     unreadable root)`,
+  2  usage/internal error OR mcp conflict (preflight without --force)
+  3  mcp: not found (unknown agent / missing plugin)
+  4  mcp: precondition failed (non-TTY without bypass, not selectable)`,
 		// `eka` without a subcommand shows the product landing: a calm
 		// orientation (what the CLI is, its commands, help and version
 		// pointers) instead of the raw usage dump. Landing is

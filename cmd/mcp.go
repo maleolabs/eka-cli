@@ -20,7 +20,6 @@ import (
 	"github.com/maleolabs/eka-cli/cmd/ui"
 	"github.com/maleolabs/eka-core/plugin"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // mcpEnvelopeVersion is the versioned envelope version (E).
@@ -111,7 +110,11 @@ func mcpAgentPath(def mcpAgentDef, scope string) (string, error) {
 	if scope == "global" {
 		if def.UseXDG {
 			if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-				return filepath.Join(xdg, def.GlobalRel), nil
+				rel := def.GlobalRel
+				if after, ok := strings.CutPrefix(rel, ".config/"); ok {
+					rel = after
+				}
+				return filepath.Join(xdg, rel), nil
 			}
 			// GlobalRel already contains .config prefix when UseXDG
 			return filepath.Join(home, def.GlobalRel), nil
@@ -124,23 +127,30 @@ func mcpAgentPath(def mcpAgentDef, scope string) (string, error) {
 		return "", err
 	}
 	if _, err := os.Stat(filepath.Join(root, "eka.yaml")); err != nil {
-		// also accept EKA file as marker (init writes both)
-		if _, err2 := os.Stat(filepath.Join(root, "EKA")); err2 != nil {
-			return "", fmt.Errorf("repo scope requires an EKA repository (no eka.yaml at %s)", root)
+		if os.IsNotExist(err) {
+			if _, err2 := os.Stat(filepath.Join(root, "EKA")); err2 != nil {
+				if os.IsNotExist(err2) {
+					return "", fmt.Errorf("repo scope requires an EKA repository (no eka.yaml at %s)", root)
+				}
+				return "", err2
+			}
+		} else {
+			return "", err
 		}
 	}
 	return filepath.Join(root, def.RepoRel), nil
 }
 
 func mcpGitRoot() (string, error) {
-	// Walk up looking for .git
+	// Walk up looking for .git — handles both directory (plain repo)
+	// and file (git worktree: .git is a file pointing at the real dir).
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
 	dir := cwd
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
@@ -226,9 +236,23 @@ func mcpOwnsPath(agentPath string) bool {
 	return false
 }
 func samePath(a, b string) bool {
-	aa, _ := filepath.Abs(a)
-	bb, _ := filepath.Abs(b)
-	return aa == bb
+	// EvalSymlinks handles the case where ~/.config/eka is a symlink
+	// (ownership probing would otherwise fail); fall back to Abs when
+	// the path does not yet exist.
+	ea, errA := filepath.EvalSymlinks(a)
+	eb, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil {
+		return ea == eb
+	}
+	if errA != nil {
+		aa, _ := filepath.Abs(a)
+		ea = aa
+	}
+	if errB != nil {
+		bb, _ := filepath.Abs(b)
+		eb = bb
+	}
+	return ea == eb
 }
 
 // mcpAgentStatus: available|installed|stale|unavailable (F)
@@ -299,10 +323,21 @@ func mcpWriteAtomic(path string, data []byte, perm os.FileMode) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 type mcpConflict struct {
@@ -367,25 +402,29 @@ func mcpExecuteBatch(s *ui.Style, agents []string, scope string, force bool) err
 		sb.WriteString("hint: pass --force to overwrite")
 		return &mcpConflictError{msg: sb.String(), conflicts: conflicts}
 	}
-	// Decide master vs direct: >1 agent or native reads neutral dir → master copy
-	useMaster := len(agents) > 1
-	if !useMaster {
-		// check if any agent natively reads neutral dir? For opencode, native reads .config; we treat master as neutral
-		// Simplify: if scope==global and agent is opencode, use master; else single writes direct
-		// Spec: master when >1 agent OR native reads neutral dir — we approximate: always use master when scope==global for consistency
-		if scope == "global" {
-			// keep direct for single
+	// Decide master vs direct: >1 agent OR native reads neutral dir → master copy
+	// Spec: >1 agent OR native reads neutral dir → master. Neutral dir = XDG config dir
+	// (opencode.global lives under ~/.config). Single global opencode must go master+symlink.
+	hasNeutral := false
+	for _, id := range agents {
+		if d := mcpFindAgent(id); d != nil && d.UseXDG {
+			hasNeutral = true
+			break
 		}
 	}
-	// For this implementation we always use master when >1, else direct (simpler, still compliant with spec's symlink test)
+	useMaster := len(agents) > 1 || (scope == "global" && hasNeutral)
 	masterPath := mcpMasterPath()
 	masterData := mcpMasterContent()
 	var created []string
 	var createdDirs []string
+	createdMaster := false
 	rollback := func() {
-		// links first then deepest-first dirs
+		// links first then deepest-first dirs, master last
 		for _, p := range created {
 			os.Remove(p)
+		}
+		if createdMaster {
+			_ = os.Remove(masterPath)
 		}
 		sort.Slice(createdDirs, func(i, j int) bool { return len(createdDirs[i]) > len(createdDirs[j]) })
 		for _, d := range createdDirs {
@@ -400,7 +439,7 @@ func mcpExecuteBatch(s *ui.Style, agents []string, scope string, force bool) err
 		if err := mcpWriteAtomic(masterPath, masterData, 0o644); err != nil {
 			return err
 		}
-		// record dir for rollback?
+		createdMaster = true
 		createdDirs = append(createdDirs, filepath.Dir(masterPath))
 	}
 	// For each agent, write per-agent location
@@ -505,14 +544,6 @@ func (e *mcpConflictError) Error() string { return e.msg }
 
 func mcpCanPrompt(cmd *cobra.Command, s *ui.Style) bool {
 	return s.TTY && isTTYReader(cmd.InOrStdin())
-}
-
-func mcpIsTTYWriter(w io.Writer) bool {
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	return term.IsTerminal(int(f.Fd()))
 }
 
 // -------------------------------------------------------------------
@@ -867,11 +898,14 @@ func mcpSpinner(s *ui.Style, msg string, fn func() error) error {
 		}
 		return err
 	}
-	// TTY braille spinner
+	// TTY braille spinner — stop chan closed via defer to avoid leak on panic/hang;
+	// ticker is owned by the spinner goroutine; final line is printed only after
+	// spinner goroutine has exited to avoid unsynchronized writes to s.W.
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	stop := make(chan struct{})
-	done := make(chan error, 1)
+	spinnerDone := make(chan struct{})
 	go func() {
+		defer close(spinnerDone)
 		ticker := time.NewTicker(80 * time.Millisecond)
 		defer ticker.Stop()
 		i := 0
@@ -885,9 +919,23 @@ func mcpSpinner(s *ui.Style, msg string, fn func() error) error {
 			}
 		}
 	}()
-	go func() { done <- fn() }()
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic: %v", r)
+			}
+		}()
+		done <- fn()
+	}()
 	err := <-done
-	close(stop)
+	// ensure spinner goroutine stops before final write (avoids concurrent Fprintf)
+	select {
+	case <-stop:
+	default:
+		close(stop)
+	}
+	<-spinnerDone
 	// clear line and print final
 	fmt.Fprintf(s.W, "\r\033[K")
 	if err != nil {
@@ -1017,7 +1065,14 @@ configs (migrating away from direct plugin-binary invocations).
 
 Agents are detected by folder presence and pre-selected. Scope is a
 single-select radio defaulting to repo (git root + eka.yaml required)
-vs global (home dirs, no project).`,
+vs global (home dirs, no project).
+
+Exit codes:
+  0  ok / installed
+  1  general (validation, internal)
+  2  conflict (preflight without --force)
+  3  not found (unknown agent / missing plugin for serve)
+  4  precondition (non-TTY without --agent/--scope/--json, not selectable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Handle help-only forms deterministically
 			if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {

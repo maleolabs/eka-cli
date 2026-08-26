@@ -313,3 +313,58 @@ func TestMcpBatchIsolation(t *testing.T) {
 		t.Fatalf("idempotent install exit %d", code)
 	}
 }
+
+func TestMcpRollbackCleansMaster(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("EKA_HOME", filepath.Join(home, ".eka-home"))
+	// need git root for repo scope? Use global to exercise master path
+	// pick two selectable agents to trigger useMaster
+	var ids []string
+	for _, d := range mcpAgentRegistry {
+		if d.Selectable && len(ids) < 2 {
+			ids = append(ids, d.ID)
+		}
+	}
+	if len(ids) < 2 {
+		t.Skip("need 2 selectable agents")
+	}
+	s := &ui.Style{W: &bytes.Buffer{}, TTY: false, Color: false}
+	// first arg invalid to force batch failure after master write
+	// mcpExecuteBatch writes master then fails on unknown agent -> rollback must delete master
+	err := mcpExecuteBatch(s, []string{ids[0], "unknown-agent-xyz"}, "global", false)
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if _, statErr := os.Stat(mcpMasterPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("master orphan left after rollback: %s stat=%v", mcpMasterPath(), statErr)
+	}
+	// ensure no manifest Targets were written for partial batch
+	rs, _ := mcpReadRecordStore()
+	for _, tg := range rs.Targets {
+		if tg.Agent == "unknown-agent-xyz" {
+			t.Fatalf("record store should not contain failed target")
+		}
+	}
+	// also verify single global neutral (opencode) uses master: need symlink after success
+	t.Setenv("HOME", home) // reset
+	s2 := &ui.Style{W: &bytes.Buffer{}, TTY: false, Color: false}
+	if mcpFindAgent("opencode") != nil {
+		err = mcpExecuteBatch(s2, []string{"opencode"}, "global", true)
+		if err != nil {
+			t.Fatalf("single global opencode install failed: %v", err)
+		}
+		opPath, _ := mcpAgentPath(*mcpFindAgent("opencode"), "global")
+		if _, e := os.Lstat(opPath); e != nil {
+			t.Fatalf("opencode global path missing after master install: %v", e)
+		}
+		// if not windows, should be symlink to master
+		if fi, e := os.Lstat(opPath); e == nil && fi.Mode()&os.ModeSymlink != 0 {
+			target, _ := os.Readlink(opPath)
+			if !samePath(filepath.Join(filepath.Dir(opPath), target), mcpMasterPath()) {
+				t.Fatalf("opencode global should symlink to master, got %q", target)
+			}
+		}
+	}
+}
