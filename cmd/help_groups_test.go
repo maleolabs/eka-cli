@@ -23,7 +23,7 @@ var groupMember = map[string][]string{
 	groupRepositoryExchange: {"export", "import", "init", "validate"},
 	groupKnowledgeAccess:    {"context", "get", "view", "watch"},
 	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync"},
-	groupUtility:            {"feedback", "plugin", "update", "version"},
+	groupUtility:            {"feedback", "mcp", "plugin", "update", "version"},
 }
 
 // TestCommandGroupMembership: every registered command carries the
