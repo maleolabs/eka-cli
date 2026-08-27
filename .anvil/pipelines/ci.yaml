@@ -40,4 +40,7 @@ pipeline:
                 - test
                 - -race
                 - -count=1
+                - -timeout
+                - 600s
                 - ./...
+              timeout: 600s
