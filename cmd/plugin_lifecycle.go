@@ -359,9 +359,15 @@ func (r *pluginRemoveRunner) run(cmd *cobra.Command, name string) error {
 }
 
 // newPluginUpdateCommand builds `eka plugin update [name|--all]
-// [--yes]`: re-downloads the latest verified release of an installed
-// plugin (or of every installed official plugin with --all) through
-// the install flow's shared download+checksum+smoke-check path.
+// [--yes] [--force]`: re-downloads the latest verified release of an
+// installed plugin (or of every installed official plugin with --all)
+// through the install flow's shared download+checksum+smoke-check path.
+//
+// Version gate: before any download the latest tag is compared with the
+// installed version (semver, v prefix stripped). When latest <= current
+// the update is skipped with "already up to date (vX.Y.Z)" and exit 0;
+// --force bypasses the gate (the existing flow runs). Missing current
+// version ("unknown") never skips. Network failures refuse exit 1.
 func newPluginUpdateCommand() *cobra.Command {
 	f := &pluginUpdateFlags{}
 	cmd := &cobra.Command{
@@ -376,7 +382,10 @@ old binary is preserved as eka-<name>.old during the swap.
 
 The previous and the new version are printed. Unknown plugin names
 refuse with the list of official plugins; a plugin that is not
-installed refuses with the install hint.
+installed refuses with the install hint. When the installed plugin is
+already up to date (latest <= current, semver with optional "v"
+prefix), the update is skipped with "already up to date (vX.Y.Z)"
+and no download or mutation — --force bypasses the check.
 
 A named update of a THIRD-PARTY plugin (one not listed in the
 registry) resolves the repository from the installed binary's
@@ -411,16 +420,17 @@ becomes the 0755 installed executable only after finalize.
 				if len(args) > 0 {
 					return errors.New("plugin update: --all takes no plugin name") // Exit 2: usage.
 				}
-				return r.runUpdateAll(cmd)
+				return r.runUpdateAll(cmd, f.force)
 			}
 			if len(args) == 0 {
 				return errors.New("plugin update: missing plugin name (pass --all to update every installed official plugin)") // Exit 2: usage.
 			}
-			return r.runUpdate(cmd, args[0], f.yes)
+			return r.runUpdate(cmd, args[0], f.yes, f.force)
 		},
 	}
 	cmd.Flags().BoolVar(&f.all, "all", false, "update every installed official plugin")
 	cmd.Flags().BoolVar(&f.yes, "yes", false, "consent to a third-party update without the prompt")
+	cmd.Flags().BoolVar(&f.force, "force", false, "force update even if already up to date")
 	return cmd
 }
 
@@ -431,17 +441,21 @@ type pluginUpdateFlags struct {
 	// yes consents to a third-party update without the interactive
 	// prompt (official updates never prompt).
 	yes bool
+	// force bypasses the already-up-to-date version gate.
+	force bool
 }
 
 // runUpdate executes one plugin update: validate the name, resolve the
 // source repository (the registry for an official name, the installed
 // manifest source for a third-party one), read the installed version,
-// download the latest verified release through the install flow's
-// shared path, inspect the staged binary (a broken download refuses
-// with the OLD binary untouched), refuse a source swap, obtain explicit
-// consent for third-party plugins and replace the binary atomically
-// (the old binary is preserved as <target>.old during the swap).
-func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string, yes bool) error {
+// compare latest vs current (skip when already up to date unless
+// --force), download the latest verified release through the install
+// flow's shared path, inspect the staged binary (a broken download
+// refuses with the OLD binary untouched), refuse a source swap, obtain
+// explicit consent for third-party plugins and replace the binary
+// atomically (the old binary is preserved as <target>.old during the
+// swap).
+func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string, yes, force bool) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
 
@@ -485,6 +499,27 @@ func (r *pluginInstallRunner) runUpdate(cmd *cobra.Command, name string, yes boo
 	}
 	oldVersion := r.installedVersion(target)
 	r.renderUpdateHeader(s, name, repo, asset, tag, oldVersion, thirdParty)
+	// Version gate (compare-then-skip): when latest <= current the
+	// update is unnecessary — skip with a clear message and exit 0, no
+	// download or mutation. --force bypasses the gate. "unknown" (no
+	// readable manifest version) never skips — the new binary's smoke
+	// check is the only verifier. compareVersions handles the optional
+	// "v" prefix and the dotted numeric segments.
+	if !force && oldVersion != "unknown" && compareVersions(tag, oldVersion) <= 0 {
+		verLabel := oldVersion
+		if !strings.HasPrefix(verLabel, "v") && strings.HasPrefix(tag, "v") {
+			// Preserve the display style callers expect (vX.Y.Z) when the
+			// latest tag carries the prefix but the installed one does
+			// not; the comparison already ignored the prefix.
+			verLabel = tag
+		}
+		fmt.Fprintf(s.W, "%s\n", s.Info(fmt.Sprintf("already up to date (%s)", sanitizeTerminal(verLabel))))
+		sm.Add("Plugin", name)
+		sm.Add("Version", sanitizeTerminal(oldVersion))
+		sm.Add("Status", "already up to date")
+		sm.Render()
+		return nil
+	}
 	tmp, err := r.downloadVerified(s, repo, tag, asset, size, want)
 	if err != nil {
 		return refuse(cmd, "plugin update refused: %s", err)
@@ -668,11 +703,12 @@ func (r *pluginInstallRunner) installedVersion(target string) string {
 // runUpdateAll updates every installed official plugin, in sorted
 // name order. A plugin whose update fails is reported (each refusal
 // renders its own line) and the remaining plugins still update; the
-// run exits 1 when at least one update failed. Nothing installed (a
-// missing plugin directory included) is an informative empty result,
-// exit 0; an unreadable plugin directory is an internal error (exit
-// 2).
-func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command) error {
+// run exits 1 when at least one update failed. An already-up-to-date
+// plugin is skipped (exit 0 for that entry, no failure) unless --force
+// is given. Nothing installed (a missing plugin directory included) is
+// an informative empty result, exit 0; an unreadable plugin directory
+// is an internal error (exit 2).
+func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command, force bool) error {
 	s := styleFor(cmd)
 	sm := ui.NewSummary(s)
 	names, err := r.installedOfficialNames()
@@ -689,7 +725,9 @@ func (r *pluginInstallRunner) runUpdateAll(cmd *cobra.Command) error {
 	for _, name := range names {
 		// --all only ever touches official plugins (installedOfficialNames
 		// is the registry filter), which never prompt — no --yes needed.
-		if err := r.runUpdate(cmd, name, false); err != nil {
+		// The per-plugin version gate (skip when already up to date) is
+		// handled inside runUpdate; --force propagates to bypass it.
+		if err := r.runUpdate(cmd, name, false, force); err != nil {
 			failed = true
 			// The refusal already rendered its own "eka: ..." line.
 		}

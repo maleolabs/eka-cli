@@ -270,7 +270,7 @@ esac
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	if err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true); err != nil {
+	if err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true, false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if !strings.Contains(out.String(), "Repo      acme/eka-helper") ||
@@ -308,7 +308,7 @@ esac
 	r.canPrompt = func(*cobra.Command, *ui.Style) bool { return true } // the gate sees a terminal
 	r.consent = consentStub(false)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -335,7 +335,7 @@ func TestPluginUpdateThirdPartyNonTTYRefused(t *testing.T) {
 
 	r := testPluginInstallRunner(nil, dir) // nil server = a network call would fail the run differently
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -360,7 +360,7 @@ esac
 `))
 	r := testPluginInstallRunner(nil, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -416,7 +416,7 @@ func TestPluginInstallInvalidName(t *testing.T) {
 func TestPluginUpdateInvalidName(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "../../x", true)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "../../x", true, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -608,7 +608,7 @@ esac
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "helper", true, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}

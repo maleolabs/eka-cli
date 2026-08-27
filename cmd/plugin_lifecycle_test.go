@@ -255,7 +255,7 @@ func TestPluginUpdateSingle(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false); err != nil {
+	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if errb.String() != "" {
@@ -295,7 +295,7 @@ func TestPluginUpdateSingle(t *testing.T) {
 func TestPluginUpdateUnknownName(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "nope", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "nope", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -309,7 +309,7 @@ func TestPluginUpdateUnknownName(t *testing.T) {
 func TestPluginUpdateNotInstalled(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -330,7 +330,7 @@ func TestPluginUpdateChecksumMismatchKeepsOld(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -363,7 +363,7 @@ printf '%s' 'this is not json'
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -392,7 +392,7 @@ func TestPluginUpdateAll(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	if err := r.runUpdateAll(updateTestCommand(&out, &errb)); err != nil {
+	if err := r.runUpdateAll(updateTestCommand(&out, &errb), false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if errb.String() != "" {
@@ -417,7 +417,7 @@ func TestPluginUpdateAll(t *testing.T) {
 func TestPluginUpdateAllEmpty(t *testing.T) {
 	r := testPluginInstallRunner(nil, t.TempDir())
 	var out, errb bytes.Buffer
-	if err := r.runUpdateAll(updateTestCommand(&out, &errb)); err != nil {
+	if err := r.runUpdateAll(updateTestCommand(&out, &errb), false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if !strings.Contains(out.String(), "no installed official plugins to update") {
@@ -436,7 +436,7 @@ func TestPluginUpdateAllFailedExitsOne(t *testing.T) {
 	r := testPluginInstallRunner(nil, dir)
 	r.client = &http.Client{}
 	var out, errb bytes.Buffer
-	err := r.runUpdateAll(updateTestCommand(&out, &errb))
+	err := r.runUpdateAll(updateTestCommand(&out, &errb), false)
 	if code := exitCodeOf(err); code != 1 {
 		t.Fatalf("exit = %d, want 1 (refusal)\nstderr: %s", code, errb.String())
 	}
@@ -458,7 +458,7 @@ func TestPluginUpdateWindowsExe(t *testing.T) {
 	r := testPluginInstallRunner(srv, dir)
 	r.goos = "windows"
 	var out, errb bytes.Buffer
-	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false); err != nil {
+	if err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "eka-mcp.exe"))
@@ -631,7 +631,7 @@ func TestPluginUpdateReplaceFailureExit2(t *testing.T) {
 
 	r := testPluginInstallRunner(srv, dir)
 	var out, errb bytes.Buffer
-	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false)
+	err := r.runUpdate(updateTestCommand(&out, &errb), "mcp", false, false)
 	if code := exitCodeOf(err); code != 2 {
 		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
 	}
@@ -659,7 +659,7 @@ func TestPluginUpdateAllUnreadableDirExit2(t *testing.T) {
 	}
 	r := testPluginInstallRunner(nil, notADir)
 	var out, errb bytes.Buffer
-	err := r.runUpdateAll(updateTestCommand(&out, &errb))
+	err := r.runUpdateAll(updateTestCommand(&out, &errb), false)
 	if code := exitCodeOf(err); code != 2 {
 		t.Fatalf("exit = %d, want 2 (internal)\nstderr: %s", code, errb.String())
 	}
@@ -677,7 +677,7 @@ func TestPluginUpdateAllUnreadableDirExit2(t *testing.T) {
 func TestPluginUpdateAllMissingDirEmpty(t *testing.T) {
 	r := testPluginInstallRunner(nil, filepath.Join(t.TempDir(), "missing"))
 	var out, errb bytes.Buffer
-	if err := r.runUpdateAll(updateTestCommand(&out, &errb)); err != nil {
+	if err := r.runUpdateAll(updateTestCommand(&out, &errb), false); err != nil {
 		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
 	}
 	if !strings.Contains(out.String(), "no installed official plugins to update") {
