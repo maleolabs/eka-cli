@@ -287,14 +287,22 @@ Exit codes:
 	cmd.Flags().Bool(flagContextJSON, false, "emit the Context Object as JSON on stdout (the machine-readable form)")
 	cmd.Flags().Bool(flagContextCompact, false, "emit the JSON as a single line (plus trailing newline); implies --json")
 	cmd.Flags().Bool(flagContextNoContent, false, "strip the focus content payload from the Context Object")
+	cmd.Flags().Bool(flagContextNoHistory, false, "strip history section from Context Object (additive thin flag)")
+	cmd.Flags().String(flagContextOnlySection, "", "only include one section: constraints|dependencies|decisions|planning|review|upstream|downstream (additive thin flag)")
+	cmd.Flags().Int(flagContextMaxUnits, 0, "truncate to first N units by canonicalForm, envelope truncated:true (additive thin flag)")
+	cmd.Flags().Int(flagContextMaxBytes, 0, "truncate to N bytes estimated, envelope truncated:true (additive thin flag)")
 	return cmd
 }
 
 // Flag names of the context options (declared once, shared by the
 // help text and the flag lookups).
 const (
-	flagContextDepth     = "depth"
-	flagContextJSON      = "json"
-	flagContextCompact   = "compact"
-	flagContextNoContent = "no-content"
+	flagContextDepth       = "depth"
+	flagContextJSON        = "json"
+	flagContextCompact     = "compact"
+	flagContextNoContent   = "no-content"
+	flagContextNoHistory   = "no-history"
+	flagContextOnlySection = "only-section"
+	flagContextMaxUnits    = "max-units"
+	flagContextMaxBytes    = "max-bytes"
 )
