@@ -36,6 +36,27 @@ case "$BUMP_TYPE" in
     ;;
 esac
 
+# ── Clean-tree check ───────────────────────────────────────────────
+# Bump must start from a clean state — no uncommitted changes and no
+# untracked files that could hide a formatting/lint failure.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: working tree not clean — commit or stash changes before bumping version."
+  git status --porcelain
+  exit 1
+fi
+
+# ── Pre-bump CI gate ───────────────────────────────────────────────
+# Prevents version-bump errors like the recent gofmt failure by running
+# the canonical CI pipeline BEFORE any version mutation. Fail-closed:
+# if the pipeline errors, the bump never executes (no commit/tag/push).
+echo "Running pre-bump CI gate (anvil pipeline ci)..."
+if ! anvil pipeline ci; then
+  echo "Error: pre-bump CI gate failed (anvil pipeline ci). Fix formatting/lint/test errors before bumping version."
+  echo "Hint: run 'anvil pipeline ci' locally, fix the reported errors, then retry './scripts/bump.sh $BUMP_TYPE'."
+  exit 1
+fi
+echo "Pre-bump CI gate passed."
+
 # ── Read current version from anvil.yaml ───────────────────────────
 CURRENT=$(grep 'version:' anvil.yaml | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
 if [ -z "$CURRENT" ]; then
