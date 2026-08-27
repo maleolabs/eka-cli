@@ -1,0 +1,1 @@
+{"description":"REAL: Agent Runtime ContextBudget strata-priority, ETag delta cache, ToolOutputProcessor 5 tools with hasMore+lazy read_output. Must land code in Agent/ or eka-core/runtime.","acceptanceCriteria":"Code lands: budget keeps constraints, delta notModified, tool output structured top20+hasMore. E8/E3 harnesses pass, diff non-empty, tests green."}

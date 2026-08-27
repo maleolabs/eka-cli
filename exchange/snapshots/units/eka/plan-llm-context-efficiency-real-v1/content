@@ -1,0 +1,1 @@
+{"objective":"Execute real code for gap — Wave1 docs+thin flags (parallel) → Wave2 budget → Wave3 indexer→tool sequential, gated by code-diff + quality validation (feedback #31 fix).","scope":"5 work items: sto:skill-pack-tiered-routing-real etc. Plan locks when ctr real activates.","outOfScope":"Vector/RAG plugin, full call graph, server session."}

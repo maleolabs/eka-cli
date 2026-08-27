@@ -1,0 +1,1 @@
+{"changes":[],"role":"implementation","summary":"Spk progressive-disclosure-latency completed: L2-default + guardrail conditionally wins (8-10x saving), needs single-shot escape hatch when neighbors\u003e4 — investigated by alex-architect","tests":[]}
