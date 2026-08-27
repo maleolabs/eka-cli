@@ -263,6 +263,9 @@ func registerPluginCommands(root *cobra.Command) []*cobra.Command {
 			}
 			cmd, refusal := newPluginDispatchCommand(root, exe, name, spec, entry.checksum)
 			if refusal != "" {
+				if spec.Name == "mcp" && strings.Contains(refusal, "collides with the existing") {
+					continue
+				}
 				pluginRegWarnKey(exe+"\x00"+spec.Name, refusal)
 				continue
 			}
