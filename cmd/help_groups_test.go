@@ -21,7 +21,7 @@ import (
 var groupMember = map[string][]string{
 	groupAuthoring:          {"assign", "discard", "draft", "edit", "new", "note", "publish", "reassign", "relate", "transition", "unassign"},
 	groupRepositoryExchange: {"export", "import", "init", "validate"},
-	groupKnowledgeAccess:    {"context", "get", "view", "watch"},
+	groupKnowledgeAccess:    {"code-context", "context", "get", "view", "watch"},
 	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync"},
 	groupUtility:            {"feedback", "mcp", "plugin", "update", "version"},
 }
@@ -123,17 +123,17 @@ func TestRootHelpShowsGroups(t *testing.T) {
 	// Representative membership lines (the pad width is deterministic:
 	// cobra rpad to the longest command name + 1).
 	for _, want := range []string{
-		"init        Bootstrap a new EKA repository",
-		"transition  Transition a work item, plan, container or artifact state",
-		"note        Create a note draft (comment) on an artifact",
-		"get         Retrieve knowledge as machine-readable CKO JSON",
-		"context     Construct the engineering context around a knowledge subject",
-		"sync        Sync a repository with the EKA workspace",
-		"integrity   Verify the EKA workspace integrity",
-		"completion  Generate the autocompletion script for the specified shell",
-		"help        Help about any command",
-		"update      Update the EKA CLI to the latest release",
-		"version     Print version information",
+		"init         Bootstrap a new EKA repository",
+		"transition   Transition a work item, plan, container or artifact state",
+		"note         Create a note draft (comment) on an artifact",
+		"get          Retrieve knowledge as machine-readable CKO JSON",
+		"context      Construct the engineering context around a knowledge subject",
+		"sync         Sync a repository with the EKA workspace",
+		"integrity    Verify the EKA workspace integrity",
+		"completion   Generate the autocompletion script for the specified shell",
+		"help         Help about any command",
+		"update       Update the EKA CLI to the latest release",
+		"version      Print version information",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("root help missing %q:\n%s", want, out)
@@ -159,11 +159,11 @@ func TestLandingUsesSameGroups(t *testing.T) {
 		"Knowledge Access",
 		"Runtime & Workspace",
 		"Utility",
-		"discard     Discard a draft without publishing",
-		"init        Bootstrap a new EKA repository",
-		"get         Retrieve knowledge as machine-readable CKO JSON",
-		"sync        Sync a repository with the EKA workspace",
-		"version     Print version information",
+		"discard      Discard a draft without publishing",
+		"init         Bootstrap a new EKA repository",
+		"get          Retrieve knowledge as machine-readable CKO JSON",
+		"sync         Sync a repository with the EKA workspace",
+		"version      Print version information",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("landing missing %q:\n%s", want, out)
@@ -191,8 +191,8 @@ func TestRenderCommandGroupsNonTTY(t *testing.T) {
 		"\n\nKnowledge Access\n",
 		"\n\nRuntime & Workspace\n",
 		"\n\nUtility\n",
-		"  init        Bootstrap a new EKA repository\n",
-		"  transition  Transition a work item, plan, container or artifact state\n",
+		"  init         Bootstrap a new EKA repository\n",
+		"  transition   Transition a work item, plan, container or artifact state\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing %q:\n%q", want, out)
@@ -211,7 +211,7 @@ func TestRenderCommandGroupsColor(t *testing.T) {
 	if !strings.Contains(out, "\x1b[38;5;75mAuthoring\x1b[0m") {
 		t.Errorf("group title must render in Accent (Info hue):\n%q", out)
 	}
-	if !strings.Contains(out, "\x1b[38;5;75minit       \x1b[0m Bootstrap a new EKA repository") {
+	if !strings.Contains(out, "\x1b[38;5;75minit        \x1b[0m Bootstrap a new EKA repository") {
 		t.Errorf("command name must render in Info, description plain:\n%q", out)
 	}
 	// Descriptions stay plain: the name's reset is the last escape

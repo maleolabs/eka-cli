@@ -228,6 +228,7 @@ Exit codes:
 		"print the CLI version (the same first line 'eka version' reports) and exit")
 	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
+		newCodeContextCmd(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
 		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand())
