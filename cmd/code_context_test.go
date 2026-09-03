@@ -71,3 +71,64 @@ func TestCodeContextResponseJSON(t *testing.T) {
 		t.Fatalf("response JSON invalid: %v", err)
 	}
 }
+
+func TestCodeContextContractLevelsDepthAndBounds(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"main.go":      "package main\nimport \"fmt\"\ntype Server struct{}\nfunc Run() { fmt.Println(\"run\") }\n",
+		"main_test.go": "package main\nfunc TestRun() {}\n",
+		"notes.txt":    "inventory only\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx, err := codegraph.Build(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	responses := make([]codegraph.Response, 4)
+	for level := 0; level <= 3; level++ {
+		responses[level], err = codegraph.Serve(idx, codegraph.Request{Focus: "Run", Depth: codegraph.DepthLocal, Level: level})
+		if err != nil {
+			t.Fatalf("level %d: %v", level, err)
+		}
+		if level == 0 && (len(responses[level].Symbols) != 0 || len(responses[level].Refs) != 0) {
+			t.Fatalf("L0 leaked graph data: %+v", responses[level])
+		}
+		if level < 2 && len(responses[level].Refs) != 0 {
+			t.Fatalf("L%d leaked refs: %+v", level, responses[level].Refs)
+		}
+		if level < 3 && len(responses[level].Units) > 0 && responses[level].Units[0].Content != "" {
+			t.Fatalf("L%d leaked source content", level)
+		}
+	}
+	if len(responses[1].Symbols) == 0 || len(responses[2].Refs) == 0 || responses[3].Units[0].Content == "" {
+		t.Fatalf("L0-L3 contract incomplete: %+v", responses)
+	}
+
+	for _, depth := range []codegraph.Depth{codegraph.DepthLocal, codegraph.DepthDependency, codegraph.DepthEngineering} {
+		got, err := codegraph.Serve(idx, codegraph.Request{Focus: "Run", Depth: depth, Level: 2, NoContent: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Units) > codegraph.MaxUnits || len(got.Symbols) > codegraph.MaxSymbols || len(got.Refs) > codegraph.MaxUnits {
+			t.Fatalf("depth %q exceeded bounds: %+v", depth, got)
+		}
+	}
+	first, err := codegraph.Serve(idx, codegraph.Request{Focus: "Run", Depth: codegraph.DepthDependency, Level: 3, NoContent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := codegraph.Serve(idx, codegraph.Request{Focus: "Run", Depth: codegraph.DepthDependency, Level: 3, NoContent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, _ := json.Marshal(first)
+	right, _ := json.Marshal(second)
+	if !bytes.Equal(left, right) {
+		t.Fatalf("non-deterministic output:\n%s\n%s", left, right)
+	}
+}
