@@ -1,0 +1,1 @@
+{"description":"Run CLI/MCP parity, determinism, bounds, cache, token, and precision quality gates.","acceptanceCriteria":"Equivalent CLI/MCP results, stable ordering, 32/64 hard bounds, cache invalidation, output purity, token reduction and precision targets from ADR-034 verified."}

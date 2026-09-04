@@ -1,0 +1,1 @@
+{"description":"Wire eka code-context CLI command to shared code-context implementation.","acceptanceCriteria":"CLI accepts symbol or file focus; exposes --depth, --level, --no-content, --compact, --limit; validates values and emits deterministic output/errors."}

@@ -1,0 +1,1 @@
+{"description":"Implement shared deterministic code-context query and derived cache path honoring code-context contract.","acceptanceCriteria":"Shared core supports depth dependency semantics, levels 0..3, bounded deterministic output, cache invalidation, no-content refs, and fallback provenance without RAG primary path."}
