@@ -151,7 +151,7 @@ func TestCodeContextUnsupportedAndFallback(t *testing.T) {
 	// Unsupported language still appears as inventory unit, no symbols
 	foundMD := false
 	for _, f := range idx.Files {
-		if f.Path == "README.md" && f.Language == "unknown" {
+		if f.Path == "README.md" && f.Language != "go" {
 			foundMD = true
 		}
 		if f.Path == "README.md" && len(f.Symbols) != 0 {

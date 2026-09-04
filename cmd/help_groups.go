@@ -69,11 +69,13 @@ var commandGroupsByName = map[string]string{
 	"export":   groupRepositoryExchange,
 	"import":   groupRepositoryExchange,
 	// Knowledge Access: reading Engineering Knowledge.
-	"get":          groupKnowledgeAccess,
-	"context":      groupKnowledgeAccess,
-	"view":         groupKnowledgeAccess,
-	"watch":        groupKnowledgeAccess,
-	"code-context": groupKnowledgeAccess,
+	"get":           groupKnowledgeAccess,
+	"context":       groupKnowledgeAccess,
+	"view":          groupKnowledgeAccess,
+	"watch":         groupKnowledgeAccess,
+	"code-context":  groupKnowledgeAccess,
+	"code-discover": groupKnowledgeAccess,
+	"code-get":      groupKnowledgeAccess,
 	// Runtime & Workspace: the Knowledge Runtime and its local workspace.
 	"sync":      groupRuntimeWorkspace,
 	"project":   groupRuntimeWorkspace,
