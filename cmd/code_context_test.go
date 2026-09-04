@@ -132,3 +132,85 @@ func TestCodeContextContractLevelsDepthAndBounds(t *testing.T) {
 		t.Fatalf("non-deterministic output:\n%s\n%s", left, right)
 	}
 }
+
+func TestCodeContextUnsupportedAndFallback(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# notes\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "script.unknown"), []byte("whatever"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package app\nfunc Hello() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := codegraph.Build(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unsupported language still appears as inventory unit, no symbols
+	foundMD := false
+	for _, f := range idx.Files {
+		if f.Path == "README.md" && f.Language == "unknown" {
+			foundMD = true
+		}
+		if f.Path == "README.md" && len(f.Symbols) != 0 {
+			t.Fatalf("unsupported file leaked symbols: %+v", f)
+		}
+	}
+	if !foundMD {
+		t.Fatalf("unsupported file not inventoried: %+v", idx.Files)
+	}
+	// Symbol miss returns engineering fallback when depth engineering (bounded inventory), local returns empty focus
+	missLocal, err := codegraph.Serve(idx, codegraph.Request{Focus: "DoesNotExist", Depth: codegraph.DepthLocal, Level: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missLocal.Symbols) != 0 {
+		t.Fatalf("miss must not return symbols on local: %+v", missLocal.Symbols)
+	}
+	missEng, err := codegraph.Serve(idx, codegraph.Request{Focus: "DoesNotExist", Depth: codegraph.DepthEngineering, Level: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missEng.Units) == 0 {
+		t.Fatalf("engineering miss must fallback to bounded inventory: %+v", missEng)
+	}
+	if missEng.Provenance.Method == "" || missEng.Provenance.Confidence == 0 {
+		t.Fatalf("fallback must carry provenance/confidence: %+v", missEng.Provenance)
+	}
+	// RAG is never primary: provenance source is always local-index
+	if missEng.Provenance.Source != "local-index" {
+		t.Fatalf("RAG became primary source: %+v", missEng.Provenance)
+	}
+}
+
+func TestCodeContextInvalidInputs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\nfunc A() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := codegraph.Build(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codegraph.Serve(idx, codegraph.Request{Depth: "bad", Level: 1}); err == nil {
+		t.Fatalf("bad depth must be refused")
+	}
+	if _, err := codegraph.Serve(idx, codegraph.Request{Depth: codegraph.DepthLocal, Level: 99}); err == nil {
+		t.Fatalf("bad level must be refused")
+	}
+	// CLI validation layer also refuses
+	for _, args := range [][]string{
+		{"code-context", "--depth", "bad"},
+		{"code-context", "--level", "-1"},
+		{"code-context", "--level", "4"},
+		{"code-context", "--limit", "0"},
+		{"code-context", "--limit", "999"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := Execute(args, strings.NewReader(""), &out, &errOut); code != exitUsage {
+			t.Errorf("Execute(%v) = %d, want %d (%q)", args, code, exitUsage, errOut.String())
+		}
+	}
+}
