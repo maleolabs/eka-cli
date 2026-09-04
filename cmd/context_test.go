@@ -106,7 +106,8 @@ func TestContextJSONGolden(t *testing.T) {
           "id": "001-login-serialization",
           "domain": "Architecture",
           "stratum": 2,
-          "state": "accepted"
+          "state": "accepted",
+          "objectHash": "2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36"
         }
       ]
     }
