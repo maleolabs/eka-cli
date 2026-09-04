@@ -214,3 +214,97 @@ func TestCodeContextInvalidInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeContextParityAndDeterminism(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "eka.yaml"), []byte("version: 1\nproject: p\nname: p\nnamespace: p\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Create many files to exercise bounds
+	for i := 0; i < 40; i++ {
+		content := "package p\nfunc Foo" + string(rune('A'+i%26)) + string(rune('0'+i%10)) + "() {}\n"
+		if err := os.WriteFile(filepath.Join(root, "file"+string(rune('0'+i%10))+"_"+string(rune('A'+i))+".go"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx, err := codegraph.Build(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bounded output
+	resp, err := codegraph.Serve(idx, codegraph.Request{Focus: "", Depth: codegraph.DepthEngineering, Level: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Symbols) > codegraph.MaxSymbols || len(resp.Units) > codegraph.MaxUnits || len(resp.Refs) > codegraph.MaxUnits {
+		t.Fatalf("bounds violated: symbols %d units %d refs %d", len(resp.Symbols), len(resp.Units), len(resp.Refs))
+	}
+	// Determinism
+	a, _ := json.Marshal(resp)
+	bData, err := codegraph.Serve(idx, codegraph.Request{Focus: "", Depth: codegraph.DepthEngineering, Level: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(bData)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("non-deterministic serve")
+	}
+	// CLI compact vs pretty parse to same object and no stderr
+	workDir := t.TempDir()
+	// Run CLI via Execute chdir simulation: create eka.yaml in workDir and copy one file
+	if err := os.WriteFile(filepath.Join(workDir, "eka.yaml"), []byte("version: 1\nproject: p2\nname: p2\nnamespace: p2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc Hello() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"code-context", "Hello", "--depth", "dependency", "--level", "2"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("CLI exit %d: %q", code, errOut.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("stderr must be empty on success, got %q", errOut.String())
+	}
+	var cliResp codegraph.Response
+	if err := json.Unmarshal(out.Bytes(), &cliResp); err != nil {
+		t.Fatalf("CLI JSON invalid: %v", err)
+	}
+	// Build same index and compare core serve matches CLI output (parity)
+	idx2, _ := codegraph.Build(workDir)
+	coreResp, _ := codegraph.Serve(idx2, codegraph.Request{Focus: "Hello", Depth: codegraph.DepthDependency, Level: 2})
+	cliJSON, _ := json.Marshal(cliResp)
+	coreJSON, _ := json.Marshal(coreResp)
+	if !bytes.Equal(cliJSON, coreJSON) {
+		t.Fatalf("CLI/MCP parity violated:\ncli: %s\ncore: %s", cliJSON, coreJSON)
+	}
+	// Cache invalidation: modify file, rebuild digest changes
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	first, _, err := codegraph.LoadOrBuild(workDir, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDigest := first.Digest
+	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc Hello2() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second, hit, err := codegraph.LoadOrBuild(workDir, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hit {
+		t.Fatalf("cache must invalidate after file change")
+	}
+	if second.Digest == firstDigest {
+		t.Fatalf("digest must change after edit")
+	}
+	// Token reduction: --no-content omits source but keeps identity
+	noContentResp, _ := codegraph.Serve(idx2, codegraph.Request{Focus: "Hello", Depth: codegraph.DepthEngineering, Level: 3, NoContent: true})
+	if len(noContentResp.Units) > 0 && noContentResp.Units[0].Content != "" {
+		t.Fatalf("no-content must strip source")
+	}
+}
