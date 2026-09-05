@@ -24,16 +24,30 @@ import (
 // (the ui.Style handles color automatically); on a TTY the same
 // structure carries colors.
 func renderContext(s *ui.Style, obj *contexts.Object, projectID string) {
-	ui.NewHeader(s, "Context").
+	h := ui.NewHeader(s, "Context").
 		Add("Subject", obj.Focus.CanonicalForm).
 		Add("Project", projectID).
 		Add("Depth", obj.Depth).
 		Add("Domain", obj.Focus.EngineeringDomain).
 		Add("Stratum", fmt.Sprintf("%d", obj.Focus.Stratum)).
 		Add("State", contextFocusState(&obj.Focus.StateVector)).
-		Add("Object Hash", obj.Focus.ObjectHash).
-		Pipeline("Context").
-		Render()
+		Add("Object Hash", obj.Focus.ObjectHash)
+	if obj.Focus.Provenance != "" {
+		h.Add("Provenance", obj.Focus.Provenance)
+	}
+	if obj.Focus.Confidence != nil {
+		h.Add("Confidence", fmt.Sprintf("%.2f", *obj.Focus.Confidence))
+	}
+	if obj.Focus.SourcePromptHash != "" {
+		h.Add("SourcePromptHash", shortHash(obj.Focus.SourcePromptHash))
+	}
+	if obj.Focus.SourceCommitSha != "" {
+		h.Add("SourceCommitSha", obj.Focus.SourceCommitSha)
+	}
+	if obj.Focus.CaptureMeta != nil && obj.Focus.CaptureMeta.Classifier != "" {
+		h.Add("Classifier", obj.Focus.CaptureMeta.Classifier)
+	}
+	h.Pipeline("Context").Render()
 
 	if obj.Summary.Sections == 0 {
 		// No relationship sections at all (local depth): the calm

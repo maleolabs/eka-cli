@@ -110,7 +110,7 @@ func TestGetIdentityCanonicalFormGolden(t *testing.T) {
       "alternativesConsidered": "Alternatives body."
     }
   },
-  "objectHash": "2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36"
+  "objectHash": "bb1adb5e1d7d5e2219054058c4b791350c60fd3441f3629ffe90d110e7f6a569"
 }
 `
 	if out != want {
@@ -565,7 +565,7 @@ func TestGetIdentityCompactGolden(t *testing.T) {
 	if errText != "" {
 		t.Errorf("stderr must be empty on success, got %q", errText)
 	}
-	want := `{"schema":"eka-cko-v2","identity":{"namespace":"eka-view-fixture","type":"adr","id":"001-login-serialization","instanceVersion":1},"canonicalForm":"eka-view-fixture/adr:001-login-serialization:1","engineeringDomain":"Architecture","stratum":2,"revision":1,"author":"Engineering Architecture","created":"2026-08-05","updated":"2026-08-05","stateVector":{"contentState":"accepted","existenceState":"active"},"classification":{"dimension":"decisions","domain":"Architecture"},"changeLog":[{"date":"2026-08-05","domain":"existence-state","from":"-","to":"active","by":"Engineering Architecture"},{"date":"2026-08-05","domain":"content-state","from":"proposed","to":"accepted","by":"Engineering Architecture"}],"content":{"representation":"eka/structured-json/1","fields":{"context":"Context body.","decision":"Decision body.","consequences":"Consequences body.","alternativesConsidered":"Alternatives body."}},"objectHash":"2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36"}`
+	want := `{"schema":"eka-cko-v2","identity":{"namespace":"eka-view-fixture","type":"adr","id":"001-login-serialization","instanceVersion":1},"canonicalForm":"eka-view-fixture/adr:001-login-serialization:1","engineeringDomain":"Architecture","stratum":2,"revision":1,"author":"Engineering Architecture","created":"2026-08-05","updated":"2026-08-05","stateVector":{"contentState":"accepted","existenceState":"active"},"classification":{"dimension":"decisions","domain":"Architecture"},"changeLog":[{"date":"2026-08-05","domain":"existence-state","from":"-","to":"active","by":"Engineering Architecture"},{"date":"2026-08-05","domain":"content-state","from":"proposed","to":"accepted","by":"Engineering Architecture"}],"content":{"representation":"eka/structured-json/1","fields":{"context":"Context body.","decision":"Decision body.","consequences":"Consequences body.","alternativesConsidered":"Alternatives body."}},"objectHash":"bb1adb5e1d7d5e2219054058c4b791350c60fd3441f3629ffe90d110e7f6a569"}`
 	// Single line plus a single trailing newline.
 	want += "\n"
 	if out != want {

@@ -12,3 +12,16 @@ project:
     description: EKA CLI — the official command-line interface for the EKA engineering knowledge standard
     name: eka-cli
     version: 1.9.0
+
+# Anvil lifecycle — Layer 2 Git Hook Terdistribusi (ADR-035 v3 + spec provenance-capture:1)
+# platform_sync phase: symlink eka-standard hook templates to .git/hooks
+# Executed during `anvil deployment install` / `anvil server release activate`
+# via the platform_sync hook (scripts/platform-sync.sh). The phase is
+# idempotent and never blocks deployment: missing .git or missing templates
+# are skipped with a warning. Also runnable manually: `eka capture --install-hooks`
+lifecycle:
+    platform_sync:
+        command: sh
+        args:
+            - scripts/platform-sync.sh
+        description: Symlink Layer-2 capture hooks (pre-commit, pre-push) from eka-standard/templates/hooks to .git/hooks

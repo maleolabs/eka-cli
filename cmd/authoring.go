@@ -94,6 +94,7 @@ const (
 	flagPublishPending   = "pending"
 	flagDiscardForce     = "force"
 	flagDraftListProject = "project"
+	flagDraftListProvenance = "provenance"
 )
 
 // newAuthoringCommands builds the seven authoring commands (new, edit,
@@ -790,16 +791,39 @@ the draft fails the single-file structural classification, an
 "invalid — N errors" marker (a draft is only truly validated at
 publish time).
 
+Filtering:
+  --provenance human|inferred|reconciled|all  filter by provenance (default all;
+     provenance is a top-level draft field, human default). In board/status
+     projections inferred/reconciled drafts are tagged [inferred]/[reconciled].
+
 Ordering is deterministic: project (by name), then type, then id.
 
 Exit codes:
   0  informational (also when the backlog is empty)
   2  internal error`,
 		Example: `  eka draft list
-  eka draft list --project atrium`,
+  eka draft list --project atrium
+  eka draft list --provenance inferred`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString(flagDraftListProject)
+			prov, _ := cmd.Flags().GetString(flagDraftListProvenance)
+			if prov != "" && prov != "all" && prov != "human" && prov != "inferred" && prov != "reconciled" {
+				return fmt.Errorf("draft list: --provenance must be human|inferred|reconciled|all, got %q", prov)
+			}
+			// provenanceFilterDefault is applied when flag absent: read from eka.yaml effective capture
+			if prov == "" {
+				if m, _, hasMeta, _ := metadata.Find("."); hasMeta {
+					_, _, _, defFilter := m.EffectiveCapture()
+					if defFilter != "" && defFilter != "all" {
+						prov = defFilter
+					} else {
+						prov = "all"
+					}
+				} else {
+					prov = "all"
+				}
+			}
 			s := styleFor(cmd)
 			// Informational command: never initializes the workspace.
 			// A missing workspace is simply an empty backlog.
@@ -810,7 +834,11 @@ Exit codes:
 			defer r.Close()
 			var drafts []runtime.Draft
 			if r.Exists() {
-				drafts, err = runtime.Authoring.Drafts(r, project)
+				if prov != "" && prov != "all" {
+					drafts, err = runtime.Authoring.DraftsByProvenance(r, project, prov)
+				} else {
+					drafts, err = runtime.Authoring.Drafts(r, project)
+				}
 				if err != nil {
 					return err
 				}
@@ -820,12 +848,14 @@ Exit codes:
 		},
 	}
 	cmd.Flags().String(flagDraftListProject, "", "project scope (default: all projects)")
+	cmd.Flags().String(flagDraftListProvenance, "all", "filter by provenance: human|inferred|reconciled|all (default all; eka.yaml capture.provenanceFilterDefault applies when explicit)")
 	return cmd
 }
 
 // renderDraftList renders the draft backlog deterministically: project
 // group headers (•), then per-draft rows (• type:id (namespace)
-// updated <mtime> [invalid marker]), then the summary counts.
+// updated <mtime> [provenance tag] [invalid marker]), then the summary counts.
+// Provenance tags: [inferred] and [reconciled] for non-human drafts; human is untagged (default).
 func renderDraftList(s *ui.Style, r *runtime.Runtime, drafts []runtime.Draft, project string) {
 	fmt.Fprintln(s.W, s.Accent("Drafts"))
 	scope := project
@@ -845,9 +875,16 @@ func renderDraftList(s *ui.Style, r *runtime.Runtime, drafts []runtime.Draft, pr
 		if ns == "" {
 			ns = "?"
 		}
+		provTag := ""
+		switch d.Provenance {
+		case "inferred":
+			provTag = " " + s.Warning("[inferred]")
+		case "reconciled":
+			provTag = " " + s.Info("[reconciled]")
+		}
 		marker := draftValidationMarker(r, s, d)
-		fmt.Fprintf(s.W, "  %s %s:%s     (%s)     updated %s%s\n",
-			ui.IconBullet, d.Type, d.ID, ns, d.Updated, marker)
+		fmt.Fprintf(s.W, "  %s %s:%s     (%s)     updated %s%s%s\n",
+			ui.IconBullet, d.Type, d.ID, ns, d.Updated, provTag, marker)
 	}
 	ui.NewSummary(s).
 		Add("Drafts", fmt.Sprintf("%d (%d projects)", len(drafts), projects)).

@@ -234,7 +234,7 @@ func TestBuildPlanEkaYAMLContent(t *testing.T) {
 	if m.Name != "my-repo" {
 		t.Errorf("Name = %q, want the target basename my-repo", m.Name)
 	}
-	if want := "version: 1\nproject: atrium\nname: my-repo\nnamespace: atrium-api\n"; string(content) != want {
+	if want := "version: 1\nproject: atrium\nname: my-repo\nnamespace: atrium-api\ncapture:\n  enabled: true\n  threshold: 0.6\n  dedupeWindow: 24h\n  provenanceFilterDefault: all\n"; string(content) != want {
 		t.Errorf("eka.yaml bytes differ:\ngot:  %q\nwant: %q", content, want)
 	}
 
