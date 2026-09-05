@@ -238,8 +238,12 @@ func ekaYAMLName(d *Discovery) string {
 // (the user edits the file freely before the first sync); name is the
 // directory basename.
 func generatedEkaYAML(d *Discovery, a Answers) []byte {
-	return []byte(fmt.Sprintf("version: %d\nproject: %s\nname: %s\nnamespace: %s\n",
-		metadata.SchemaVersion, a.Project, ekaYAMLName(d), a.Namespace))
+	base := fmt.Sprintf("version: %d\nproject: %s\nname: %s\nnamespace: %s\n",
+		metadata.SchemaVersion, a.Project, ekaYAMLName(d), a.Namespace)
+	// ADR-035 v3: universal capture gateway defaults committed for parity
+	// (enabled true default, explicit for every clone/CI).
+	base += "capture:\n  enabled: true\n  threshold: 0.6\n  dedupeWindow: 24h\n  provenanceFilterDefault: all\n"
+	return []byte(base)
 }
 
 // standardDeclarationName is the root file name of the EKA standard

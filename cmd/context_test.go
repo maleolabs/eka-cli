@@ -85,7 +85,7 @@ func TestContextJSONGolden(t *testing.T) {
         "alternativesConsidered": "Alternatives body."
       }
     },
-    "objectHash": "2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36"
+    "objectHash": "bb1adb5e1d7d5e2219054058c4b791350c60fd3441f3629ffe90d110e7f6a569"
   },
   "depth": "local",
   "summary": {
@@ -107,7 +107,7 @@ func TestContextJSONGolden(t *testing.T) {
           "domain": "Architecture",
           "stratum": 2,
           "state": "accepted",
-          "objectHash": "2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36"
+          "objectHash": "bb1adb5e1d7d5e2219054058c4b791350c60fd3441f3629ffe90d110e7f6a569"
         }
       ]
     }
@@ -118,7 +118,7 @@ func TestContextJSONGolden(t *testing.T) {
         "canonicalForm": "eka-view-fixture/adr:001-login-serialization:1",
         "instanceVersion": 1,
         "revision": 1,
-        "objectHash": "2fc697ce15d080fdb9fc53eba70ef313eeef03c93064fec0f490d6b99cf96a36",
+        "objectHash": "bb1adb5e1d7d5e2219054058c4b791350c60fd3441f3629ffe90d110e7f6a569",
         "changeLog": [
           {
             "date": "2026-08-05",

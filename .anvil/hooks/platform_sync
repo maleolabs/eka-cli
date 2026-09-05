@@ -1,0 +1,13 @@
+#!/bin/sh
+# Anvil lifecycle hook: platform_sync
+# Symlink EKA Layer-2 hooks during install/activate
+set -eu
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -x "$REPO_ROOT/scripts/platform-sync.sh" ]; then
+  exec sh "$REPO_ROOT/scripts/platform-sync.sh"
+elif [ -x "./scripts/platform-sync.sh" ]; then
+  exec sh "./scripts/platform-sync.sh"
+else
+  echo "[platform_sync] no platform-sync script found — skip" >&2
+  exit 0
+fi

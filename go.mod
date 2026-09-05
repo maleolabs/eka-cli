@@ -6,11 +6,13 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dustin/go-humanize v1.0.1
-	github.com/maleolabs/eka-core v1.6.0
+	github.com/maleolabs/eka-core v1.7.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/maleolabs/eka-core => ../eka-core
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

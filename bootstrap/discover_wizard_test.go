@@ -517,7 +517,7 @@ func TestRunFlagPreAnswersFixAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "version: 1\nproject: atrium\nname: " + filepath.Base(dir) + "\nnamespace: atrium-api\n"; string(eka) != want {
+	if want := "version: 1\nproject: atrium\nname: " + filepath.Base(dir) + "\nnamespace: atrium-api\ncapture:\n  enabled: true\n  threshold: 0.6\n  dedupeWindow: 24h\n  provenanceFilterDefault: all\n"; string(eka) != want {
 		t.Errorf("eka.yaml bytes:\ngot:  %q\nwant: %q", eka, want)
 	}
 }

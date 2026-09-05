@@ -63,6 +63,7 @@ var commandGroupsByName = map[string]string{
 	"assign":     groupAuthoring,
 	"reassign":   groupAuthoring,
 	"unassign":   groupAuthoring,
+	"capture":    groupAuthoring,
 	// Repository & Exchange: repository lifecycle and RSF exchange.
 	"init":     groupRepositoryExchange,
 	"validate": groupRepositoryExchange, // user intent: repo conformance, though it runs through the Authoring API internally
