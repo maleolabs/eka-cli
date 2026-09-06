@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/runtime"
 	"github.com/spf13/cobra"
 )
@@ -69,7 +70,10 @@ Exit codes:
 			if showJSON {
 				return renderStatusJSON(s, st, home)
 			}
-			return renderStatus(s, st)
+			if err := renderStatus(s, st); err != nil {
+				return err
+			}
+			return renderSESExecution(s, r)
 		},
 	}
 	cmd.Flags().Bool("all", false, "show global workspace status (disable repo-scoped filtering)")
@@ -138,6 +142,63 @@ func scopeStatus(st *runtime.WorkspaceStatus) *runtime.WorkspaceStatus {
 	out := *st
 	out.Projects = []runtime.ProjectStatus{*matched}
 	return &out
+}
+
+// renderExecution prints the current execution snapshot from ses:execution-state
+// (if present). It is current-only: only the latest instance is rendered.
+func renderSESExecution(s *ui.Style, r *runtime.Runtime) error {
+	u, ok, err := r.Resolver.Resolve("eka/ses:execution-state")
+	if err != nil || !ok {
+		return nil
+	}
+	doc, err := machine.NewDocument(u)
+	if err != nil {
+		return nil
+	}
+	b, err := doc.MarshalCompact()
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	content, _ := m["content"].(map[string]any)
+	if content == nil {
+		return nil
+	}
+	fields, _ := content["fields"].(map[string]any)
+	if fields != nil {
+		content = fields
+	}
+	scope, _ := content["scope"].(string)
+	mode, _ := content["mode"].(string)
+	cur, _ := content["current"].(map[string]any)
+	curItem, _ := cur["item"].(string)
+	curPhase, _ := cur["phase"].(string)
+	next, _ := content["next"].(string)
+	// Use simple header-like rendering
+	fmt.Fprintf(s.W, "\n%s %s\n", ui.IconBullet, s.Accent("Execution"))
+	if scope != "" {
+		fmt.Fprintf(s.W, "  Scope: %s\n", scope)
+	}
+	if curItem != "" {
+		phase := curPhase
+		if phase != "" {
+			phase = " (" + phase + ")"
+		}
+		fmt.Fprintf(s.W, "  Current: %s%s\n", curItem, phase)
+	}
+	if next != "" {
+		fmt.Fprintf(s.W, "  Next: %s\n", next)
+	}
+	if mode != "" {
+		fmt.Fprintf(s.W, "  Mode: %s\n", mode)
+	}
+	if items, ok := content["items"].([]any); ok && len(items) > 0 {
+		fmt.Fprintf(s.W, "  Items: %d\n", len(items))
+	}
+	return nil
 }
 
 // statusJSON is the deterministic wire format for `eka status --json`
