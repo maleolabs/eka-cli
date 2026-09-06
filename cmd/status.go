@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 // reported informatively and exits 0: status is a read-only probe and
 // never creates the workspace.
 func newStatusCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the EKA workspace status",
 		Long: `Show the EKA workspace status: the workspace path, the schema
@@ -48,7 +49,12 @@ Exit codes:
 				return err
 			}
 			defer r.Close()
+			showAll, _ := cmd.Flags().GetBool("all")
+			showJSON, _ := cmd.Flags().GetBool("json")
 			if !r.Exists() {
+				if showJSON {
+					return renderStatusJSON(s, nil, home)
+				}
 				fmt.Fprintf(s.W, "%s\n", s.Accent("Runtime"))
 				fmt.Fprintf(s.W, "  %s\n", s.Info("No EKA workspace at "+home+" yet. Run 'eka project register' to create it."))
 				return nil
@@ -57,10 +63,18 @@ Exit codes:
 			if err != nil {
 				return fmt.Errorf("status failed: %w", err)
 			}
-			st = scopeStatus(st)
+			if !showAll {
+				st = scopeStatus(st)
+			}
+			if showJSON {
+				return renderStatusJSON(s, st, home)
+			}
 			return renderStatus(s, st)
 		},
 	}
+	cmd.Flags().Bool("all", false, "show global workspace status (disable repo-scoped filtering)")
+	cmd.Flags().Bool("json", false, "emit deterministic JSON (schema status-v1)")
+	return cmd
 }
 
 // renderStatus renders the workspace overview deterministically. Any
@@ -124,6 +138,67 @@ func scopeStatus(st *runtime.WorkspaceStatus) *runtime.WorkspaceStatus {
 	out := *st
 	out.Projects = []runtime.ProjectStatus{*matched}
 	return &out
+}
+
+// statusJSON is the deterministic wire format for `eka status --json`
+// (schema status-v1). Field order is fixed by struct definition.
+type statusJSON struct {
+	Schema  string                `json:"schema"`
+	Path    string                `json:"path"`
+	ID      string                `json:"id"`
+	Created string                `json:"created"`
+	SchemaVersion int            `json:"schemaVersion"`
+	Objects int                  `json:"objects"`
+	Payloads int                 `json:"payloads"`
+	Attachments int              `json:"attachments"`
+	Projects []jsonProject      `json:"projects"`
+}
+type jsonProject struct {
+	ID    string      `json:"id"`
+	Name  string      `json:"name"`
+	Created string   `json:"created"`
+	Repos []jsonRepo `json:"repos"`
+}
+type jsonRepo struct {
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Created   string `json:"created"`
+	Namespace string `json:"namespace"`
+	LastSync  *runtime.SyncEntry `json:"lastSync,omitempty"`
+}
+
+func renderStatusJSON(s *ui.Style, st *runtime.WorkspaceStatus, home string) error {
+	if st == nil {
+		out := map[string]string{"schema":"status-v1","message":"No EKA workspace at "+home+" yet. Run 'eka project register' to create it."}
+		b, _ := json.Marshal(out)
+		fmt.Fprintln(s.W, string(b))
+		return nil
+	}
+	js := statusJSON{
+		Schema: "status-v1",
+		Path: st.Path,
+		ID: st.ID,
+		Created: st.Created,
+		SchemaVersion: st.SchemaVersion,
+		Objects: st.Objects,
+		Payloads: st.Payloads,
+		Attachments: st.Attachments,
+		Projects: make([]jsonProject, 0, len(st.Projects)),
+	}
+	for _, p := range st.Projects {
+		jp := jsonProject{ID: p.Project.ID, Name: p.Project.Name, Created: p.Project.Created}
+		for _, rs := range p.Repos {
+			jp.Repos = append(jp.Repos, jsonRepo{ProjectID: rs.Repo.ProjectID, Name: rs.Repo.Name, Path: rs.Repo.Path, Created: rs.Repo.Created, Namespace: rs.Repo.Namespace, LastSync: rs.LastSync})
+		}
+		js.Projects = append(js.Projects, jp)
+	}
+	b, err := json.Marshal(js)
+	if err != nil {
+		return fmt.Errorf("status json failed: %w", err)
+	}
+	fmt.Fprintln(s.W, string(b))
+	return nil
 }
 
 // lastSyncDetail renders the most recent sync-log entry of one
