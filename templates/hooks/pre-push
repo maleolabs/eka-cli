@@ -1,0 +1,27 @@
+#!/bin/sh
+# EKA Universal Capture — Layer 2 Git Hook Distributed (ADR-035 v3 + spec provenance-capture:1)
+# Template: eka-standard/templates/hooks/pre-push
+# Installed via anvil lifecycle platform_sync (symlink to .git/hooks/pre-push)
+# Contract: pre-push reconciles last 24h commits + staged diff into provenance=reconciled
+set -eu
+
+command -v eka >/dev/null 2>&1 || exit 0
+
+GIT_TOP="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [ -z "$GIT_TOP" ]; then exit 0; fi
+if [ ! -f "$GIT_TOP/eka.yaml" ]; then exit 0; fi
+if grep -qE '^\s*enabled:\s*false' "$GIT_TOP/eka.yaml" 2>/dev/null; then exit 0; fi
+
+# Pre-push receives remote info on stdin but we ignore it; reconcile from git history
+# Auto-capture unless disabled
+if [ "${EKA_CAPTURE_AUTO:-1}" = "1" ]; then
+  # Default auto on pre-push: create reconciled draft if heuristic fires
+  eka capture --reconcile --from-git >/dev/null 2>&1 || true
+else
+  # Hint mode
+  if git log --since="24 hours ago" --oneline 2>/dev/null | grep -q .; then
+    echo "[eka-capture] Layer-2 pre-push: recent commits found — run 'eka capture --reconcile --from-git' to reconcile" >&2 || true
+  fi
+fi
+
+exit 0

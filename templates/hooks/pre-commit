@@ -1,0 +1,45 @@
+#!/bin/sh
+# EKA Universal Capture — Layer 2 Git Hook Distributed (ADR-035 v3 + spec provenance-capture:1)
+# Template: eka-standard/templates/hooks/pre-commit
+# Installed via anvil lifecycle platform_sync (symlink to .git/hooks/pre-commit)
+# Contract: non-blocking by default; strict mode when EKA_CAPTURE_STRICT=1
+# Heuristic: inspects staged diff; hints or auto-captures reconciled provenance.
+set -eu
+
+# Resolve eka binary (PATH, or alongside hook)
+command -v eka >/dev/null 2>&1 || exit 0
+
+# Only inside EKA repository (eka.yaml at repo root)
+GIT_TOP="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [ -z "$GIT_TOP" ]; then exit 0; fi
+if [ ! -f "$GIT_TOP/eka.yaml" ]; then exit 0; fi
+
+# Respect capture.enabled=false from eka.yaml (lightweight check)
+if grep -qE '^\s*enabled:\s*false' "$GIT_TOP/eka.yaml" 2>/dev/null; then exit 0; fi
+
+# No staged changes => nothing to hint
+if git diff --cached --quiet 2>/dev/null; then exit 0; fi
+
+# Auto-capture when requested (CI / strict flow)
+if [ "${EKA_CAPTURE_AUTO:-0}" = "1" ]; then
+  eka capture --reconcile --from-git >/dev/null 2>&1 || true
+  exit 0
+fi
+
+# Default: hint only (never blocks commit)
+# Count staged files for log brevity
+STAGED_COUNT="$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${STAGED_COUNT:-0}" -gt 0 ]; then
+  echo "[eka-capture] Layer-2 pre-commit: $STAGED_COUNT staged file(s) — run 'eka capture --reconcile --from-git' to reconcile provenance=reconciled" >&2 || true
+fi
+
+# Strict mode: block commit when capture would create a draft (opt-in)
+if [ "${EKA_CAPTURE_STRICT:-0}" = "1" ]; then
+  # Dry-run: if capture would create a draft, block with hint (exit 1)
+  if eka capture --reconcile --from-git --dry-run 2>/dev/null | grep -q "would create"; then
+    echo "[eka-capture] STRICT: reconciled draft would be created — commit blocked. Run 'eka capture --reconcile --from-git' then re-commit." >&2
+    exit 1
+  fi
+fi
+
+exit 0

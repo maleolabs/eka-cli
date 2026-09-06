@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	standardembed "github.com/maleolabs/eka-cli"
 	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/metadata"
 	"github.com/maleolabs/eka-core/runtime"
@@ -292,30 +293,26 @@ func runCapture(cmd *cobra.Command, args []string) error {
 }
 
 func runCaptureInstallHooks(cmd *cobra.Command) error {
-	// Execute platform_sync script (preferred) or fallback inline symlink logic
 	repoRoot, err := gitTopLevel()
 	if err != nil {
 		cwd, _ := os.Getwd()
 		repoRoot = cwd
 	}
-	scriptCandidates := []string{
-		filepath.Join(repoRoot, "scripts", "platform-sync.sh"),
-		"/home/m2codeloan/m2code/maleolabs/eka/eka-cli/scripts/platform-sync.sh",
-		filepath.Join(filepath.Dir(os.Args[0]), "scripts", "platform-sync.sh"),
-	}
-	for _, s := range scriptCandidates {
-		if _, err := os.Stat(s); err == nil {
-			c := exec.Command("sh", s)
-			c.Stdout = cmd.OutOrStdout()
-			c.Stderr = cmd.ErrOrStderr()
-			if err := c.Run(); err != nil {
-				return fmt.Errorf("capture --install-hooks: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "capture: hooks installed via %s\n", s)
-			return nil
+	repoRoot, _ = filepath.Abs(repoRoot)
+	// Preferred: anvil/dev platform_sync script when it exists in the repo.
+	// No hardcoded absolute dev paths — release binary has no sibling checkout.
+	script := filepath.Join(repoRoot, "scripts", "platform-sync.sh")
+	if st, err := os.Stat(script); err == nil && !st.IsDir() {
+		c := exec.Command("sh", script)
+		c.Stdout = cmd.OutOrStdout()
+		c.Stderr = cmd.ErrOrStderr()
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("capture --install-hooks: %w", err)
 		}
+		// Clean output — do not leak absolute filesystem paths.
+		fmt.Fprintf(cmd.OutOrStdout(), "capture: hooks installed via scripts/platform-sync.sh\n")
+		return nil
 	}
-	// Fallback inline: symlink from eka-standard templates
 	return installHooksInline(cmd, repoRoot)
 }
 
@@ -323,8 +320,7 @@ func installHooksInline(cmd *cobra.Command, repoRoot string) error {
 	templateSrc := ""
 	candidates := []string{
 		filepath.Join(repoRoot, "eka-standard", "templates", "hooks"),
-		"/home/m2codeloan/m2code/maleolabs/eka/eka-standard/templates/hooks",
-		"./templates/hooks",
+		filepath.Join(repoRoot, "templates", "hooks"),
 	}
 	for _, c := range candidates {
 		if st, err := os.Stat(c); err == nil && st.IsDir() {
@@ -332,29 +328,48 @@ func installHooksInline(cmd *cobra.Command, repoRoot string) error {
 			break
 		}
 	}
-	if templateSrc == "" {
-		return fmt.Errorf("capture --install-hooks: template source not found")
-	}
 	hooksDir := filepath.Join(repoRoot, ".git", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		return err
 	}
+	if templateSrc != "" {
+		// Disk template exists (anvil/dev or vendored checkout) — symlink preferred.
+		for _, hook := range []string{"pre-commit", "pre-push"} {
+			src := filepath.Join(templateSrc, hook)
+			dst := filepath.Join(hooksDir, hook)
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
+			_ = os.Remove(dst)
+			if err := os.Symlink(src, dst); err != nil {
+				b, _ := os.ReadFile(src)
+				_ = os.WriteFile(dst, b, 0o755)
+			} else {
+				_ = os.Chmod(dst, 0o755)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "capture: symlinked %s -> %s\n", dst, src)
+		}
+		return nil
+	}
+	// Fallback: embedded hooks — standalone release binary, no external paths.
+	hooks := standardembed.Hooks()
+	installed := 0
 	for _, hook := range []string{"pre-commit", "pre-push"} {
-		src := filepath.Join(templateSrc, hook)
-		dst := filepath.Join(hooksDir, hook)
-		if _, err := os.Stat(src); err != nil {
+		b, ok := hooks[hook]
+		if !ok || len(b) == 0 {
 			continue
 		}
+		dst := filepath.Join(hooksDir, hook)
 		_ = os.Remove(dst)
-		if err := os.Symlink(src, dst); err != nil {
-			// fallback copy
-			b, _ := os.ReadFile(src)
-			_ = os.WriteFile(dst, b, 0o755)
-		} else {
-			_ = os.Chmod(dst, 0o755)
+		if err := os.WriteFile(dst, b, 0o755); err != nil {
+			return fmt.Errorf("capture --install-hooks: %w", err)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "capture: symlinked %s -> %s\n", dst, src)
+		installed++
 	}
+	if installed == 0 {
+		return fmt.Errorf("capture --install-hooks: template source not found")
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "capture: hooks installed to .git/hooks/pre-commit, pre-push (embedded)\n")
 	return nil
 }
 

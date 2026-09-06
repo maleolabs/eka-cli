@@ -12,24 +12,19 @@ else
   REPO_ROOT="$(pwd)"
 fi
 
-# Template source: prefer vendored eka-standard/templates/hooks, fallback to embedded path
+# Template source: prefer sibling eka-standard, then vendored templates/hooks, then script-relative.
 TEMPLATE_SRC=""
 for CANDIDATE in \
   "$REPO_ROOT/eka-standard/templates/hooks" \
-  "/home/m2codeloan/m2code/maleolabs/eka/eka-standard/templates/hooks" \
-  "$(dirname "$0")/../eka-standard/templates/hooks" \
-  "./templates/hooks"
+  "$REPO_ROOT/templates/hooks" \
+  "$(dirname "$0")/../templates/hooks" \
+  "$(dirname "$0")/../../eka-standard/templates/hooks"
 do
   if [ -d "$CANDIDATE" ]; then
     TEMPLATE_SRC="$CANDIDATE"
     break
   fi
 done
-
-# When run from eka-cli repo, templates live in sibling eka-standard
-if [ -z "$TEMPLATE_SRC" ] && [ -d "$(dirname "$0")/../../eka-standard/templates/hooks" ]; then
-  TEMPLATE_SRC="$(dirname "$0")/../../eka-standard/templates/hooks"
-fi
 
 if [ -z "$TEMPLATE_SRC" ] || [ ! -d "$TEMPLATE_SRC" ]; then
   # Fallback: eka binary embeds hooks? generate minimal hooks inline
