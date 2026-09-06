@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
 	"github.com/maleolabs/eka-core/runtime"
@@ -54,6 +57,7 @@ Exit codes:
 			if err != nil {
 				return fmt.Errorf("status failed: %w", err)
 			}
+			st = scopeStatus(st)
 			return renderStatus(s, st)
 		},
 	}
@@ -88,6 +92,38 @@ func renderStatus(s *ui.Style, st *runtime.WorkspaceStatus) error {
 		}
 	}
 	return nil
+}
+
+// scopeStatus returns a view of the workspace status scoped to the
+// repository that contains the current working directory. When cwd is
+// inside a registered repository, only that project is returned;
+// otherwise the full global status is returned. The store totals
+// (Objects/Payloads/Attachments) remain global.
+func scopeStatus(st *runtime.WorkspaceStatus) *runtime.WorkspaceStatus {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return st
+	}
+	cwd = filepath.Clean(cwd)
+	var matched *runtime.ProjectStatus
+	matchedLen := -1
+	for i := range st.Projects {
+		for _, rs := range st.Projects[i].Repos {
+			repoPath := filepath.Clean(rs.Repo.Path)
+			if cwd == repoPath || strings.HasPrefix(cwd+string(filepath.Separator), repoPath+string(filepath.Separator)) {
+				if len(repoPath) > matchedLen {
+					matchedLen = len(repoPath)
+					matched = &st.Projects[i]
+				}
+			}
+		}
+	}
+	if matched == nil {
+		return st
+	}
+	out := *st
+	out.Projects = []runtime.ProjectStatus{*matched}
+	return &out
 }
 
 // lastSyncDetail renders the most recent sync-log entry of one
