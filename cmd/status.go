@@ -204,48 +204,48 @@ func renderSESExecution(s *ui.Style, r *runtime.Runtime) error {
 // statusJSON is the deterministic wire format for `eka status --json`
 // (schema status-v1). Field order is fixed by struct definition.
 type statusJSON struct {
-	Schema  string                `json:"schema"`
-	Path    string                `json:"path"`
-	ID      string                `json:"id"`
-	Created string                `json:"created"`
-	SchemaVersion int            `json:"schemaVersion"`
-	Objects int                  `json:"objects"`
-	Payloads int                 `json:"payloads"`
-	Attachments int              `json:"attachments"`
-	Projects []jsonProject      `json:"projects"`
+	Schema        string        `json:"schema"`
+	Path          string        `json:"path"`
+	ID            string        `json:"id"`
+	Created       string        `json:"created"`
+	SchemaVersion int           `json:"schemaVersion"`
+	Objects       int           `json:"objects"`
+	Payloads      int           `json:"payloads"`
+	Attachments   int           `json:"attachments"`
+	Projects      []jsonProject `json:"projects"`
 }
 type jsonProject struct {
-	ID    string      `json:"id"`
-	Name  string      `json:"name"`
-	Created string   `json:"created"`
-	Repos []jsonRepo `json:"repos"`
+	ID      string     `json:"id"`
+	Name    string     `json:"name"`
+	Created string     `json:"created"`
+	Repos   []jsonRepo `json:"repos"`
 }
 type jsonRepo struct {
-	ProjectID string `json:"projectId"`
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	Created   string `json:"created"`
-	Namespace string `json:"namespace"`
+	ProjectID string             `json:"projectId"`
+	Name      string             `json:"name"`
+	Path      string             `json:"path"`
+	Created   string             `json:"created"`
+	Namespace string             `json:"namespace"`
 	LastSync  *runtime.SyncEntry `json:"lastSync,omitempty"`
 }
 
 func renderStatusJSON(s *ui.Style, st *runtime.WorkspaceStatus, home string) error {
 	if st == nil {
-		out := map[string]string{"schema":"status-v1","message":"No EKA workspace at "+home+" yet. Run 'eka project register' to create it."}
+		out := map[string]string{"schema": "status-v1", "message": "No EKA workspace at " + home + " yet. Run 'eka project register' to create it."}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(s.W, string(b))
 		return nil
 	}
 	js := statusJSON{
-		Schema: "status-v1",
-		Path: st.Path,
-		ID: st.ID,
-		Created: st.Created,
+		Schema:        "status-v1",
+		Path:          st.Path,
+		ID:            st.ID,
+		Created:       st.Created,
 		SchemaVersion: st.SchemaVersion,
-		Objects: st.Objects,
-		Payloads: st.Payloads,
-		Attachments: st.Attachments,
-		Projects: make([]jsonProject, 0, len(st.Projects)),
+		Objects:       st.Objects,
+		Payloads:      st.Payloads,
+		Attachments:   st.Attachments,
+		Projects:      make([]jsonProject, 0, len(st.Projects)),
 	}
 	for _, p := range st.Projects {
 		jp := jsonProject{ID: p.Project.ID, Name: p.Project.Name, Created: p.Project.Created}
