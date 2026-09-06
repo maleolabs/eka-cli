@@ -13,3 +13,4 @@
 - **Retrieval:** `eka get eka/ses:execution-state` (latest), `eka get eka/ses:execution-state:1`, timeline via store Timeline service
 
 This file documents ADR 036/037 ses model as implemented in eka-cli v1.11+.
+scripts/ses-init-migrate.sh idempotent init migration
