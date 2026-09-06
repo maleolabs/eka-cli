@@ -1,0 +1,1 @@
+{"description":"Auto append blok EKA workflow ke AGENTS.md via eka init / anvil platform_sync dengan marker idempotent, plus pre-commit hook warn.","acceptanceCriteria":"- AGENTS.md injection dengan \u003c!-- eka:workflow:start/end --\u003e idempotent\n- template: project/namespace/ctr active/eka get/context/transition\n- tidak overwrite section user\n- warn jika blok hilang"}
