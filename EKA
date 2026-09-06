@@ -1,5 +1,5 @@
 EKA STANDARD
-Version 1.1
+Version 1.2
 
 The Engineering Knowledge Architecture (EKA) Standard. The normative source of
 truth is the specification/ directory (the versioned snapshot of the standard
@@ -113,8 +113,8 @@ Naming:         specification/naming.md     (camelCase convention)
 Exchange:       specification/exchange.md   (unit, round-trip, package, determinism, version axes)
 Versioning:     specification/versioning.md (semantic versioning + immutability)
 
-Version axes (must not be conflated): Standard corpus 1.1 | RSF
+Version axes (must not be conflated): Standard corpus 1.2 | RSF
 serializationVersion "2" | representations eka/structured-json/1,
 eka/structured-text/1 | machine schema eka-cko-v2 (legacy eka-cko-v1).
 
-END OF EKA STANDARD 1.1 (SUMMARY)
+END OF EKA STANDARD 1.2 (SUMMARY)
