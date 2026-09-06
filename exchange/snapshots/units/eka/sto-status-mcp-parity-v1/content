@@ -1,0 +1,1 @@
+{"description":"MCP status tool mirror same scoping: auto repo-scoped inside repo, global outside, support --all, parity dengan CLI.","acceptanceCriteria":"- MCP status inside repo returns repo-scoped\n- MCP status --all returns global\n- parity tested CLI/MCP"}

@@ -1,0 +1,1 @@
+{"description":"Repo-scoped eka status core: detect cwd repo via eka.yaml, filter Workspace.Status to that project/repo, fallback global diluar repo, render repo-scoped section.","acceptanceCriteria":"- eka status di dalam eka-cli hanya tampilkan project eka + repos eka-cli/eka-core/eka-mcp\n- diluar repo tampilkan global (7 projects)\n- tidak break existing snapshot logic"}

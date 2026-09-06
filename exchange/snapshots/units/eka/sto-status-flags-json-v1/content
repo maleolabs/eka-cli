@@ -1,0 +1,1 @@
+{"description":"Tambah flags --all (paksa global) dan --json (machine output) untuk status; --all override auto-scoped, --json deterministik.","acceptanceCriteria":"- eka status --all di dalam repo tampilkan global\n- eka status --json emit deterministik JSON (schema status-v1)\n- --json + --all compose"}
