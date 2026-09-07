@@ -393,9 +393,9 @@ func normalizeShrID(id string) string {
 
 func buildCommonShrFields(unit *exchange.Unit) map[string]any {
 	m := map[string]any{
-		"summary":         buildSafeSummary(unit),
-		"sourceType":      unit.Identity.Type,
-		"sourceId":        unit.Identity.ID,
+		"summary":    buildSafeSummary(unit),
+		"sourceType": unit.Identity.Type,
+		"sourceId":   unit.Identity.ID,
 	}
 	if unit.Classification.Dimension != "" {
 		m["sourceDimension"] = unit.Classification.Dimension
