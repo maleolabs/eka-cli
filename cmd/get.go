@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -228,6 +229,7 @@ Exit codes:
 			typeFilter, _ := cmd.Flags().GetString(flagGetType)
 			dimFilter, _ := cmd.Flags().GetString(flagGetDimension)
 			phaseFilter, _ := cmd.Flags().GetString(flagGetPhase)
+			levelFilter, _ := cmd.Flags().GetString(flagGetLevel)
 			offset, _ := cmd.Flags().GetInt(flagGetOffset)
 			limit, _ := cmd.Flags().GetInt(flagGetLimit)
 			page, _ := cmd.Flags().GetInt(flagGetPage)
@@ -294,6 +296,13 @@ Exit codes:
 			if isContainers && (active || current) && container != "" {
 				return fmt.Errorf("get: --active/--current and --container are mutually exclusive")
 			}
+			if levelFilter != "" {
+				lf := strings.ToUpper(strings.TrimSpace(levelFilter))
+				if lf != "L0" && lf != "L1" && lf != "L2" {
+					return fmt.Errorf("get: --level must be L0, L1 or L2, got %q", levelFilter)
+				}
+				levelFilter = lf
+			}
 			// The resolution prologue: open (never create) the Runtime,
 			// then gate on workspace and repository state.
 			r, err := runtime.Open()
@@ -344,6 +353,7 @@ Exit codes:
 				typeFilter:  typeFilter,
 				dimFilter:   dimFilter,
 				phaseFilter: phaseFilter,
+				levelFilter: levelFilter,
 				active:      active,
 				current:     current,
 				container:   container,
@@ -388,6 +398,7 @@ Exit codes:
 	cmd.Flags().String(flagGetType, "", "domain query: filter by artifact type token (e.g. adr, sto, ctr)")
 	cmd.Flags().String(flagGetDimension, "", "domain query: filter by primary knowledge dimension")
 	cmd.Flags().String(flagGetPhase, "", "domain query: filter by phase context attribute")
+	cmd.Flags().String(flagGetLevel, "", "domain/identity: filter by shr level (L0, L1, L2) — server-side; for shr sharing objects")
 	cmd.Flags().Int(flagGetOffset, 0, "containers/execution: 0-based offset into the collection (default 0)")
 	cmd.Flags().Int(flagGetLimit, 0, "containers/execution: page size (default 0 = no limit)")
 	cmd.Flags().Int(flagGetPage, 1, "containers/execution: 1-based page number (requires --limit; default 1)")
@@ -411,6 +422,7 @@ const (
 	flagGetType       = "type"
 	flagGetDimension  = "dimension"
 	flagGetPhase      = "phase"
+	flagGetLevel      = "level"
 	// Containers query and pagination options (Feature: containers
 	// list).
 	flagGetOffset    = "offset"
@@ -432,6 +444,7 @@ type getOptions struct {
 	typeFilter  string
 	dimFilter   string
 	phaseFilter string
+	levelFilter string
 	// Containers query filters (the containers target only).
 	active    bool
 	current   bool
@@ -457,6 +470,16 @@ func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOpti
 	}
 	if !ok {
 		return nil, fmt.Errorf("get: no knowledge object matches %q", target) // Exit 2.
+	}
+	// Server-side level filter for identity: when --level provided, the
+	// resolved unit must carry that shr level (stored in content level field).
+	if o.levelFilter != "" {
+		if lvl := shrLevelOf(unit); lvl != "" && lvl != o.levelFilter {
+			return nil, fmt.Errorf("get: %q level %q does not match filter --level %q", target, lvl, o.levelFilter)
+		}
+		if lvl := shrLevelOf(unit); lvl == "" {
+			return nil, fmt.Errorf("get: --level filter only applies to shr objects, %q is not a shr (no level)", target)
+		}
 	}
 	doc, err := machine.NewDocument(unit)
 	if err != nil {
@@ -572,6 +595,10 @@ func getDomain(r *runtime.Runtime, repo runtime.Repo, target string, o getOption
 		return nil, fmt.Errorf("get failed: %w", err) // Exit 2: store failure.
 	}
 	units = dedupLinesLatest(units)
+	// Server-side shr level filter for domain queries: --level L0|L1|L2.
+	if o.levelFilter != "" {
+		units = filterByShrLevel(units, o.levelFilter)
+	}
 	col, err := machine.NewCollection(name, units)
 	if err != nil {
 		return nil, fmt.Errorf("get failed: %w", err) // Exit 2: internal.
@@ -701,6 +728,38 @@ func machineChangeLog(entries []exchange.ChangeLogEntry) []machine.ChangeLogEntr
 		out = append(out, machine.ChangeLogEntry{Date: e.Date, Domain: e.Domain, From: e.From, To: e.To, By: e.By})
 	}
 	return out
+}
+
+// filterByShrLevel keeps only shr units whose content level matches the
+// filter (L0|L1|L2). Non-shr units are excluded when a level filter is
+// active (server-side shr filtering).
+func filterByShrLevel(units []*exchange.Unit, lvl string) []*exchange.Unit {
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrLevelOf(u) == lvl {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// shrLevelOf extracts the shr level (L0|L1|L2) from a unit's structured
+// content payload. Returns "" for non-shr or missing level.
+func shrLevelOf(u *exchange.Unit) string {
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["level"].(string); ok {
+		return strings.ToUpper(strings.TrimSpace(v))
+	}
+	return ""
 }
 
 // domainTokens are the five Engineering Domain query tokens in stratum
