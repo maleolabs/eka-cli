@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -174,6 +173,7 @@ Examples:
 				} else if len(levels) > 1 {
 					shrIDResolved = fmt.Sprintf("%s-%s", shrID, strings.ToLower(lvl))
 				}
+				shrIDResolved = normalizeShrID(shrIDResolved)
 				if !isValidShrID(shrIDResolved) {
 					return fmt.Errorf("shr build: generated id %q is not a valid EKA identifier", shrIDResolved)
 				}
@@ -207,32 +207,22 @@ Examples:
 					"purpose":     title,
 					"content":     description,
 				}
+				// Dedup L1/L2 common fields via helper (hardening: dedup).
 				switch lvl {
 				case "L0":
 				case "L1":
-					summary := buildSafeSummary(unit)
-					content["summary"] = summary
-					content["sourceType"] = unit.Identity.Type
-					content["sourceId"] = unit.Identity.ID
-					if unit.Classification.Dimension != "" {
-						content["sourceDimension"] = unit.Classification.Dimension
-					}
-					if domain, ok := unit.Domain(); ok {
-						content["sourceDomain"] = string(domain)
+					for k, v := range buildCommonShrFields(unit) {
+						content[k] = v
 					}
 				case "L2":
-					summary := buildSafeSummary(unit)
-					content["summary"] = summary
-					content["sourceType"] = unit.Identity.Type
-					content["sourceId"] = unit.Identity.ID
-					if unit.Classification.Dimension != "" {
-						content["sourceDimension"] = unit.Classification.Dimension
-					}
-					if domain, ok := unit.Domain(); ok {
-						content["sourceDomain"] = string(domain)
+					for k, v := range buildCommonShrFields(unit) {
+						content[k] = v
 					}
 					snap := extractSnapshot(unit)
 					if snap != nil {
+						if err := shrSnapshotGuard(snap); err != nil {
+							return fmt.Errorf("shr build: %w", err)
+						}
 						content["snapshot"] = snap
 					}
 				}
@@ -268,6 +258,11 @@ Examples:
 				})
 				os.Remove(tmpPath)
 				if err != nil {
+					// Hardening: collision (already exists) must be exit 1 (fail), not usage 2.
+					if strings.Contains(strings.ToLower(err.Error()), "already exists") || strings.Contains(strings.ToLower(err.Error()), "collision") {
+						fmt.Fprintf(cmd.ErrOrStderr(), "eka: shr build: %v (level %s)\n", err, lvl)
+						return &exitError{code: exitFail}
+					}
 					return fmt.Errorf("shr build: %w (level %s)", err, lvl)
 				}
 				built = append(built, fmt.Sprintf("%s/shr:%s", ns, shrIDResolved))
@@ -309,6 +304,48 @@ Examples:
 
 func isValidShrID(id string) bool {
 	return metadata.ValidIdent(id)
+}
+
+func normalizeShrID(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.ReplaceAll(id, " ", "-")
+	id = strings.ReplaceAll(id, "_", "-")
+	// collapse multiple hyphens
+	for strings.Contains(id, "--") {
+		id = strings.ReplaceAll(id, "--", "-")
+	}
+	return strings.Trim(id, "-")
+}
+
+func buildCommonShrFields(unit *exchange.Unit) map[string]any {
+	m := map[string]any{
+		"summary":         buildSafeSummary(unit),
+		"sourceType":      unit.Identity.Type,
+		"sourceId":        unit.Identity.ID,
+	}
+	if unit.Classification.Dimension != "" {
+		m["sourceDimension"] = unit.Classification.Dimension
+	}
+	if domain, ok := unit.Domain(); ok {
+		m["sourceDomain"] = string(domain)
+	}
+	return m
+}
+
+const shrSnapshotSizeLimit = 1 << 20 // 1 MiB guard
+
+func shrSnapshotGuard(snap any) error {
+	if snap == nil {
+		return nil
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		return nil
+	}
+	if len(b) > shrSnapshotSizeLimit {
+		return fmt.Errorf("snapshot size %d exceeds guard %d (source too large for L2)", len(b), shrSnapshotSizeLimit)
+	}
+	return nil
 }
 
 func buildSafeSummary(u *exchange.Unit) string {
@@ -369,7 +406,3 @@ func extractSnapshot(u *exchange.Unit) any {
 	// For markdown or non-JSON content, return as string (truncated safe for snapshot L2 is full)
 	return string(u.ContentPayload)
 }
-
-// Ensure the file compiles with the unused import guard: filepath is used via resolveNewScope indirection,
-// but we keep the import for potential path handling in future snapshot file handling.
-var _ = filepath.Clean

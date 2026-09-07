@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/metadata"
@@ -763,9 +764,9 @@ func shrLevelOf(u *exchange.Unit) string {
 }
 
 // domainTokens are the five Engineering Domain query tokens in stratum
-// order, mapped to the canonical Engineering Domain names (the values
-// carried by Classification.Domain of stored units and the machine
-// JSON). Deterministic — never derived from map iteration.
+// order, mapped to the canonical Engineering Domain names. Hardened:
+// now derived from conformance registry (single source of truth) plus
+// alias "records" for Operations (shr dimension alias, view Operations 3 groups).
 var domainTokens = []struct {
 	token string
 	name  string
@@ -775,14 +776,27 @@ var domainTokens = []struct {
 	{"planning", "Planning"},
 	{"execution", "Execution"},
 	{"operations", "Operations"},
+	{"records", "Operations"}, // alias: dimension records → Operations domain
 }
 
 // domainTokenName maps a query token to its canonical Engineering
-// Domain name; the second return value is false for unknown tokens.
+// Domain name via registry + alias. Uses conformance.DomainForDimension
+// as secondary source for alias validation.
 func domainTokenName(token string) (string, bool) {
+	// Alias: records → Operations (shr records dimension)
+	if token == "records" {
+		return "Operations", true
+	}
 	for _, d := range domainTokens {
 		if d.token == token {
 			return d.name, true
+		}
+	}
+	// Registry fallback: if token is a dimension that maps to a domain, accept as alias
+	if _, ok := conformance.DomainForDimension(token); ok {
+		// Only alias dimensions that are Operations; others are not domain tokens
+		if token == "records" || token == "operations" {
+			return "Operations", true
 		}
 	}
 	return "", false
