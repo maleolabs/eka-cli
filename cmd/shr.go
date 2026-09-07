@@ -49,12 +49,18 @@ The shr draft is created via runtime.NewDraft with:
   passes validate.
 
 Flags:
-  --level L0|L1|L2   required, opt-in classification
+  --level L0|L1|L2   required, opt-in classification (single)
+  --levels L0,L1,L2  batch: build 1-3 shr at once (mutually exclusive with --level)
   --id <shr-id>      id for the new shr (default: share-<source-id>-<level>)
   --title <text>     shr title (default: Share <LEVEL> <type>:<id>)
   --description <text> shr description (default: snapshot copy of <source>)
   --project <name>   explicit project (workspace-native)
   --namespace <ns>   explicit namespace (workspace-native)
+
+Server-side filtering:
+  eka get <shr-id> --level L0       identity: strict level match (server-side)
+  eka get operations --level L0     domain: filter shr by level (server-side, shr only)
+  eka get operations --type shr --level L1
 
 Project/namespace resolution: same as eka new (repo context or explicit
 --project/--namespace). Source must exist in the workspace.
@@ -62,23 +68,53 @@ Project/namespace resolution: same as eka new (repo context or explicit
 Examples:
   eka shr build eka/adr:sharing-object-model --level L0 --id my-share
   eka shr build eka/scp:knowledge-sharing --level L2
-  eka shr build eka/req:knowledge-sharing --level L1 --title "Share L1"`,
+  eka shr build eka/req:knowledge-sharing --level L1 --title "Share L1"
+  eka shr build eka/adr:sharing-object-model --levels L0,L1,L2  # batch 3 shr
+  eka get operations --level L0
+  eka get eka/shr:my-share-l0 --level L0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			level, _ := cmd.Flags().GetString("level")
+			levelsFlag, _ := cmd.Flags().GetString("levels")
 			shrID, _ := cmd.Flags().GetString("id")
 			titleFlag, _ := cmd.Flags().GetString("title")
 			descFlag, _ := cmd.Flags().GetString("description")
 			projectFlag, _ := cmd.Flags().GetString("project")
 			nsFlag, _ := cmd.Flags().GetString("namespace")
 
-			// Opt-in default-deny: level required.
-			if strings.TrimSpace(level) == "" {
-				return fmt.Errorf("shr build: --level is required (L0|L1|L2); default share nothing (opt-in)")
-			}
-			level = strings.ToUpper(strings.TrimSpace(level))
-			if level != "L0" && level != "L1" && level != "L2" {
-				return fmt.Errorf("shr build: --level must be L0, L1 or L2, got %q", level)
+			// Determine batch levels: --levels L0,L1,L2 or single --level
+			var levels []string
+			if strings.TrimSpace(levelsFlag) != "" {
+				parts := strings.Split(levelsFlag, ",")
+				for _, p := range parts {
+					lv := strings.ToUpper(strings.TrimSpace(p))
+					if lv != "L0" && lv != "L1" && lv != "L2" {
+						return fmt.Errorf("shr build: --levels must be comma-separated L0|L1|L2, got %q", p)
+					}
+					levels = append(levels, lv)
+				}
+				if strings.TrimSpace(level) != "" {
+					return fmt.Errorf("shr build: --level and --levels are mutually exclusive")
+				}
+				// dedup preserve order
+				seen := map[string]bool{}
+				uniq := []string{}
+				for _, l := range levels {
+					if !seen[l] {
+						seen[l] = true
+						uniq = append(uniq, l)
+					}
+				}
+				levels = uniq
+			} else {
+				if strings.TrimSpace(level) == "" {
+					return fmt.Errorf("shr build: --level is required (L0|L1|L2); default share nothing (opt-in)")
+				}
+				level = strings.ToUpper(strings.TrimSpace(level))
+				if level != "L0" && level != "L1" && level != "L2" {
+					return fmt.Errorf("shr build: --level must be L0, L1 or L2, got %q", level)
+				}
+				levels = []string{level}
 			}
 			if strings.Contains(shrID, ":") || strings.Contains(shrID, "/") {
 				return fmt.Errorf("shr build: --id must be a bare id (no namespace or type), got %q", shrID)
@@ -112,140 +148,157 @@ Examples:
 				sourceForm = unit.Identity.CanonicalForm()
 			}
 
-			// Resolve project/namespace for the new shr draft.
-			// Reuse the same resolution as eka new: repo context or explicit flags.
-			// We need a reference for the shr target to feed resolveNewScope.
-			shrIDResolved := shrID
-			if shrIDResolved == "" {
-				shrIDResolved = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(level))
+			// Use first level to resolve project/namespace; subsequent levels reuse same.
+			firstLevel := levels[0]
+			shrIDFirst := shrID
+			if shrIDFirst == "" {
+				shrIDFirst = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(firstLevel))
+			} else if len(levels) > 1 {
+				shrIDFirst = fmt.Sprintf("%s-%s", shrID, strings.ToLower(firstLevel))
 			}
-			// Validate shr id is a valid identifier (simple check).
-			if !isValidShrID(shrIDResolved) {
-				return fmt.Errorf("shr build: generated id %q is not a valid EKA identifier (lowercase letters, digits, hyphens)", shrIDResolved)
+			if !isValidShrID(shrIDFirst) {
+				return fmt.Errorf("shr build: generated id %q is not a valid EKA identifier (lowercase letters, digits, hyphens)", shrIDFirst)
 			}
-			ref := conformance.Reference{Namespace: nsFlag, Type: "shr", ID: shrIDResolved}
-			// If nsFlag empty, ref.Namespace stays empty and resolveNewScope will fill from repo.
+			ref := conformance.Reference{Namespace: nsFlag, Type: "shr", ID: shrIDFirst}
 			project, ns, err := resolveNewScope(r, ref, projectFlag, nsFlag)
 			if err != nil {
 				return fmt.Errorf("shr build: %v", err)
 			}
-			// If namespace derived from resolveNewScope differs from source namespace and no explicit nsFlag,
-			// keep resolved ns (it will be repo namespace). Allow cross-namespace only if explicit.
-			_ = ns
-			_ = project
 
-			title := strings.TrimSpace(titleFlag)
-			if title == "" {
-				title = fmt.Sprintf("Share %s %s:%s", level, unit.Identity.Type, unit.Identity.ID)
-			}
-			description := strings.TrimSpace(descFlag)
-			if description == "" {
-				shortHash := sourceHash
-				if len(shortHash) > 8 {
-					shortHash = shortHash[:8]
+			// Build each level sequentially (batch).
+			var built []string
+			for _, lvl := range levels {
+				shrIDResolved := shrID
+				if shrIDResolved == "" {
+					shrIDResolved = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(lvl))
+				} else if len(levels) > 1 {
+					shrIDResolved = fmt.Sprintf("%s-%s", shrID, strings.ToLower(lvl))
 				}
-				description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance extracted)", sourceForm, shortHash, level)
-			}
+				if !isValidShrID(shrIDResolved) {
+					return fmt.Errorf("shr build: generated id %q is not a valid EKA identifier", shrIDResolved)
+				}
+				title := strings.TrimSpace(titleFlag)
+				if title == "" {
+					if len(levels) > 1 {
+						title = fmt.Sprintf("Share %s %s:%s (%s)", lvl, unit.Identity.Type, unit.Identity.ID, shrIDResolved)
+					} else {
+						title = fmt.Sprintf("Share %s %s:%s", lvl, unit.Identity.Type, unit.Identity.ID)
+					}
+				} else if len(levels) > 1 {
+					title = fmt.Sprintf("%s %s", title, lvl)
+				}
+				description := strings.TrimSpace(descFlag)
+				if description == "" {
+					shortHash := sourceHash
+					if len(shortHash) > 8 {
+						shortHash = shortHash[:8]
+					}
+					description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance extracted)", sourceForm, shortHash, lvl)
+				} else if len(levels) > 1 {
+					description = fmt.Sprintf("%s (level %s)", description, lvl)
+				}
 
-			// Build content map with shr required fields.
-			content := map[string]any{
-				"title":       title,
-				"description": description,
-				"level":       level,
-				"provenance":  "extracted",
-				"sourceHash":  sourceHash,
-				// R9 Purpose/Content placeholders (required sections for shr)
-				"purpose": title,
-				"content": description,
-			}
-			// Level-specific snapshot.
-			switch level {
-			case "L0":
-				// metadata only, nothing extra
-			case "L1":
-				summary := buildSafeSummary(unit)
-				content["summary"] = summary
-				content["sourceType"] = unit.Identity.Type
-				content["sourceId"] = unit.Identity.ID
-				if unit.Classification.Dimension != "" {
-					content["sourceDimension"] = unit.Classification.Dimension
+				content := map[string]any{
+					"title":       title,
+					"description": description,
+					"level":       lvl,
+					"provenance":  "extracted",
+					"sourceHash":  sourceHash,
+					"purpose":     title,
+					"content":     description,
 				}
-				if domain, ok := unit.Domain(); ok {
-					content["sourceDomain"] = string(domain)
+				switch lvl {
+				case "L0":
+				case "L1":
+					summary := buildSafeSummary(unit)
+					content["summary"] = summary
+					content["sourceType"] = unit.Identity.Type
+					content["sourceId"] = unit.Identity.ID
+					if unit.Classification.Dimension != "" {
+						content["sourceDimension"] = unit.Classification.Dimension
+					}
+					if domain, ok := unit.Domain(); ok {
+						content["sourceDomain"] = string(domain)
+					}
+				case "L2":
+					summary := buildSafeSummary(unit)
+					content["summary"] = summary
+					content["sourceType"] = unit.Identity.Type
+					content["sourceId"] = unit.Identity.ID
+					if unit.Classification.Dimension != "" {
+						content["sourceDimension"] = unit.Classification.Dimension
+					}
+					if domain, ok := unit.Domain(); ok {
+						content["sourceDomain"] = string(domain)
+					}
+					snap := extractSnapshot(unit)
+					if snap != nil {
+						content["snapshot"] = snap
+					}
 				}
-			case "L2":
-				summary := buildSafeSummary(unit)
-				content["summary"] = summary
-				content["sourceType"] = unit.Identity.Type
-				content["sourceId"] = unit.Identity.ID
-				if unit.Classification.Dimension != "" {
-					content["sourceDimension"] = unit.Classification.Dimension
-				}
-				if domain, ok := unit.Domain(); ok {
-					content["sourceDomain"] = string(domain)
-				}
-				snap := extractSnapshot(unit)
-				if snap != nil {
-					content["snapshot"] = snap
-				}
-			}
 
-			// Write temp content file for NewDraft (ContentFile JSON object).
-			tmpFile, err := os.CreateTemp("", "shr-content-*.json")
-			if err != nil {
-				return fmt.Errorf("shr build: cannot create temp content file: %w", err)
-			}
-			tmpPath := tmpFile.Name()
-			enc, err := json.Marshal(content)
-			if err != nil {
+				tmpFile, err := os.CreateTemp("", "shr-content-*.json")
+				if err != nil {
+					return fmt.Errorf("shr build: cannot create temp content file: %w", err)
+				}
+				tmpPath := tmpFile.Name()
+				enc, err := json.Marshal(content)
+				if err != nil {
+					tmpFile.Close()
+					os.Remove(tmpPath)
+					return fmt.Errorf("shr build: cannot marshal shr content: %w", err)
+				}
+				if _, err := tmpFile.Write(enc); err != nil {
+					tmpFile.Close()
+					os.Remove(tmpPath)
+					return fmt.Errorf("shr build: cannot write temp content file: %w", err)
+				}
 				tmpFile.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("shr build: cannot marshal shr content: %w", err)
-			}
-			if _, err := tmpFile.Write(enc); err != nil {
-				tmpFile.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("shr build: cannot write temp content file: %w", err)
-			}
-			tmpFile.Close()
-			defer os.Remove(tmpPath)
 
-			// Create shr draft via Authoring.NewDraft. shr is a knowledge artifact (Operations/records)
-			// requiring a valid dimension; use the canonical records dimension.
-			draft, err := runtime.Authoring.NewDraft(r, runtime.NewDraftRequest{
-				Project:   project,
-				Namespace: ns,
-				Type:      "shr",
-				ID:        shrIDResolved,
-				Dimension: "records",
-				Relationships: []exchange.Relationship{
-					{Type: "derives-from", Target: sourceForm},
-				},
-				ContentFile: tmpPath,
-			})
-			if err != nil {
-				return fmt.Errorf("shr build: %w", err)
-			}
+				draft, err := runtime.Authoring.NewDraft(r, runtime.NewDraftRequest{
+					Project:   project,
+					Namespace: ns,
+					Type:      "shr",
+					ID:        shrIDResolved,
+					Dimension: "records",
+					Relationships: []exchange.Relationship{
+						{Type: "derives-from", Target: sourceForm},
+					},
+					ContentFile: tmpPath,
+				})
+				os.Remove(tmpPath)
+				if err != nil {
+					return fmt.Errorf("shr build: %w (level %s)", err, lvl)
+				}
+				built = append(built, fmt.Sprintf("%s/shr:%s", ns, shrIDResolved))
 
-			s := styleFor(cmd)
-			ui.NewHeader(s, "Shr Builder").
-				Add("Source", sourceForm).
-				Add("SourceHash", sourceHash).
-				Add("Level", level).
-				Add("Shr", ns+"/shr:"+shrIDResolved).
-				Pipeline("Shr Build").
-				Render()
-			ui.NewSummary(s).
-				Add("Draft", fmt.Sprintf("shr:%s", shrIDResolved)).
-				Add("Path", draft.Path).
-				Add("Project", draft.Project).
-				Add("SourceRef", sourceForm).
-				Add("Next", fmt.Sprintf("eka publish %s/shr:%s", ns, shrIDResolved)).
-				Render()
+				s := styleFor(cmd)
+				ui.NewHeader(s, "Shr Builder").
+					Add("Source", sourceForm).
+					Add("SourceHash", sourceHash).
+					Add("Level", lvl).
+					Add("Shr", ns+"/shr:"+shrIDResolved).
+					Pipeline("Shr Build").
+					Render()
+				ui.NewSummary(s).
+					Add("Draft", fmt.Sprintf("shr:%s", shrIDResolved)).
+					Add("Path", draft.Path).
+					Add("Project", draft.Project).
+					Add("SourceRef", sourceForm).
+					Add("Next", fmt.Sprintf("eka publish %s/shr:%s", ns, shrIDResolved)).
+					Render()
+			}
+			if len(built) > 1 {
+				s := styleFor(cmd)
+				ui.NewSummary(s).
+					Add("Batch", fmt.Sprintf("%d shr built: %s", len(built), strings.Join(built, ", "))).
+					Render()
+			}
 			return nil
 		},
 	}
 	cmd.Flags().String("level", "", "opt-in depth: L0 (metadata only), L1 (+ safe summary), L2 (+ full snapshot) — required")
+	cmd.Flags().String("levels", "", "batch: comma-separated levels L0,L1,L2 to build 1-3 shr at once (mutually exclusive with --level)")
 	cmd.Flags().String("id", "", "shr id (default: share-<source-id>-<level>)")
 	cmd.Flags().String("title", "", "shr title (default derived from source)")
 	cmd.Flags().String("description", "", "shr description (default derived from source)")
