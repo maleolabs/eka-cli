@@ -1,5 +1,5 @@
 EKA STANDARD
-Version 1.2
+Version 1.3
 
 The Engineering Knowledge Architecture (EKA) Standard. The normative source of
 truth is the specification/ directory (the versioned snapshot of the standard
@@ -77,19 +77,19 @@ Discovery (stratum 1) — intent, requirements, research. Tokens: vis-, str-, re
 Architecture (stratum 2) — decisions, specifications, standards, vocabulary. Tokens: arc-, adr-, dec-, spec-, std-, gls-.
 Planning (stratum 3) — commitment: scope, epics, plans, traceability. Tokens: scp-, epc-, plan-, trc-.
 Execution (stratum 4) — work items, containers, tickets, reviews, sessions, notes, members. Tokens: rvw-, ctr-, tkt-, sto-, ts-, bug-, td-, ch-, spk-, ses-, cmt-, mbr-.
-Operations (stratum 5) — runbooks, release records. Tokens: run-, rel-.
+Operations (stratum 5) — runbooks, release records, sharing objects. Tokens: run-, rel-, shr-.
 
 Stratum Authority Invariant: lower-stratum knowledge must not contradict
 higher-stratum knowledge in force; lower-stratum artifacts never supersede or
 amend higher-stratum artifacts.
 
-CANONICAL TOKENS (28)
+CANONICAL TOKENS (29)
 
 Discovery:      vis- (Vision/Manifesto), str- (Strategy), req- (Requirement/PRD), fnd- (Research Finding)
 Architecture:   arc- (Architecture Description), adr- (ADR), dec- (Decision Record), spec- (Specification), std- (Standard/Guideline), gls- (Glossary/Term)
 Planning:       scp- (Scope Definition), epc- (Epic), plan- (Plan), trc- (Traceability Artifact)
 Execution:      rvw- (Review), ctr- (Execution Container), tkt- (Ticket), sto- (Story), ts- (Task), bug- (Bug), td- (Technical Debt), ch- (Chore), spk- (Spike), ses- (Session), cmt- (Note), mbr- (Member)
-Operations:     run- (Runbook/Operational Guide), rel- (Release Record)
+Operations:     run- (Runbook/Operational Guide), rel- (Release Record), shr- (Sharing Object)
 
 The token is part of Identity (the Type qualifier), never
 methodology-dependent. Methodology terms (PRD, ADR, RFC, Epic, Sprint, Ticket,
@@ -101,20 +101,20 @@ SPECIFICATION
 
 Rules:          specification/rules/        (rule-001.md .. rule-014.md = R0..R13)
 Domains:        specification/domains/      (overview.md + discovery, architecture, planning, execution, operations)
-Tokens:         specification/tokens/       (overview.md + 28 token files)
+Tokens:         specification/tokens/       (overview.md + 29 token files)
 Overview:       specification/overview.md   (identity, purpose, description, scope, reading convention)
 Principles:     specification/principles.md (P1..P16)
 Concepts:       specification/concepts.md   (core concepts, layer model KB/OS/EX, global invariants)
 Identity:       specification/identity.md   (composition, rules, serialization contract, version semantics)
 State:          specification/state.md      (owned State Domains, value sets, transitions, State Vector)
 Dimensions:     specification/dimensions.md (12 Knowledge Dimensions)
-Relationships:  specification/relationships.md (supersedes, amends, derives-from, depends-on, validates, discusses, repliesTo, assigned-to)
+Relationships:  specification/relationships.md (supersedes, amends, derives-from, depends-on, validates, discusses, repliesTo, assigned-to; shr- MUST derives-from rel:versi, MUST NOT live depends-on)
 Naming:         specification/naming.md     (camelCase convention)
 Exchange:       specification/exchange.md   (unit, round-trip, package, determinism, version axes)
 Versioning:     specification/versioning.md (semantic versioning + immutability)
 
-Version axes (must not be conflated): Standard corpus 1.2 | RSF
+Version axes (must not be conflated): Standard corpus 1.3 | RSF
 serializationVersion "2" | representations eka/structured-json/1,
 eka/structured-text/1 | machine schema eka-cko-v2 (legacy eka-cko-v1).
 
-END OF EKA STANDARD 1.2 (SUMMARY)
+END OF EKA STANDARD 1.3 (SUMMARY)
