@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -80,6 +83,7 @@ Examples:
 			descFlag, _ := cmd.Flags().GetString("description")
 			projectFlag, _ := cmd.Flags().GetString("project")
 			nsFlag, _ := cmd.Flags().GetString("namespace")
+			provenanceFlag, _ := cmd.Flags().GetString("provenance")
 
 			// Determine batch levels: --levels L0,L1,L2 or single --level
 			var levels []string
@@ -123,6 +127,14 @@ Examples:
 			if sourceArg == "" {
 				return fmt.Errorf("shr build: source identity is required")
 			}
+			provenance := "extracted"
+			if strings.TrimSpace(provenanceFlag) != "" {
+				provenance = strings.ToLower(strings.TrimSpace(provenanceFlag))
+			}
+			if provenance != "extracted" && provenance != "audited" {
+				return fmt.Errorf("shr build: --provenance must be extracted or audited, got %q", provenanceFlag)
+			}
+			isAudited := provenance == "audited"
 
 			r, err := openAuthoringRuntime(cmd)
 			if err != nil {
@@ -130,31 +142,57 @@ Examples:
 			}
 			defer r.Close()
 
-			// Resolve source CKO via Resolver (qualified forms).
-			unit, ok, err := r.Resolver.Resolve(sourceArg)
-			if err != nil {
-				return fmt.Errorf("shr build: %w", err)
-			}
-			if !ok {
-				return fmt.Errorf("shr build: source %q not found in workspace; run 'eka sync' first", sourceArg)
-			}
-			sourceHash := unit.Digest
-			if sourceHash == "" {
-				return fmt.Errorf("shr build: source %q has empty object hash (store corruption)", sourceArg)
-			}
-			sourceForm := unit.CanonicalIdentityForm
-			if sourceForm == "" {
-				sourceForm = unit.Identity.CanonicalForm()
+			var unit *exchange.Unit
+			var sourceHash, sourceForm string
+			var auditSummary string
+			if isAudited {
+				// Spike: audit non-EKA codebase at path (no Resolver). Generate synthetic source.
+				info, err := os.Stat(sourceArg)
+				if err != nil {
+					return fmt.Errorf("shr build: audited source path %q not found: %w", sourceArg, err)
+				}
+				if !info.IsDir() {
+					return fmt.Errorf("shr build: audited source must be a directory, got %q", sourceArg)
+				}
+				auditSummary, sourceHash = auditNonEKAPath(sourceArg)
+				sourceForm = fmt.Sprintf("audited:%s", sourceArg)
+			} else {
+				// Resolve source CKO via Resolver (qualified forms).
+				var ok bool
+				unit, ok, err = r.Resolver.Resolve(sourceArg)
+				if err != nil {
+					return fmt.Errorf("shr build: %w", err)
+				}
+				if !ok {
+					return fmt.Errorf("shr build: source %q not found in workspace; run 'eka sync' first", sourceArg)
+				}
+				sourceHash = unit.Digest
+				if sourceHash == "" {
+					return fmt.Errorf("shr build: source %q has empty object hash (store corruption)", sourceArg)
+				}
+				sourceForm = unit.CanonicalIdentityForm
+				if sourceForm == "" {
+					sourceForm = unit.Identity.CanonicalForm()
+				}
 			}
 
 			// Use first level to resolve project/namespace; subsequent levels reuse same.
 			firstLevel := levels[0]
 			shrIDFirst := shrID
 			if shrIDFirst == "" {
-				shrIDFirst = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(firstLevel))
+				if isAudited {
+					base := normalizeShrID(filepath.Base(sourceArg))
+					if base == "" || base == "." || base == "/" {
+						base = "audited"
+					}
+					shrIDFirst = fmt.Sprintf("share-%s-%s", base, strings.ToLower(firstLevel))
+				} else {
+					shrIDFirst = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(firstLevel))
+				}
 			} else if len(levels) > 1 {
 				shrIDFirst = fmt.Sprintf("%s-%s", shrID, strings.ToLower(firstLevel))
 			}
+			shrIDFirst = normalizeShrID(shrIDFirst)
 			if !isValidShrID(shrIDFirst) {
 				return fmt.Errorf("shr build: generated id %q is not a valid EKA identifier (lowercase letters, digits, hyphens)", shrIDFirst)
 			}
@@ -169,7 +207,15 @@ Examples:
 			for _, lvl := range levels {
 				shrIDResolved := shrID
 				if shrIDResolved == "" {
-					shrIDResolved = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(lvl))
+					if isAudited {
+						base := normalizeShrID(filepath.Base(sourceArg))
+						if base == "" || base == "." || base == "/" {
+							base = "audited"
+						}
+						shrIDResolved = fmt.Sprintf("share-%s-%s", base, strings.ToLower(lvl))
+					} else {
+						shrIDResolved = fmt.Sprintf("share-%s-%s", unit.Identity.ID, strings.ToLower(lvl))
+					}
 				} else if len(levels) > 1 {
 					shrIDResolved = fmt.Sprintf("%s-%s", shrID, strings.ToLower(lvl))
 				}
@@ -179,10 +225,19 @@ Examples:
 				}
 				title := strings.TrimSpace(titleFlag)
 				if title == "" {
-					if len(levels) > 1 {
-						title = fmt.Sprintf("Share %s %s:%s (%s)", lvl, unit.Identity.Type, unit.Identity.ID, shrIDResolved)
+					if isAudited {
+						base := filepath.Base(sourceArg)
+						if len(levels) > 1 {
+							title = fmt.Sprintf("Share %s audited:%s (%s)", lvl, base, shrIDResolved)
+						} else {
+							title = fmt.Sprintf("Share %s audited:%s", lvl, base)
+						}
 					} else {
-						title = fmt.Sprintf("Share %s %s:%s", lvl, unit.Identity.Type, unit.Identity.ID)
+						if len(levels) > 1 {
+							title = fmt.Sprintf("Share %s %s:%s (%s)", lvl, unit.Identity.Type, unit.Identity.ID, shrIDResolved)
+						} else {
+							title = fmt.Sprintf("Share %s %s:%s", lvl, unit.Identity.Type, unit.Identity.ID)
+						}
 					}
 				} else if len(levels) > 1 {
 					title = fmt.Sprintf("%s %s", title, lvl)
@@ -193,7 +248,7 @@ Examples:
 					if len(shortHash) > 8 {
 						shortHash = shortHash[:8]
 					}
-					description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance extracted)", sourceForm, shortHash, lvl)
+					description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance %s)", sourceForm, shortHash, lvl, provenance)
 				} else if len(levels) > 1 {
 					description = fmt.Sprintf("%s (level %s)", description, lvl)
 				}
@@ -202,7 +257,7 @@ Examples:
 					"title":       title,
 					"description": description,
 					"level":       lvl,
-					"provenance":  "extracted",
+					"provenance":  provenance,
 					"sourceHash":  sourceHash,
 					"purpose":     title,
 					"content":     description,
@@ -211,19 +266,35 @@ Examples:
 				switch lvl {
 				case "L0":
 				case "L1":
-					for k, v := range buildCommonShrFields(unit) {
-						content[k] = v
+					if isAudited {
+						content["summary"] = auditSummary
+						content["sourceType"] = "audited"
+						content["sourceId"] = filepath.Base(sourceArg)
+					} else {
+						for k, v := range buildCommonShrFields(unit) {
+							content[k] = v
+						}
 					}
 				case "L2":
-					for k, v := range buildCommonShrFields(unit) {
-						content[k] = v
-					}
-					snap := extractSnapshot(unit)
-					if snap != nil {
-						if err := shrSnapshotGuard(snap); err != nil {
+					if isAudited {
+						content["summary"] = auditSummary
+						content["sourceType"] = "audited"
+						content["sourceId"] = filepath.Base(sourceArg)
+						if err := shrSnapshotGuard(auditSummary); err != nil {
 							return fmt.Errorf("shr build: %w", err)
 						}
-						content["snapshot"] = snap
+						content["snapshot"] = auditSummary
+					} else {
+						for k, v := range buildCommonShrFields(unit) {
+							content[k] = v
+						}
+						snap := extractSnapshot(unit)
+						if snap != nil {
+							if err := shrSnapshotGuard(snap); err != nil {
+								return fmt.Errorf("shr build: %w", err)
+							}
+							content["snapshot"] = snap
+						}
 					}
 				}
 
@@ -245,16 +316,18 @@ Examples:
 				}
 				tmpFile.Close()
 
+				var rels []exchange.Relationship
+				if !isAudited {
+					rels = []exchange.Relationship{{Type: "derives-from", Target: sourceForm}}
+				}
 				draft, err := runtime.Authoring.NewDraft(r, runtime.NewDraftRequest{
-					Project:   project,
-					Namespace: ns,
-					Type:      "shr",
-					ID:        shrIDResolved,
-					Dimension: "records",
-					Relationships: []exchange.Relationship{
-						{Type: "derives-from", Target: sourceForm},
-					},
-					ContentFile: tmpPath,
+					Project:       project,
+					Namespace:     ns,
+					Type:          "shr",
+					ID:            shrIDResolved,
+					Dimension:     "records",
+					Relationships: rels,
+					ContentFile:   tmpPath,
 				})
 				os.Remove(tmpPath)
 				if err != nil {
@@ -294,6 +367,7 @@ Examples:
 	}
 	cmd.Flags().String("level", "", "opt-in depth: L0 (metadata only), L1 (+ safe summary), L2 (+ full snapshot) — required")
 	cmd.Flags().String("levels", "", "batch: comma-separated levels L0,L1,L2 to build 1-3 shr at once (mutually exclusive with --level)")
+	cmd.Flags().String("provenance", "extracted", "provenance: extracted (EKA-to-EKA) or audited (non-EKA spike, source is filesystem path)")
 	cmd.Flags().String("id", "", "shr id (default: share-<source-id>-<level>)")
 	cmd.Flags().String("title", "", "shr title (default derived from source)")
 	cmd.Flags().String("description", "", "shr description (default derived from source)")
@@ -346,6 +420,41 @@ func shrSnapshotGuard(snap any) error {
 		return fmt.Errorf("snapshot size %d exceeds guard %d (source too large for L2)", len(b), shrSnapshotSizeLimit)
 	}
 	return nil
+}
+
+func auditNonEKAPath(root string) (string, string) {
+	var files []string
+	var totalBytes int64
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			// skip .git etc.
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == ".eka" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		info, _ := d.Info()
+		if info != nil {
+			totalBytes += info.Size()
+		}
+		files = append(files, rel)
+		if len(files) > 200 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Strings(files)
+	if len(files) > 50 {
+		files = files[:50]
+	}
+	summary := fmt.Sprintf("Audited %s: %d files, %d bytes, sample=[%s]", filepath.Base(root), len(files), totalBytes, strings.Join(files, ","))
+	// hash of file list for pin
+	h := sha256.Sum256([]byte(strings.Join(files, "\n") + fmt.Sprint(totalBytes)))
+	return summary, hex.EncodeToString(h[:])[:16]
 }
 
 func buildSafeSummary(u *exchange.Unit) string {
