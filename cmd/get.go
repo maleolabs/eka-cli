@@ -231,6 +231,8 @@ Exit codes:
 			dimFilter, _ := cmd.Flags().GetString(flagGetDimension)
 			phaseFilter, _ := cmd.Flags().GetString(flagGetPhase)
 			levelFilter, _ := cmd.Flags().GetString(flagGetLevel)
+			projectFilter, _ := cmd.Flags().GetString(flagGetProject)
+			versionFilter, _ := cmd.Flags().GetString(flagGetVersion)
 			offset, _ := cmd.Flags().GetInt(flagGetOffset)
 			limit, _ := cmd.Flags().GetInt(flagGetLimit)
 			page, _ := cmd.Flags().GetInt(flagGetPage)
@@ -304,6 +306,11 @@ Exit codes:
 				}
 				levelFilter = lf
 			}
+			if versionFilter != "" {
+				if _, _, _, ok := parseGetVersionParts(versionFilter); !ok {
+					return fmt.Errorf("get: --version must be semver X.Y.Z or X.Y, got %q", versionFilter)
+				}
+			}
 			// The resolution prologue: open (never create) the Runtime,
 			// then gate on workspace and repository state.
 			r, err := runtime.Open()
@@ -355,6 +362,8 @@ Exit codes:
 				dimFilter:   dimFilter,
 				phaseFilter: phaseFilter,
 				levelFilter: levelFilter,
+				projectFilter: projectFilter,
+				versionFilter: versionFilter,
 				active:      active,
 				current:     current,
 				container:   container,
@@ -400,6 +409,8 @@ Exit codes:
 	cmd.Flags().String(flagGetDimension, "", "domain query: filter by primary knowledge dimension")
 	cmd.Flags().String(flagGetPhase, "", "domain query: filter by phase context attribute")
 	cmd.Flags().String(flagGetLevel, "", "domain/identity: filter by shr level (L0, L1, L2) — server-side; for shr sharing objects")
+	cmd.Flags().String(flagGetProject, "", "shr only: filter by sourceProject (per-project identifier)")
+	cmd.Flags().String(flagGetVersion, "", "shr only: filter by sourceVersion (semver, respects immutability)")
 	cmd.Flags().Int(flagGetOffset, 0, "containers/execution: 0-based offset into the collection (default 0)")
 	cmd.Flags().Int(flagGetLimit, 0, "containers/execution: page size (default 0 = no limit)")
 	cmd.Flags().Int(flagGetPage, 1, "containers/execution: 1-based page number (requires --limit; default 1)")
@@ -424,6 +435,8 @@ const (
 	flagGetDimension  = "dimension"
 	flagGetPhase      = "phase"
 	flagGetLevel      = "level"
+	flagGetProject    = "project"
+	flagGetVersion    = "version"
 	// Containers query and pagination options (Feature: containers
 	// list).
 	flagGetOffset    = "offset"
@@ -446,6 +459,8 @@ type getOptions struct {
 	dimFilter   string
 	phaseFilter string
 	levelFilter string
+	projectFilter string
+	versionFilter string
 	// Containers query filters (the containers target only).
 	active    bool
 	current   bool
@@ -480,6 +495,22 @@ func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOpti
 		}
 		if lvl := shrLevelOf(unit); lvl == "" {
 			return nil, fmt.Errorf("get: --level filter only applies to shr objects, %q is not a shr (no level)", target)
+		}
+	}
+	if o.projectFilter != "" {
+		if proj := shrProjectOf(unit); proj != "" && proj != o.projectFilter {
+			return nil, fmt.Errorf("get: %q project %q does not match filter --project %q", target, proj, o.projectFilter)
+		}
+		if proj := shrProjectOf(unit); proj == "" {
+			return nil, fmt.Errorf("get: --project filter only applies to shr objects, %q is not a shr (no project)", target)
+		}
+	}
+	if o.versionFilter != "" {
+		if ver := shrVersionOf(unit); ver != "" && ver != o.versionFilter {
+			return nil, fmt.Errorf("get: %q version %q does not match filter --version %q", target, ver, o.versionFilter)
+		}
+		if ver := shrVersionOf(unit); ver == "" {
+			return nil, fmt.Errorf("get: --version filter only applies to shr objects, %q is not a shr (no version)", target)
 		}
 	}
 	doc, err := machine.NewDocument(unit)
@@ -599,6 +630,12 @@ func getDomain(r *runtime.Runtime, repo runtime.Repo, target string, o getOption
 	// Server-side shr level filter for domain queries: --level L0|L1|L2.
 	if o.levelFilter != "" {
 		units = filterByShrLevel(units, o.levelFilter)
+	}
+	if o.projectFilter != "" {
+		units = filterByShrProject(units, o.projectFilter)
+	}
+	if o.versionFilter != "" {
+		units = filterByShrVersion(units, o.versionFilter)
 	}
 	col, err := machine.NewCollection(name, units)
 	if err != nil {
@@ -761,6 +798,51 @@ func shrLevelOf(u *exchange.Unit) string {
 		return strings.ToUpper(strings.TrimSpace(v))
 	}
 	return ""
+}
+
+
+// parseGetVersionParts validates semver for get --version.
+func parseGetVersionParts(v string) (int,int,int,bool) {
+    v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+    parts := strings.Split(v, ".")
+    if len(parts) <2 || len(parts)>3 { return 0,0,0,false }
+    for len(parts)<3 { parts = append(parts, "0") }
+    var nums [3]int
+    for i:=0;i<3;i++ {
+        n:=0
+        for _, ch := range parts[i] {
+            if ch<'0'||ch>'9' { return 0,0,0,false }
+            n=n*10+int(ch-'0')
+        }
+        nums[i]=n
+    }
+    return nums[0],nums[1],nums[2],true
+}
+func shrProjectOf(u *exchange.Unit) string {
+    if u.Identity.Type != "shr" { return "" }
+    if len(u.ContentPayload)==0 { return "" }
+    var m map[string]any
+    if err:=json.Unmarshal(u.ContentPayload,&m); err!=nil { return "" }
+    if v,ok:=m["sourceProject"].(string); ok { return strings.TrimSpace(v) }
+    return ""
+}
+func shrVersionOf(u *exchange.Unit) string {
+    if u.Identity.Type != "shr" { return "" }
+    if len(u.ContentPayload)==0 { return "" }
+    var m map[string]any
+    if err:=json.Unmarshal(u.ContentPayload,&m); err!=nil { return "" }
+    if v,ok:=m["sourceVersion"].(string); ok { return strings.TrimSpace(v) }
+    return ""
+}
+func filterByShrProject(units []*exchange.Unit, proj string) []*exchange.Unit {
+    out:=make([]*exchange.Unit,0,len(units))
+    for _, u:=range units { if shrProjectOf(u)==proj { out=append(out,u) } }
+    return out
+}
+func filterByShrVersion(units []*exchange.Unit, ver string) []*exchange.Unit {
+    out:=make([]*exchange.Unit,0,len(units))
+    for _, u:=range units { if shrVersionOf(u)==ver { out=append(out,u) } }
+    return out
 }
 
 // domainTokens are the five Engineering Domain query tokens in stratum
