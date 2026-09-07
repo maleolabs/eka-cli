@@ -1,0 +1,1 @@
+{"changes":["scripts/ses-init-migrate.sh: check eka get ses exists -\u003e no-op, else new+publish from checkpoint, sync push"],"role":"implementation","summary":"One-time migrasi .eka/execution-state.md -\u003e ses:1 idempotent via scripts/ses-init-migrate.sh","tests":["manual: eka get ses exists -\u003e second run no-op","manual: rm ses then run script -\u003e creates ses:1"]}

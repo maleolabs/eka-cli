@@ -1,0 +1,1 @@
+{"notes":["[role: qa] PASS: idempotent, checks ses exists","[role: code-review] PASS: sh syntax ok"],"role":"review","verdict":"approve"}

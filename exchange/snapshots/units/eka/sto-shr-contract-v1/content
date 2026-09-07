@@ -1,0 +1,1 @@
+{"description":"Definisikan kontrak shr di standard: skema, level L0-L2, provenance extracted/audited, title/description wajib, versioning per rel.","acceptanceCriteria":"Token shr + field level/provenance/title/description + L0-L2 + opt-in default-deny terdokumen di standard; ADR sharing-object-model jadi acuan."}

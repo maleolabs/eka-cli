@@ -1,0 +1,1 @@
+{"changes":["eka-mcp/pack.go ManifestJSON, BootstrapContent","eka-mcp/internal/mcp/server.go resources list/read"],"role":"implementation","summary":"[role: backend] Delivered MCP resources: compact manifest/bootstrap, lazy versioned reads, annotations, fallback docs","tests":["resources_agent_delivery_test.go, pack_test.go"]}

@@ -1,0 +1,1 @@
+{"changes":["eka-mcp/internal/eka/capability.go draft_update via ResolveDraft","eka-mcp/internal/mcp/server.go resolveAuthor, gating"],"role":"implementation","summary":"[role: backend] Aligned MCP authoring with runtime API: draft_update via Authoring, optimistic concurrency, no impersonation, high-impact gated","tests":["capability_safety_test.go, safety_test.go"]}

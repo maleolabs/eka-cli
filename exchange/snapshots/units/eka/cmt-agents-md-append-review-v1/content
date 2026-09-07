@@ -1,0 +1,1 @@
+{"notes":["[role: qa] PASS: idempotent marker, template correct","[role: code-review] PASS: sh syntax ok, platform_sync hook correct"],"role":"review","verdict":"approve"}

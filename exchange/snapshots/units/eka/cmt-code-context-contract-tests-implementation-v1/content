@@ -1,0 +1,1 @@
+{"changes":["eka-cli/cmd/code_context_test.go"],"role":"implementation","summary":"[role: backend] Added contract coverage: L0-L3, depth orthogonality, invalid inputs, unsupported language fallback, low-confidence provenance, RAG not canonical","tests":["TestCodeContextContractLevelsDepthAndBounds, TestCodeContextUnsupportedAndFallback, TestCodeContextInvalidInputs"]}

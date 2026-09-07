@@ -1,0 +1,1 @@
+{"description":"Builder EKA-to-EKA: CKO sumber jadi shr snapshot copy, klasifikasi L0-L2, opt-in depth.","acceptanceCriteria":"Builder ekstrak CKO jadi shr L0-L2 dengan provenance extracted + pin hash sumber; output bundle mandiri lolos validate."}

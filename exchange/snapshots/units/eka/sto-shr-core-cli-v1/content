@@ -1,0 +1,1 @@
+{"description":"Implementasi shr di core + CLI: tipe CKO, validasi, get/view/export/import, snapshot copy + pin hash.","acceptanceCriteria":"CKO shr tampil di get/context; CLI get/view/export/import shr jalan; konflik identitas reject/re-namespace; lossless idempotent."}
