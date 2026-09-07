@@ -231,7 +231,8 @@ Exit codes:
 		newCodeContextCmd(), newCodeDiscoverCmd(), newCodeGetCmd(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
-		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand(), newCaptureCommand())
+		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand(), newCaptureCommand(),
+		newShrCommand())
 	root.AddCommand(newAuthoringCommands()...)
 	// The root help and the landing Commands list are grouped by intent
 	// (Authoring / Repository & Exchange / Knowledge Access / Runtime &
