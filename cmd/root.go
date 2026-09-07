@@ -226,7 +226,7 @@ Exit codes:
 		"verbose output: additional detail lines (per-unit lists, plan actions)")
 	root.PersistentFlags().Bool(flagVersion, false,
 		"print the CLI version (the same first line 'eka version' reports) and exit")
-	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
+	root.AddCommand(newShareCommand(), newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
 		newCodeContextCmd(), newCodeDiscoverCmd(), newCodeGetCmd(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
