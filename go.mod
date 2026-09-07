@@ -41,3 +41,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.45.0 // indirect
 )
+
+replace github.com/maleolabs/eka-core => /home/m2codeloan/m2code/maleolabs/eka/eka-core
