@@ -124,29 +124,32 @@ Examples:
 				fmt.Fprintln(s.W, s.Dim("Use eka shr build <source> --level L0 to create one"))
 				return nil
 			}
-			// Human clean list: id + level (project/version/title if verbose) — theme table inside global margin
+			// Human clean list — theme table with unicode (not ascii) and full ns/type:id
 			if verbose {
 				ui.NewHeader(s, "Shared knowledge (shr) — verbose").Render()
-				// Table head inside global margin (s.W) with theme table (header dim, aligned columns)
-				fmt.Fprintln(s.W, s.Dim("ID                              | Level | Project         | Version    | Title"))
-				fmt.Fprintln(s.W, s.Dim("--------------------------------+-------+-----------------+------------+------------------------------"))
+				tbl := ui.NewTable(s, "SHARED KNOWLEDGE", "LEVEL", "PROJECT", "VERSION", "TITLE")
 				for _, u := range units {
-					levelStr := shrLevelOf(u)
-					var m map[string]any
-					_ = json.Unmarshal(u.ContentPayload, &m)
-					title, _ := m["title"].(string)
-					fmt.Fprintf(s.W, "  %-30s %-4s  %-15s %-10s %s\n", u.Identity.ID, levelStr, shrProjectOf(u), shrVersionOf(u), title)
+					form := u.Identity.Namespace + "/" + u.Identity.Type + ":" + u.Identity.ID
+					tbl.AddRow([]string{form, shrLevelOf(u), shrProjectOf(u), shrVersionOf(u), func() string {
+						var m2 map[string]any
+						_ = json.Unmarshal(u.ContentPayload, &m2)
+						t, _ := m2["title"].(string)
+						return t
+					}()}, nil)
 				}
+				tbl.Render()
 			} else {
-				ui.NewHeader(s, "Shared knowledge (shr) — clean list (id + level)").Render()
-				fmt.Fprintln(s.W, s.Dim("ID                              | Level"))
-				fmt.Fprintln(s.W, s.Dim("--------------------------------+-------"))
+				ui.NewHeader(s, "Shared knowledge (shr) — clean list").Render()
+				tbl := ui.NewTable(s, "SHARED KNOWLEDGE", "LEVEL")
 				for _, u := range units {
-					fmt.Fprintf(s.W, "  %-30s %s\n", u.Identity.ID, shrLevelOf(u))
+					form := u.Identity.Namespace + "/" + u.Identity.Type + ":" + u.Identity.ID
+					tbl.AddRow([]string{form, shrLevelOf(u)}, nil)
 				}
+				tbl.Render()
 				// Empty line margin top before tip, inside global margin
 				fmt.Fprintln(s.W, "")
-				fmt.Fprintln(s.W, s.Dim("Use --verbose for project/version/title, --json for machine, or eka shr show <id> for detail"))
+				fmt.Fprintln(s.W, s.Dim("Tip: eka shr show <ns/type:id> --level L0 for detail, --verbose for project/version/title, --json for machine"))
+				fmt.Fprintln(s.W, s.Dim("Delete: eka shr delete <ns/type:id> --yes  (use full ns/type:id from table)"))
 			}
 			ui.NewSummary(s).Add("Count", fmt.Sprintf("%d shr", len(units))).Render()
 			return nil
