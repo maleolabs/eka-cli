@@ -61,10 +61,22 @@ Examples:
 				fmt.Fprintf(cmd.ErrOrStderr(), "eka: no workspace at %s; run 'eka sync' first\n", r.Path())
 				return &exitError{code: exitFail}
 			}
-			// Global search: all projects, Operations domain
-			units, err := r.Knowledge.Search(runtime.SearchQuery{Domain: "Operations", Type: "shr"})
+			// Global search: all projects, Operations domain (shr list is global, outside repo)
+			projects, err := r.Workspace.Projects()
 			if err != nil {
 				return fmt.Errorf("shr list failed: %w", err)
+			}
+			var allUnits []*exchange.Unit
+			for _, proj := range projects {
+				unitsForProj, err := r.Knowledge.Search(runtime.SearchQuery{ProjectID: proj.ID, Domain: "Operations", Type: "shr"})
+				if err != nil {
+					return fmt.Errorf("shr list failed: %w", err)
+				}
+				allUnits = append(allUnits, unitsForProj...)
+			}
+			units := allUnits
+			if len(projects) == 0 {
+				units = []*exchange.Unit{}
 			}
 			// Dedup latest per line (parity get)
 			units = dedupLinesLatest(units)
@@ -219,11 +231,19 @@ Examples:
 					id = id[idx+1:]
 				}
 				id = strings.TrimPrefix(id, "shr:")
-				units, err := r.Knowledge.Search(runtime.SearchQuery{Domain: "Operations", Type: "shr"})
+				projects, err := r.Workspace.Projects()
 				if err != nil {
 					return err
 				}
-				units = dedupLinesLatest(units)
+				var allUnits []*exchange.Unit
+				for _, proj := range projects {
+					unitsForProj, err := r.Knowledge.Search(runtime.SearchQuery{ProjectID: proj.ID, Domain: "Operations", Type: "shr"})
+					if err != nil {
+						return err
+					}
+					allUnits = append(allUnits, unitsForProj...)
+				}
+				units := dedupLinesLatest(allUnits)
 				for _, u := range units {
 					if u.Identity.ID == id {
 						unit = u
