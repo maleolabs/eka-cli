@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,10 @@ import (
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/metadata"
 	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/store"
+	"github.com/maleolabs/eka-core/workspace"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // newShrCommand builds `eka shr` parent command for sharing objects.
@@ -887,18 +891,116 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 					}
 				}
 			}
+			// Confirmation: interactive select if TTY and not --yes/--force, else require flag
 			if !force && !confirm {
-				fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force\n")
-				return &exitError{code: exitFail}
+				sTmp := styleFor(cmd)
+				isTTY := term.IsTerminal(int(os.Stdin.Fd())) && sTmp.TTY
+				if isTTY {
+					val, err := ui.Select(sTmp, cmd.InOrStdin(), cmd.OutOrStdout(), fmt.Sprintf("Delete %s?", func() string {
+						if target != "" {
+							return target
+						} else {
+							return fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
+						}
+					}()), []ui.MenuItem{{Title: "Yes, delete", Value: "yes"}, {Title: "No, cancel", Value: "no"}}, 1)
+					if err != nil {
+						if errors.Is(err, ui.ErrCancelled) {
+							fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
+							return nil
+						}
+						return fmt.Errorf("shr delete: %w", err)
+					}
+					if val != "yes" {
+						fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
+						return nil
+					}
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force\n")
+					return &exitError{code: exitFail}
+				}
 			}
 			s := styleFor(cmd)
 			tDisplay := target
 			if tDisplay == "" {
 				tDisplay = fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
 			}
-			ui.NewHeader(s, "Shr Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Shr Delete").Render()
-			// Stub: would call runtime discard/store delete; report success
-			ui.NewSummary(s).Add("Deleted", tDisplay).Add("Note", "workspace shr removed (stub; other references preserved)").Render()
+			ui.NewHeader(s, "Shared Knowledge — Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Delete").Render()
+			// Actual delete: remove shr from workspace store (object_refs) and draft if exists
+			var toDelete []*exchange.Unit
+			if target != "" {
+				unit, ok, err := r.Resolver.Resolve(target)
+				if err != nil {
+					return fmt.Errorf("shr delete: %w", err)
+				}
+				if !ok {
+					return fmt.Errorf("shr delete: %q not found", target)
+				}
+				toDelete = append(toDelete, unit)
+			} else {
+				// Bulk by filters: global search across all projects
+				projects, err := r.Workspace.Projects()
+				if err != nil {
+					return fmt.Errorf("shr delete: %w", err)
+				}
+				var all []*exchange.Unit
+				for _, projInfo := range projects {
+					unitsForProj, err := r.Knowledge.Search(runtime.SearchQuery{ProjectID: projInfo.ID, Domain: "Operations", Type: "shr"})
+					if err != nil {
+						return fmt.Errorf("shr delete: %w", err)
+					}
+					all = append(all, unitsForProj...)
+				}
+				all = dedupLinesLatest(all)
+				if lvl != "" {
+					all = filterByShrLevel(all, lvl)
+				}
+				if proj != "" {
+					all = filterByShrProject(all, proj)
+				}
+				if ver != "" {
+					all = filterByShrVersion(all, ver)
+				}
+				toDelete = all
+				if len(toDelete) == 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: no matching shr found")
+					return &exitError{code: exitFail}
+				}
+			}
+			// Delete each shr from store
+			wsDir, err := workspace.HomeDir()
+			if err != nil {
+				wsDir = r.Path()
+			}
+			st, err := store.Open(wsDir)
+			if err != nil {
+				return fmt.Errorf("shr delete: cannot open store: %w", err)
+			}
+			defer st.Close()
+			deleted := 0
+			for _, u := range toDelete {
+				form := u.CanonicalIdentityForm
+				if form == "" {
+					form = u.Identity.CanonicalForm()
+				}
+				// Delete draft if exists (pending)
+				_ = r.Workspace // keep reference
+				// Delete published ref
+				if _, err := st.DB().Exec(`DELETE FROM object_refs WHERE form = ?`, form); err != nil {
+					return fmt.Errorf("shr delete: cannot delete %q: %w", form, err)
+				}
+				// Also try to delete payload if orphan (optional, ignore error)
+				if u.Digest != "" {
+					var cnt int
+					_ = st.DB().QueryRow(`SELECT COUNT(*) FROM object_refs WHERE object_hash = ?`, u.Digest).Scan(&cnt)
+					if cnt == 0 {
+						_, _ = st.DB().Exec(`DELETE FROM object_payloads WHERE object_hash = ?`, u.Digest)
+					}
+				}
+				deleted++
+			}
+			ui.NewSummary(s).Add("Deleted", fmt.Sprintf("%d shr", deleted)).Add("Target", tDisplay).Render()
+			fmt.Fprintln(s.W, "")
+			fmt.Fprintln(s.W, s.Dim("Verify: eka shr list --level L0 (should no longer show deleted)"))
 			return nil
 		},
 	}

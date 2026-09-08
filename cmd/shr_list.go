@@ -119,15 +119,14 @@ Examples:
 				return nil
 			}
 			if len(units) == 0 {
-				ui.NewHeader(s, "Shared knowledge (shr)").Render()
-				fmt.Fprintln(s.W, "no shared knowledge (shr) in workspace")
-				fmt.Fprintln(s.W, s.Dim("Use eka shr build <source> --level L0 to create one"))
+				ui.NewHeader(s, "Shared Knowledge").Render()
+				fmt.Fprintln(s.W, "No shared knowledge yet.")
+				fmt.Fprintln(s.W, s.Dim("Create one: eka shr build <source> --level L0 --id <name>  →  eka publish <ns>/shr:<name>"))
 				return nil
 			}
-			// Human clean list — theme table with unicode (not ascii) and full ns/type:id
 			if verbose {
-				ui.NewHeader(s, "Shared knowledge (shr) — verbose").Render()
-				tbl := ui.NewTable(s, "SHARED KNOWLEDGE", "LEVEL", "PROJECT", "VERSION", "TITLE")
+				ui.NewHeader(s, "Shared Knowledge").Add("Total", fmt.Sprintf("%d", len(units))).Add("View", "detailed").Render()
+				tbl := ui.NewTable(s, "Knowledge", "Level", "Project", "Version", "Title")
 				for _, u := range units {
 					form := u.Identity.Namespace + "/" + u.Identity.Type + ":" + u.Identity.ID
 					tbl.AddRow([]string{form, shrLevelOf(u), shrProjectOf(u), shrVersionOf(u), func() string {
@@ -139,17 +138,16 @@ Examples:
 				}
 				tbl.Render()
 			} else {
-				ui.NewHeader(s, "Shared knowledge (shr) — clean list").Render()
-				tbl := ui.NewTable(s, "SHARED KNOWLEDGE", "LEVEL")
+				ui.NewHeader(s, "Shared Knowledge").Add("Total", fmt.Sprintf("%d", len(units))).Render()
+				tbl := ui.NewTable(s, "Knowledge", "Level")
 				for _, u := range units {
 					form := u.Identity.Namespace + "/" + u.Identity.Type + ":" + u.Identity.ID
 					tbl.AddRow([]string{form, shrLevelOf(u)}, nil)
 				}
 				tbl.Render()
-				// Empty line margin top before tip, inside global margin
+				// Tip inside global margin with empty line
 				fmt.Fprintln(s.W, "")
-				fmt.Fprintln(s.W, s.Dim("Tip: eka shr show <ns/type:id> --level L0 for detail, --verbose for project/version/title, --json for machine"))
-				fmt.Fprintln(s.W, s.Dim("Delete: eka shr delete <ns/type:id> --yes  (use full ns/type:id from table)"))
+				fmt.Fprintln(s.W, s.Dim("Show details: eka shr show <ns/type:id>  •  Delete: eka shr delete <ns/type:id> --yes"))
 			}
 			ui.NewSummary(s).Add("Count", fmt.Sprintf("%d shr", len(units))).Render()
 			return nil
