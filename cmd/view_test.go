@@ -1045,10 +1045,10 @@ func TestViewRetrievalFlagErrors(t *testing.T) {
 		{[]string{"view", "board", "--container", "wave-0"}, "the board projection supports --offset/--limit/--page/--member/--json only"},
 		{[]string{"view", "board", "--json", "--limit", "2"}, "board --json does not compose with pagination"},
 		{[]string{"view", "containers", "--json"}, "--json is a board-projection flag"},
-		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
-		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
-		{[]string{"view", "execution", "--member", "alice"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
-		{[]string{"view", "execution", "--json"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)"},
+		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "execution", "--member", "alice"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "execution", "--json"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
 	}
 	for _, c := range cases {
 		code, out, errText := runIn(c.args)
