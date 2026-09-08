@@ -118,29 +118,35 @@ Examples:
 				fmt.Fprintln(cmd.OutOrStdout(), string(b))
 				return nil
 			}
-			// Human clean list: id + level (project/version/title if verbose)
 			if len(units) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "no shared knowledge (shr) in workspace")
+				ui.NewHeader(s, "Shared knowledge (shr)").Render()
+				fmt.Fprintln(s.W, "no shared knowledge (shr) in workspace")
+				fmt.Fprintln(s.W, s.Dim("Use eka shr build <source> --level L0 to create one"))
 				return nil
 			}
-			// Human clean list: id + level (project/version/title if verbose)
+			// Human clean list: id + level (project/version/title if verbose) — theme table inside global margin
 			if verbose {
 				ui.NewHeader(s, "Shared knowledge (shr) — verbose").Render()
-				fmt.Fprintln(cmd.OutOrStdout(), s.Dim("ID | Level | Project | Version | Title"))
+				// Table head inside global margin (s.W) with theme table (header dim, aligned columns)
+				fmt.Fprintln(s.W, s.Dim("ID                              | Level | Project         | Version    | Title"))
+				fmt.Fprintln(s.W, s.Dim("--------------------------------+-------+-----------------+------------+------------------------------"))
 				for _, u := range units {
 					levelStr := shrLevelOf(u)
 					var m map[string]any
 					_ = json.Unmarshal(u.ContentPayload, &m)
 					title, _ := m["title"].(string)
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-30s %-4s %-15s %-10s %s\n", u.Identity.ID, levelStr, shrProjectOf(u), shrVersionOf(u), title)
+					fmt.Fprintf(s.W, "  %-30s %-4s  %-15s %-10s %s\n", u.Identity.ID, levelStr, shrProjectOf(u), shrVersionOf(u), title)
 				}
 			} else {
 				ui.NewHeader(s, "Shared knowledge (shr) — clean list (id + level)").Render()
-				fmt.Fprintln(cmd.OutOrStdout(), s.Dim("ID | Level"))
+				fmt.Fprintln(s.W, s.Dim("ID                              | Level"))
+				fmt.Fprintln(s.W, s.Dim("--------------------------------+-------"))
 				for _, u := range units {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-30s %s\n", u.Identity.ID, shrLevelOf(u))
+					fmt.Fprintf(s.W, "  %-30s %s\n", u.Identity.ID, shrLevelOf(u))
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), s.Dim("Use --verbose for project/version/title, --json for machine, or eka shr show <id> for detail"))
+				// Empty line margin top before tip, inside global margin
+				fmt.Fprintln(s.W, "")
+				fmt.Fprintln(s.W, s.Dim("Use --verbose for project/version/title, --json for machine, or eka shr show <id> for detail"))
 			}
 			ui.NewSummary(s).Add("Count", fmt.Sprintf("%d shr", len(units))).Render()
 			return nil
@@ -285,25 +291,27 @@ Examples:
 			snap, _ := m["snapshot"]
 			deepDocs, _ := m["deepDocs"]
 			ui.NewHeader(s, "Shr detail — "+unit.Identity.ID).Render()
-			fmt.Fprintf(cmd.OutOrStdout(), "  ID: %s\n", unit.Identity.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Level: %s  Project: %s  Version: %s\n", lvl, proj, ver)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Title: %s\n", title)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Description: %s\n", desc)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Form: %s\n", unit.CanonicalIdentityForm)
+			// Detail inside global margin (s.W) with theme, empty line before tip
+			fmt.Fprintf(s.W, "  ID: %s\n", unit.Identity.ID)
+			fmt.Fprintf(s.W, "  Level: %s  Project: %s  Version: %s\n", lvl, proj, ver)
+			fmt.Fprintf(s.W, "  Title: %s\n", title)
+			fmt.Fprintf(s.W, "  Description: %s\n", desc)
+			fmt.Fprintf(s.W, "  Form: %s\n", unit.CanonicalIdentityForm)
 			if summary != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "\n  Summary (%s): %s\n", lvl, summary)
+				fmt.Fprintf(s.W, "\n  Summary (%s): %s\n", lvl, summary)
 			}
 			if withDocs && deepDocs != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "\n  DeepDocs: %v\n", deepDocs)
+				fmt.Fprintf(s.W, "\n  DeepDocs: %v\n", deepDocs)
 			} else if snap != nil && lvl == "L2" {
 				b, _ := json.Marshal(snap)
 				snip := string(b)
 				if len(snip) > 500 {
 					snip = snip[:500] + "..."
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "\n  Snapshot (L2): %s\n", snip)
+				fmt.Fprintf(s.W, "\n  Snapshot (L2): %s\n", snip)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), s.Dim("Use --json for full payload, --with-docs for deepDocs (L2)"))
+			fmt.Fprintln(s.W, "")
+			fmt.Fprintln(s.W, s.Dim("Use --json for full payload, --with-docs for deepDocs (L2)"))
 			return nil
 		},
 	}
