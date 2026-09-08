@@ -439,13 +439,17 @@ func auditNonEKAPath(root string) (string, string) {
 }
 func auditNonEKAPathLevel(root, level string) (string, string) {
 	level = strings.ToUpper(strings.TrimSpace(level))
-	if level == "" { level = "L0" }
+	if level == "" {
+		level = "L0"
+	}
 	var files []string
 	var docs []string
 	var totalBytes int64
 	var codeFiles []string
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil { return nil }
+		if err != nil {
+			return nil
+		}
 		if d.IsDir() {
 			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == ".eka" || d.Name() == "dist" {
 				return filepath.SkipDir
@@ -459,17 +463,27 @@ func auditNonEKAPathLevel(root, level string) (string, string) {
 			return nil
 		}
 		info, _ := d.Info()
-		if info != nil { totalBytes += info.Size() }
+		if info != nil {
+			totalBytes += info.Size()
+		}
 		files = append(files, rel)
 		// Level-aware deep scan: L0 shallow only file list; L1/L2 also scan docs + codegraph
 		if level == "L1" || level == "L2" {
-			if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, "readme") { docs = append(docs, rel) }
+			if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, "readme") {
+				docs = append(docs, rel)
+			}
 			if strings.HasSuffix(lower, ".go") || strings.HasSuffix(lower, ".ts") || strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml") {
-				if len(codeFiles) < 100 { codeFiles = append(codeFiles, rel) }
+				if len(codeFiles) < 100 {
+					codeFiles = append(codeFiles, rel)
+				}
 			}
 		}
-		if len(files) > 500 && level == "L0" { return filepath.SkipAll }
-		if len(files) > 1000 { return filepath.SkipAll }
+		if len(files) > 500 && level == "L0" {
+			return filepath.SkipAll
+		}
+		if len(files) > 1000 {
+			return filepath.SkipAll
+		}
 		return nil
 	})
 	sort.Strings(files)
@@ -477,17 +491,24 @@ func auditNonEKAPathLevel(root, level string) (string, string) {
 	sort.Strings(codeFiles)
 	// Truncate for display
 	sample := files
-	if len(sample) > 50 { sample = sample[:50] }
+	if len(sample) > 50 {
+		sample = sample[:50]
+	}
 	summary := fmt.Sprintf("Audited %s: %d files, %d bytes, level=%s, sample=[%s]", filepath.Base(root), len(files), totalBytes, level, strings.Join(sample, ","))
 	if level == "L1" || level == "L2" {
-		summary += fmt.Sprintf(" docs=%d [%s] codegraph=%d [%s]", len(docs), strings.Join(docs[:min(5,len(docs))], ","), len(codeFiles), strings.Join(codeFiles[:min(5,len(codeFiles))], ","))
+		summary += fmt.Sprintf(" docs=%d [%s] codegraph=%d [%s]", len(docs), strings.Join(docs[:min(5, len(docs))], ","), len(codeFiles), strings.Join(codeFiles[:min(5, len(codeFiles))], ","))
 		// Redaction note
 		summary += " redacted: secrets filtered"
 	}
 	h := sha256.Sum256([]byte(strings.Join(files, "\n") + fmt.Sprint(totalBytes) + level))
 	return summary, hex.EncodeToString(h[:])[:16]
 }
-func min(a,b int) int { if a<b {return a}; return b }
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 func buildSafeSummary(u *exchange.Unit) string {
 	var sb strings.Builder
@@ -549,197 +570,244 @@ func extractSnapshot(u *exchange.Unit) any {
 }
 
 func resolveShrVersion(project, level string) string {
-    // Read eka.yaml version if present, else default 0.1.0
-    // For EKA repos, project version is in anvil.yaml or eka.yaml; fallback to 1.0.0
-    b, err := os.ReadFile("eka.yaml")
-    ver := "1.0.0"
-    if err == nil {
-        // naive parse: look for version: line
-        for _, line := range strings.Split(string(b), "\n") {
-            line = strings.TrimSpace(line)
-            if strings.HasPrefix(line, "version:") {
-                v := strings.TrimSpace(strings.TrimPrefix(line, "version:"))
-                v = strings.Trim(v, "\"'\"")
-                if v != "" {
-                    ver = v
-                }
-                break
-            }
-        }
-    }
-    if v2, err := os.ReadFile("anvil.yaml"); err == nil {
-        for _, line := range strings.Split(string(v2), "\n") {
-            line = strings.TrimSpace(line)
-            if strings.HasPrefix(line, "version:") {
-                v := strings.TrimSpace(strings.TrimPrefix(line, "version:"))
-                v = strings.Trim(v, "\"'\"")
-                if v != "" && v != "1" {
-                    ver = v
-                    break
-                }
-            }
-        }
-    }
-    // Ensure semver-like
-    parts := strings.Split(ver, ".")
-    if len(parts) == 1 {
-        ver = ver + ".0.0"
-    } else if len(parts) == 2 {
-        ver = ver + ".0"
-    }
-    return ver
+	// Read eka.yaml version if present, else default 0.1.0
+	// For EKA repos, project version is in anvil.yaml or eka.yaml; fallback to 1.0.0
+	b, err := os.ReadFile("eka.yaml")
+	ver := "1.0.0"
+	if err == nil {
+		// naive parse: look for version: line
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "version:") {
+				v := strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+				v = strings.Trim(v, "\"'\"")
+				if v != "" {
+					ver = v
+				}
+				break
+			}
+		}
+	}
+	if v2, err := os.ReadFile("anvil.yaml"); err == nil {
+		for _, line := range strings.Split(string(v2), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "version:") {
+				v := strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+				v = strings.Trim(v, "\"'\"")
+				if v != "" && v != "1" {
+					ver = v
+					break
+				}
+			}
+		}
+	}
+	// Ensure semver-like
+	parts := strings.Split(ver, ".")
+	if len(parts) == 1 {
+		ver = ver + ".0.0"
+	} else if len(parts) == 2 {
+		ver = ver + ".0"
+	}
+	return ver
 }
 
 func parseVersionParts(v string) (int, int, int, bool) {
-    v = strings.TrimSpace(v)
-    v = strings.TrimPrefix(v, "v")
-    parts := strings.Split(v, ".")
-    if len(parts) < 2 {
-        return 0, 0, 0, false
-    }
-    // pad to 3
-    for len(parts) < 3 { parts = append(parts, "0") }
-    var nums [3]int
-    for i := 0; i < 3; i++ {
-        n := 0
-        for _, ch := range parts[i] {
-            if ch < '0' || ch > '9' { return 0,0,0,false }
-            n = n*10 + int(ch-'0')
-        }
-        nums[i] = n
-    }
-    return nums[0], nums[1], nums[2], true
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 {
+		return 0, 0, 0, false
+	}
+	// pad to 3
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	var nums [3]int
+	for i := 0; i < 3; i++ {
+		n := 0
+		for _, ch := range parts[i] {
+			if ch < '0' || ch > '9' {
+				return 0, 0, 0, false
+			}
+			n = n*10 + int(ch-'0')
+		}
+		nums[i] = n
+	}
+	return nums[0], nums[1], nums[2], true
 }
 
 func isVersionImmutableViolation(oldVer, newVer string) bool {
-    omaj, omin, _, ok1 := parseVersionParts(oldVer)
-    nmaj, nmin, _, ok2 := parseVersionParts(newVer)
-    if !ok1 || !ok2 { return false }
-    // 3-part: major immutable
-    if strings.Count(oldVer, ".") >= 2 || strings.Count(newVer, ".") >= 2 {
-        if omaj != nmaj { return true }
-        return false
-    }
-    // 2-part: minor immutable (actually first part is major? spec: 2-part minor immutable)
-    if omaj != nmaj || omin != nmin { return true }
-    return false
+	omaj, omin, _, ok1 := parseVersionParts(oldVer)
+	nmaj, nmin, _, ok2 := parseVersionParts(newVer)
+	if !ok1 || !ok2 {
+		return false
+	}
+	// 3-part: major immutable
+	if strings.Count(oldVer, ".") >= 2 || strings.Count(newVer, ".") >= 2 {
+		if omaj != nmaj {
+			return true
+		}
+		return false
+	}
+	// 2-part: minor immutable (actually first part is major? spec: 2-part minor immutable)
+	if omaj != nmaj || omin != nmin {
+		return true
+	}
+	return false
 }
 
 func newShrExportCommand() *cobra.Command {
-    cmd := &cobra.Command{
-        Use:   "export <shr-id> [output]",
-        Short: "Export shr to ekapkg (RSF) — type distinction shared vs live KMS",
-        Long: `Export a shr sharing object to an RSF ekapkg package.
+	cmd := &cobra.Command{
+		Use:   "export <shr-id> [output]",
+		Short: "Export shr to ekapkg (RSF) — type distinction shared vs live KMS",
+		Long: `Export a shr sharing object to an RSF ekapkg package.
 Type distinction: live KMS vs shared knowledge is preserved via package header.
 Does NOT reuse eka export — dedicated shr export path.`,
-        Args: cobra.RangeArgs(1, 2),
-        RunE: func(cmd *cobra.Command, args []string) error {
-            target := args[0]
-            out, _ := cmd.Flags().GetString("output")
-            if len(args) == 2 && out == "" { out = args[1] }
-            r, err := openAuthoringRuntime(cmd)
-            if err != nil { return err }
-            defer r.Close()
-            // Resolve shr to verify exists
-            unit, ok, err := r.Resolver.Resolve(target)
-            if err != nil { return fmt.Errorf("shr export: %w", err) }
-            if !ok { return fmt.Errorf("shr export: %q not found", target) }
-            if unit.Identity.Type != "shr" { return fmt.Errorf("shr export: %q is not a shr (type %s)", target, unit.Identity.Type) }
-            // Use exchange export for single shr line — deterministic RSF
-            s := styleFor(cmd)
-            // For now delegate to exchange.Export via temp dir approach — stub writes JSON envelope as ekapkg
-            // Minimal viable: create a .ekapkg JSON envelope with type=shared
-            if out == "" { out = fmt.Sprintf("%s-%s.ekapkg", unit.Identity.ID, shrLevelOf(unit)) }
-            // Verify output path writable
-            envelope := map[string]any{
-                "type": "shared", "format": "RSF v1", "level": shrLevelOf(unit),
-                "sourceProject": func() string { var m map[string]any; json.Unmarshal(unit.ContentPayload, &m); if v, ok := m["sourceProject"].(string); ok { return v }; return "" }(),
-                "unit": unit.CanonicalIdentityForm,
-            }
-            b, _ := json.MarshalIndent(envelope, "", "  ")
-            if err := os.WriteFile(out, b, 0644); err != nil { return fmt.Errorf("shr export: write %q: %w", out, err) }
-            ui.NewHeader(s, "Shr Export").Add("Shr", target).Add("Output", out).Add("Type", "shared").Pipeline("Shr Export").Render()
-            return nil
-        },
-    }
-    cmd.Flags().StringP("output", "o", "", "output .ekapkg file (default <shr-id>.ekapkg)")
-    return cmd
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			out, _ := cmd.Flags().GetString("output")
+			if len(args) == 2 && out == "" {
+				out = args[1]
+			}
+			r, err := openAuthoringRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			// Resolve shr to verify exists
+			unit, ok, err := r.Resolver.Resolve(target)
+			if err != nil {
+				return fmt.Errorf("shr export: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("shr export: %q not found", target)
+			}
+			if unit.Identity.Type != "shr" {
+				return fmt.Errorf("shr export: %q is not a shr (type %s)", target, unit.Identity.Type)
+			}
+			// Use exchange export for single shr line — deterministic RSF
+			s := styleFor(cmd)
+			// For now delegate to exchange.Export via temp dir approach — stub writes JSON envelope as ekapkg
+			// Minimal viable: create a .ekapkg JSON envelope with type=shared
+			if out == "" {
+				out = fmt.Sprintf("%s-%s.ekapkg", unit.Identity.ID, shrLevelOf(unit))
+			}
+			// Verify output path writable
+			envelope := map[string]any{
+				"type": "shared", "format": "RSF v1", "level": shrLevelOf(unit),
+				"sourceProject": func() string {
+					var m map[string]any
+					json.Unmarshal(unit.ContentPayload, &m)
+					if v, ok := m["sourceProject"].(string); ok {
+						return v
+					}
+					return ""
+				}(),
+				"unit": unit.CanonicalIdentityForm,
+			}
+			b, _ := json.MarshalIndent(envelope, "", "  ")
+			if err := os.WriteFile(out, b, 0644); err != nil {
+				return fmt.Errorf("shr export: write %q: %w", out, err)
+			}
+			ui.NewHeader(s, "Shr Export").Add("Shr", target).Add("Output", out).Add("Type", "shared").Pipeline("Shr Export").Render()
+			return nil
+		},
+	}
+	cmd.Flags().StringP("output", "o", "", "output .ekapkg file (default <shr-id>.ekapkg)")
+	return cmd
 }
 
 func newShrImportCommand() *cobra.Command {
-    cmd := &cobra.Command{
-        Use:   "import <file.ekapkg>",
-        Short: "Import shr ekapkg (RSF) — restores shared knowledge",
-        Args: cobra.ExactArgs(1),
-        RunE: func(cmd *cobra.Command, args []string) error {
-            path := args[0]
-            b, err := os.ReadFile(path)
-            if err != nil { return fmt.Errorf("shr import: read %q: %w", path, err) }
-            var env map[string]any
-            if err := json.Unmarshal(b, &env); err != nil { return fmt.Errorf("shr import: invalid ekapkg %q: %w", path, err) }
-            typ, _ := env["type"].(string)
-            if typ != "shared" && typ != "live" { typ = "shared" }
-            s := styleFor(cmd)
-            ui.NewHeader(s, "Shr Import").Add("File", path).Add("Type", typ).Add("Status", "imported (stub restores via workspace)").Pipeline("Shr Import").Render()
-            // Real implementation would call exchange.Import; stub validates envelope and reports success
-            return nil
-        },
-    }
-    return cmd
+	cmd := &cobra.Command{
+		Use:   "import <file.ekapkg>",
+		Short: "Import shr ekapkg (RSF) — restores shared knowledge",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := args[0]
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("shr import: read %q: %w", path, err)
+			}
+			var env map[string]any
+			if err := json.Unmarshal(b, &env); err != nil {
+				return fmt.Errorf("shr import: invalid ekapkg %q: %w", path, err)
+			}
+			typ, _ := env["type"].(string)
+			if typ != "shared" && typ != "live" {
+				typ = "shared"
+			}
+			s := styleFor(cmd)
+			ui.NewHeader(s, "Shr Import").Add("File", path).Add("Type", typ).Add("Status", "imported (stub restores via workspace)").Pipeline("Shr Import").Render()
+			// Real implementation would call exchange.Import; stub validates envelope and reports success
+			return nil
+		},
+	}
+	return cmd
 }
 
 func newShrDeleteCommand() *cobra.Command {
-    cmd := &cobra.Command{
-        Use:   "delete <target>",
-        Short: "Delete shared knowledge from workspace (respects immutability with --force)",
-        Long: `Delete a shr sharing object from the workspace store.
+	cmd := &cobra.Command{
+		Use:   "delete <target>",
+		Short: "Delete shared knowledge from workspace (respects immutability with --force)",
+		Long: `Delete a shr sharing object from the workspace store.
 Target: eka/shr:<id> or filtered by --project --version --level.
 Requires confirmation; use --force to bypass. Respects version immutability (major/minor) but allows --force override for correction.`,
-        Args: cobra.MaximumNArgs(1),
-        RunE: func(cmd *cobra.Command, args []string) error {
-            target := ""
-            if len(args) > 0 { target = args[0] }
-            proj, _ := cmd.Flags().GetString("project")
-            ver, _ := cmd.Flags().GetString("version")
-            lvl, _ := cmd.Flags().GetString("level")
-            force, _ := cmd.Flags().GetBool("force")
-            confirm, _ := cmd.Flags().GetBool("yes")
-            if target == "" && proj == "" && ver == "" && lvl == "" {
-                return fmt.Errorf("shr delete: target or --project/--version/--level required")
-            }
-            r, err := openAuthoringRuntime(cmd)
-            if err != nil { return err }
-            defer r.Close()
-            if target != "" {
-                unit, ok, err := r.Resolver.Resolve(target)
-                if err != nil { return fmt.Errorf("shr delete: %w", err) }
-                if !ok { return fmt.Errorf("shr delete: %q not found", target) }
-                // Immutability check: if unit has sourceVersion and ver flag differs in major/minor, require force
-                if ver != "" {
-                    var m map[string]any
-                    json.Unmarshal(unit.ContentPayload, &m)
-                    if oldVer, ok := m["sourceVersion"].(string); ok && isVersionImmutableViolation(oldVer, ver) && !force {
-                        return fmt.Errorf("shr delete: version immutability violation %q -> %q (major/minor immutable); use --force to override", oldVer, ver)
-                    }
-                }
-            }
-            if !force && !confirm {
-                fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force\n")
-                return &exitError{code: exitFail}
-            }
-            s := styleFor(cmd)
-            tDisplay := target
-            if tDisplay == "" { tDisplay = fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl) }
-            ui.NewHeader(s, "Shr Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Shr Delete").Render()
-            // Stub: would call runtime discard/store delete; report success
-            ui.NewSummary(s).Add("Deleted", tDisplay).Add("Note", "workspace shr removed (stub; other references preserved)").Render()
-            return nil
-        },
-    }
-    cmd.Flags().String("project", "", "filter by sourceProject (e.g. my-app)")
-    cmd.Flags().String("version", "", "filter by sourceVersion (e.g. 1.2.3)")
-    cmd.Flags().String("level", "", "filter by level L0|L1|L2")
-    cmd.Flags().Bool("force", false, "force delete even if version immutability would block")
-    cmd.Flags().BoolP("yes", "y", false, "confirm without prompt")
-    return cmd
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := ""
+			if len(args) > 0 {
+				target = args[0]
+			}
+			proj, _ := cmd.Flags().GetString("project")
+			ver, _ := cmd.Flags().GetString("version")
+			lvl, _ := cmd.Flags().GetString("level")
+			force, _ := cmd.Flags().GetBool("force")
+			confirm, _ := cmd.Flags().GetBool("yes")
+			if target == "" && proj == "" && ver == "" && lvl == "" {
+				return fmt.Errorf("shr delete: target or --project/--version/--level required")
+			}
+			r, err := openAuthoringRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			if target != "" {
+				unit, ok, err := r.Resolver.Resolve(target)
+				if err != nil {
+					return fmt.Errorf("shr delete: %w", err)
+				}
+				if !ok {
+					return fmt.Errorf("shr delete: %q not found", target)
+				}
+				// Immutability check: if unit has sourceVersion and ver flag differs in major/minor, require force
+				if ver != "" {
+					var m map[string]any
+					json.Unmarshal(unit.ContentPayload, &m)
+					if oldVer, ok := m["sourceVersion"].(string); ok && isVersionImmutableViolation(oldVer, ver) && !force {
+						return fmt.Errorf("shr delete: version immutability violation %q -> %q (major/minor immutable); use --force to override", oldVer, ver)
+					}
+				}
+			}
+			if !force && !confirm {
+				fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force\n")
+				return &exitError{code: exitFail}
+			}
+			s := styleFor(cmd)
+			tDisplay := target
+			if tDisplay == "" {
+				tDisplay = fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
+			}
+			ui.NewHeader(s, "Shr Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Shr Delete").Render()
+			// Stub: would call runtime discard/store delete; report success
+			ui.NewSummary(s).Add("Deleted", tDisplay).Add("Note", "workspace shr removed (stub; other references preserved)").Render()
+			return nil
+		},
+	}
+	cmd.Flags().String("project", "", "filter by sourceProject (e.g. my-app)")
+	cmd.Flags().String("version", "", "filter by sourceVersion (e.g. 1.2.3)")
+	cmd.Flags().String("level", "", "filter by level L0|L1|L2")
+	cmd.Flags().Bool("force", false, "force delete even if version immutability would block")
+	cmd.Flags().BoolP("yes", "y", false, "confirm without prompt")
+	return cmd
 }

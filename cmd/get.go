@@ -353,21 +353,21 @@ Exit codes:
 				return &exitError{code: exitFail}
 			}
 			opts := getOptions{
-				compact:     compact,
-				noContent:   noContent,
-				upstream:    withUpstream,
-				downstream:  withDownstream,
-				timeline:    withTimeline,
-				typeFilter:  typeFilter,
-				dimFilter:   dimFilter,
-				phaseFilter: phaseFilter,
-				levelFilter: levelFilter,
+				compact:       compact,
+				noContent:     noContent,
+				upstream:      withUpstream,
+				downstream:    withDownstream,
+				timeline:      withTimeline,
+				typeFilter:    typeFilter,
+				dimFilter:     dimFilter,
+				phaseFilter:   phaseFilter,
+				levelFilter:   levelFilter,
 				projectFilter: projectFilter,
 				versionFilter: versionFilter,
-				active:      active,
-				current:     current,
-				container:   container,
-				pagination:  pagination,
+				active:        active,
+				current:       current,
+				container:     container,
+				pagination:    pagination,
 			}
 			// Issue-number targets (RFC): "#<n>" resolves to its line
 			// (unambiguous across the per-group counters) before the
@@ -450,15 +450,15 @@ const (
 // getOptions carries the retrieval options of one get run, already
 // validated for target applicability by the command prologue.
 type getOptions struct {
-	compact     bool
-	noContent   bool
-	upstream    bool
-	downstream  bool
-	timeline    bool
-	typeFilter  string
-	dimFilter   string
-	phaseFilter string
-	levelFilter string
+	compact       bool
+	noContent     bool
+	upstream      bool
+	downstream    bool
+	timeline      bool
+	typeFilter    string
+	dimFilter     string
+	phaseFilter   string
+	levelFilter   string
 	projectFilter string
 	versionFilter string
 	// Containers query filters (the containers target only).
@@ -800,49 +800,78 @@ func shrLevelOf(u *exchange.Unit) string {
 	return ""
 }
 
-
 // parseGetVersionParts validates semver for get --version.
-func parseGetVersionParts(v string) (int,int,int,bool) {
-    v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
-    parts := strings.Split(v, ".")
-    if len(parts) <2 || len(parts)>3 { return 0,0,0,false }
-    for len(parts)<3 { parts = append(parts, "0") }
-    var nums [3]int
-    for i:=0;i<3;i++ {
-        n:=0
-        for _, ch := range parts[i] {
-            if ch<'0'||ch>'9' { return 0,0,0,false }
-            n=n*10+int(ch-'0')
-        }
-        nums[i]=n
-    }
-    return nums[0],nums[1],nums[2],true
+func parseGetVersionParts(v string) (int, int, int, bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, 0, 0, false
+	}
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	var nums [3]int
+	for i := 0; i < 3; i++ {
+		n := 0
+		for _, ch := range parts[i] {
+			if ch < '0' || ch > '9' {
+				return 0, 0, 0, false
+			}
+			n = n*10 + int(ch-'0')
+		}
+		nums[i] = n
+	}
+	return nums[0], nums[1], nums[2], true
 }
 func shrProjectOf(u *exchange.Unit) string {
-    if u.Identity.Type != "shr" { return "" }
-    if len(u.ContentPayload)==0 { return "" }
-    var m map[string]any
-    if err:=json.Unmarshal(u.ContentPayload,&m); err!=nil { return "" }
-    if v,ok:=m["sourceProject"].(string); ok { return strings.TrimSpace(v) }
-    return ""
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["sourceProject"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
 }
 func shrVersionOf(u *exchange.Unit) string {
-    if u.Identity.Type != "shr" { return "" }
-    if len(u.ContentPayload)==0 { return "" }
-    var m map[string]any
-    if err:=json.Unmarshal(u.ContentPayload,&m); err!=nil { return "" }
-    if v,ok:=m["sourceVersion"].(string); ok { return strings.TrimSpace(v) }
-    return ""
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["sourceVersion"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
 }
 func filterByShrProject(units []*exchange.Unit, proj string) []*exchange.Unit {
-    out:=make([]*exchange.Unit,0,len(units))
-    for _, u:=range units { if shrProjectOf(u)==proj { out=append(out,u) } }
-    return out
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrProjectOf(u) == proj {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 func filterByShrVersion(units []*exchange.Unit, ver string) []*exchange.Unit {
-    out:=make([]*exchange.Unit,0,len(units))
-    for _, u:=range units { if shrVersionOf(u)==ver { out=append(out,u) } }
-    return out
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrVersionOf(u) == ver {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // domainTokens are the five Engineering Domain query tokens in stratum
