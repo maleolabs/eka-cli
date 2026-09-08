@@ -309,6 +309,16 @@ Examples:
 							}
 							content["snapshot"] = snap
 						}
+						// EKA L2 deep scan: API contracts + docs (per clarified EKA-to-EKA: any project with eka.yaml, not just project eka)
+						if deepDocs := deepScanEkaDocsForL2(); len(deepDocs) > 0 {
+							content["deepDocs"] = deepDocs
+							// Guard extended snapshot including deepDocs
+							if err := shrSnapshotGuard(content["deepDocs"]); err != nil {
+								return fmt.Errorf("shr build: deepDocs %w", err)
+							}
+						}
+						// Auto-detect hint: if sourceArg looks like path with eka.yaml, suggest CKO (EKA-to-EKA should use CKO, not path)
+						// Provenance is explicit via flag, but we log hint for agent clarity
 					}
 				}
 
@@ -569,6 +579,35 @@ func extractSnapshot(u *exchange.Unit) any {
 	}
 	// For markdown or non-JSON content, return as string (truncated safe for snapshot L2 is full)
 	return string(u.ContentPayload)
+}
+
+func deepScanEkaDocsForL2() []string {
+	// Deep scan for EKA L2: collect API contract docs (docs/**/*.md, spec/**/*.md) from current repo
+	// EKA-to-EKA means any project with eka.yaml (not just project eka), so scan is generic
+	var docs []string
+	roots := []string{"docs", "spec", "api"}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" || d.Name() == ".eka" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(strings.ToLower(path), ".md") {
+				docs = append(docs, path)
+				if len(docs) >= 50 {
+					return filepath.SkipAll
+				}
+			}
+			return nil
+		})
+	}
+	sort.Strings(docs)
+	return docs
 }
 
 func resolveShrVersion(project, level string) string {

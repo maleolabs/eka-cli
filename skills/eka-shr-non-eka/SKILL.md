@@ -1,15 +1,29 @@
 ---
 name: eka-shr-non-eka
-description: Non-EKA deep audit shr skill — audit filesystem codebase for non-EKA sharing, level-adjusted deep scan
+description: Audits non-EKA filesystem codebases (no eka.yaml) into shr via level-adjusted deep scan — use when source is directory, L0 shallow vs L1/L2 docs+codegraph+redaction.
 ---
-# EKA Shr Non-EKA
 
-Audit a non-EKA codebase (filesystem path) into shr with level-adjusted deep audit.
+# Auditing non-EKA (no eka.yaml)
 
-- L0: shallow file list only (fast)
-- L1/L2: deep scan docs + codegraph + sensitivity redaction (README, manifests, codegraph, secrets filtered)
+## When to use
+Source is directory path, `eka.yaml` missing → asks `project` id (not hardcode `eka`). For EKA (any project with `eka.yaml`), see `eka-shr-builder` (extract from KMS, L2 deepDocs).
 
-Usage:
-- `eka shr build /path/to/codebase --provenance audited --level L1`
-- `--provenance audited` triggers auditNonEKAPathLevel (deep audit)
-- Output usable for snapshot validation after redaction
+## Run exactly
+```bash
+eka shr build /path/to/code --provenance audited --level L0 --id share-<base>-l0
+eka shr build /path/to/code --provenance audited --levels L0,L1
+eka publish <ns>/shr:<id>
+```
+
+## Levels
+| Level | Scan | Cap |
+|---|---|---|
+| L0 | file list only | 500, skip .git/node_modules/.eka/dist |
+| L1/L2 | +docs(.md)+codegraph(.go/.ts/.js/.py/.yaml) + redaction(.env/secret/.pem) | 1000, 1MiB guard, hash per level |
+
+See `references/audit-levels.md`.
+
+## Scan (MCP parity)
+```bash
+eka get operations --type shr --level L0 --project my-app
+```
