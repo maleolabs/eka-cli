@@ -29,6 +29,8 @@ func newShrCommand() *cobra.Command {
 	cmd.AddCommand(newShrExportCommand())
 	cmd.AddCommand(newShrImportCommand())
 	cmd.AddCommand(newShrDeleteCommand())
+	cmd.AddCommand(newShrListCommand())
+	cmd.AddCommand(newShrShowCommand())
 	return cmd
 }
 
@@ -249,11 +251,17 @@ Examples:
 				}
 				description := strings.TrimSpace(descFlag)
 				if description == "" {
-					shortHash := sourceHash
-					if len(shortHash) > 8 {
-						shortHash = shortHash[:8]
+					// L0/L1/L2 description: agent-provided overview is primary (via --description)
+					// Auto-extract README is final fallback only (not primary) — a project may have no README or more specific docs
+					if overview := extractShrOverviewFallback(sourceArg, isAudited); overview != "" {
+						description = overview
+					} else {
+						shortHash := sourceHash
+						if len(shortHash) > 8 {
+							shortHash = shortHash[:8]
+						}
+						description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance %s)", sourceForm, shortHash, lvl, provenance)
 					}
-					description = fmt.Sprintf("Sharing object derived from %s at %s (level %s, provenance %s)", sourceForm, shortHash, lvl, provenance)
 				} else if len(levels) > 1 {
 					description = fmt.Sprintf("%s (level %s)", description, lvl)
 				}
@@ -608,6 +616,55 @@ func deepScanEkaDocsForL2() []string {
 	}
 	sort.Strings(docs)
 	return docs
+}
+
+func extractShrOverviewFallback(sourceArg string, isAudited bool) string {
+	// L0 description fallback: agent-provided --description is primary.
+	// This auto-extract is final fallback only (project may have no README or more specific docs).
+	// For audited (non-EKA) path, try README in source path; for EKA, try current repo README.
+	var candidates []string
+	if isAudited {
+		candidates = []string{
+			filepath.Join(sourceArg, "README.md"),
+			filepath.Join(sourceArg, "README"),
+			filepath.Join(sourceArg, "readme.md"),
+		}
+	} else {
+		candidates = []string{"README.md", "README", "readme.md", "docs/README.md"}
+	}
+	for _, p := range candidates {
+		if b, err := os.ReadFile(p); err == nil {
+			// First 500 chars, first paragraph
+			txt := strings.TrimSpace(string(b))
+			if idx := strings.Index(txt, "\n\n"); idx > 0 && idx < 500 {
+				txt = txt[:idx]
+			}
+			if len(txt) > 500 {
+				txt = txt[:500] + "..."
+			}
+			// Collapse whitespace
+			txt = strings.ReplaceAll(txt, "\n", " ")
+			txt = strings.Join(strings.Fields(txt), " ")
+			if len(txt) > 20 {
+				return txt
+			}
+		}
+	}
+	// Also try package manifest as fallback
+	if isAudited {
+		for _, mf := range []string{filepath.Join(sourceArg, "package.json"), filepath.Join(sourceArg, "go.mod"), filepath.Join(sourceArg, "pyproject.toml")} {
+			if b, err := os.ReadFile(mf); err == nil {
+				txt := strings.TrimSpace(string(b))
+				if len(txt) > 500 {
+					txt = txt[:500]
+				}
+				if len(txt) > 20 {
+					return "Project manifest: " + filepath.Base(mf) + " " + txt[:100]
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func resolveShrVersion(project, level string) string {

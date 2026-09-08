@@ -244,11 +244,22 @@ Exit codes:
 			memberFlag, _ := cmd.Flags().GetString(flagViewMember)
 			memberGiven := memberFlag != ""
 			jsonGiven, _ := cmd.Flags().GetBool(flagViewJSON)
+			viewType, _ := cmd.Flags().GetString(flagViewType)
+			viewLevel, _ := cmd.Flags().GetString(flagViewLevel)
+			viewProject, _ := cmd.Flags().GetString(flagViewProject)
+			viewVersion, _ := cmd.Flags().GetString(flagViewVersion)
+			opsFiltered := viewType != "" || viewLevel != "" || viewProject != "" || viewVersion != ""
+			if viewLevel != "" {
+				lv := strings.ToUpper(strings.TrimSpace(viewLevel))
+				if lv != "L0" && lv != "L1" && lv != "L2" {
+					return fmt.Errorf("view: --level must be L0, L1 or L2, got %q", viewLevel)
+				}
+			}
 			paginated := pagination.offsetGiven || pagination.limitGiven || pagination.pageGiven
 			filtered := active || current || container != ""
 			switch name {
 			case "board":
-				if filtered {
+				if filtered || opsFiltered {
 					return fmt.Errorf("the board projection supports --offset/--limit/--page/--member/--json only")
 				}
 				if jsonGiven && paginated {
@@ -256,12 +267,19 @@ Exit codes:
 				}
 			case "containers":
 				// Pagination and container filters both apply.
-				if jsonGiven {
+				if jsonGiven || opsFiltered {
 					return fmt.Errorf("view: --json is a board-projection flag")
 				}
-			default:
+				if opsFiltered {
+					return fmt.Errorf("view: --type/--level/--project/--version require the operations projection")
+				}
+			case "operations":
 				if paginated || filtered || memberGiven || jsonGiven {
-					return fmt.Errorf("the %s projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters)", name)
+					return fmt.Errorf("the operations projection supports --type/--level/--project/--version only (plus no pagination)")
+				}
+			default:
+				if paginated || filtered || memberGiven || jsonGiven || opsFiltered {
+					return fmt.Errorf("the %s projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)", name)
 				}
 			}
 			// The Runtime is the projection source: the repository must
@@ -306,6 +324,9 @@ Exit codes:
 			units, err := r.Knowledge.UnitsByProject(repo.ProjectID)
 			if err != nil {
 				return fmt.Errorf("view failed: %w", err) // Exit 2: store failure.
+			}
+			if name == "operations" && opsFiltered {
+				units = filterOperationsUnits(units, viewType, viewLevel, viewProject, viewVersion)
 			}
 			if len(units) == 0 {
 				// Empty projection: still rendered (exit 0), but the
@@ -455,6 +476,10 @@ Exit codes:
 	cmd.Flags().String(flagViewContainer, "", "containers: keep only the container whose id matches (bare id, ctr-<id>, ctr:<id> or <ns>/ctr:<id>)")
 	cmd.Flags().String(flagViewMember, "", "board: filter to one member's assigned items plus the 'No assignee' bucket (me = `git config user.name`, or the mbr- line form)")
 	cmd.Flags().Bool(flagViewJSON, false, "board: emit the deterministic machine document (schema eka-board-v1 / eka-board-member-v1) instead of the human render")
+	cmd.Flags().String(flagViewType, "", "operations: filter by artifact type token (e.g. shr)")
+	cmd.Flags().String(flagViewLevel, "", "operations: filter by shr level L0|L1|L2 — server-side")
+	cmd.Flags().String(flagViewProject, "", "operations: filter by shr sourceProject per-project")
+	cmd.Flags().String(flagViewVersion, "", "operations: filter by shr sourceVersion semver")
 	// The ticket notes flags: --with-note and --with-comments are
 	// synonyms — both surface the cmt- notes discussing the ticket and
 	// its related work item in the ticket projection.
@@ -474,6 +499,10 @@ const (
 	flagViewContainer = "container"
 	flagViewMember    = "member"
 	flagViewJSON      = "json"
+	flagViewType      = "type"
+	flagViewLevel     = "level"
+	flagViewProject   = "project"
+	flagViewVersion   = "version"
 )
 
 // resolveBoardMember resolves the --member target of the board
@@ -893,4 +922,48 @@ func stateIcon(state string) string {
 // stateMark renders the colored state icon.
 func stateMark(s *ui.Style, state string) string {
 	return stateColor(s, state)(stateIcon(state))
+}
+
+// filterOperationsUnits filters operations domain units by type/level/project/version for clean list.
+// Default is clean id+level only (no content dump) — use with verbose flag for detail.
+func filterOperationsUnits(units []*exchange.Unit, typ, lvl, proj, ver string) []*exchange.Unit {
+	out := units
+	if typ != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if u.Identity.Type == typ {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if lvl != "" {
+		lv := strings.ToUpper(strings.TrimSpace(lvl))
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrLevelOf(u) == lv {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if proj != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrProjectOf(u) == proj {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if ver != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrVersionOf(u) == ver {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	return out
 }

@@ -37,3 +37,14 @@ See `references/shr-levels.md` for payload, `references/semver-immutability.md` 
 - **Non-EKA** = no `eka.yaml` → ask `project` id, `audited` spike with level-adjusted scan
 
 For non-EKA detail see `eka-shr-non-eka`.
+
+## List & show (global, outside repo)
+
+```bash
+eka shr list --level L0 --project X --version Y --json      # clean id+level, global
+eka shr show <id> --level L0 --project X --json --with-docs # strict filter, L2 deepDocs
+# eka get/view operations --type shr --level L0 --project X  # inside repo, clean list id+level (view parity)
+```
+
+`shr list` default clean `id + level`; `--verbose` adds project/version/title, `--json` machine. `view operations` now supports `--type/--level/--project/--version`.
+
