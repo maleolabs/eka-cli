@@ -147,9 +147,7 @@ Examples:
 
 			var unit *exchange.Unit
 			var sourceHash, sourceForm string
-			var auditSummary string
 			if isAudited {
-				// Spike: audit non-EKA codebase at path (no Resolver). Generate synthetic source.
 				info, err := os.Stat(sourceArg)
 				if err != nil {
 					return fmt.Errorf("shr build: audited source path %q not found: %w", sourceArg, err)
@@ -157,7 +155,6 @@ Examples:
 				if !info.IsDir() {
 					return fmt.Errorf("shr build: audited source must be a directory, got %q", sourceArg)
 				}
-				auditSummary, sourceHash = auditNonEKAPath(sourceArg)
 				sourceForm = fmt.Sprintf("audited:%s", sourceArg)
 			} else {
 				// Resolve source CKO via Resolver (qualified forms).
@@ -208,6 +205,11 @@ Examples:
 			// Build each level sequentially (batch).
 			var built []string
 			for _, lvl := range levels {
+				// Fix P1: per-level audit (L0 shallow vs L1/L2 deep scan+redaction); was hardcoded L0 outside loop
+				var auditSummary string
+				if isAudited {
+					auditSummary, sourceHash = auditNonEKAPathLevel(sourceArg, lvl)
+				}
 				shrIDResolved := shrID
 				if shrIDResolved == "" {
 					if isAudited {
