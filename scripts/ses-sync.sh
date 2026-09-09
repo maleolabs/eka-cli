@@ -13,25 +13,35 @@ CHECKPOINT="$REPO_ROOT/.eka/execution-state.md"
 if [ ! -f "$CHECKPOINT" ]; then
   exit 0
 fi
+# Derive project/namespace from the repo's eka.yaml so the ses line is
+# attributed to the current project (project-scoped resolution in
+# `eka status` reads project-local ses first). Fallback to eka/eka
+# when the fields are absent.
+PROJ="$(grep -E '^[[:space:]]*project:' "$REPO_ROOT/eka.yaml" | head -1 | sed 's/.*project:[[:space:]]*//;s/[[:space:]#].*//')"
+NS="$(grep -E '^[[:space:]]*namespace:' "$REPO_ROOT/eka.yaml" | head -1 | sed 's/.*namespace:[[:space:]]*//;s/[[:space:]#].*//')"
+PROJ="${PROJ:-eka}"
+NS="${NS:-eka}"
 # Try publish, retry once on failure (conflict)
 set +e
-eka new eka/ses:execution-state --project eka --namespace eka >/dev/null 2>&1 || true
+eka new "$NS/ses:execution-state" --project "$PROJ" --namespace "$NS" >/dev/null 2>&1 || true
 # Minimal content update: ensure required R9 keys exist via python
-python3 <<'PY' >/dev/null 2>&1 || true
-import json, pathlib
-p = pathlib.Path.home() / ".eka/drafts/eka/ses-execution-state.json"
+PROJ="$PROJ" NS="$NS" python3 <<'PY' >/dev/null 2>&1 || true
+import json, os, pathlib
+proj = os.environ.get("PROJ", "eka")
+ns = os.environ.get("NS", "eka")
+p = pathlib.Path.home() / f".eka/drafts/{proj}/ses-execution-state.json"
 if p.exists():
     d = json.loads(p.read_text())
     d["content"].setdefault("context", "dual-write sync")
-    d["content"].setdefault("verification", "eka get eka/ses:execution-state")
+    d["content"].setdefault("verification", f"eka get {ns}/ses:execution-state")
     d["content"].setdefault("scope", "full")
     d["content"].setdefault("mode", "solo")
     p.write_text(json.dumps(d, indent=2))
 PY
-eka publish eka/ses:execution-state >/dev/null 2>&1
+eka publish "$NS/ses:execution-state" >/dev/null 2>&1
 RC=$?
 if [ $RC -ne 0 ]; then
   sleep 1
-  eka publish eka/ses:execution-state >/dev/null 2>&1 || true
+  eka publish "$NS/ses:execution-state" >/dev/null 2>&1 || true
 fi
 exit 0

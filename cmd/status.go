@@ -154,7 +154,15 @@ func renderSESExecution(s *ui.Style, r *runtime.Runtime) error {
 	var u *exchange.Unit
 	if ferr == nil && found {
 		// Search for ses:execution-state within this project.
-		units, serr := r.Knowledge.Search(runtime.SearchQuery{ProjectID: projRepo.ProjectID, Namespace: "eka", Type: "ses", ID: "execution-state"})
+		// Namespace comes from the repo record (eka.yaml); each
+		// project publishes its own line under its own namespace,
+		// so a cross-project global resolve would leak state.
+		// ponytail: repos registered before schema v3 carry Namespace "".
+		ns := projRepo.Namespace
+		if ns == "" {
+			ns = "eka"
+		}
+		units, serr := r.Knowledge.Search(runtime.SearchQuery{ProjectID: projRepo.ProjectID, Namespace: ns, Type: "ses", ID: "execution-state"})
 		if serr == nil && len(units) > 0 {
 			u = units[len(units)-1]
 		}
