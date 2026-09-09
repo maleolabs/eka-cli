@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/runtime"
 	"github.com/spf13/cobra"
@@ -147,9 +148,25 @@ func scopeStatus(st *runtime.WorkspaceStatus) *runtime.WorkspaceStatus {
 // renderExecution prints the current execution snapshot from ses:execution-state
 // (if present). It is current-only: only the latest instance is rendered.
 func renderSESExecution(s *ui.Style, r *runtime.Runtime) error {
-	u, ok, err := r.Resolver.Resolve("eka/ses:execution-state")
-	if err != nil || !ok {
-		return nil
+	cwd, _ := os.Getwd()
+	// Resolve execution-state scoped to current project if possible.
+	projRepo, found, ferr := r.Workspace.FindRepo(cwd)
+	var u *exchange.Unit
+	if ferr == nil && found {
+		// Search for ses:execution-state within this project.
+		units, serr := r.Knowledge.Search(runtime.SearchQuery{ProjectID: projRepo.ProjectID, Namespace: "eka", Type: "ses", ID: "execution-state"})
+		if serr == nil && len(units) > 0 {
+			u = units[len(units)-1]
+		}
+	}
+	if u == nil {
+		// Fallback to global resolver (maintain backward compat).
+		var ok bool
+		var err error
+		u, ok, err = r.Resolver.Resolve("eka/ses:execution-state")
+		if err != nil || !ok {
+			return nil
+		}
 	}
 	doc, err := machine.NewDocument(u)
 	if err != nil {
