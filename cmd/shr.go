@@ -67,6 +67,8 @@ Flags:
   --description <text> shr description (default: snapshot copy of <source>)
   --project <name>   explicit project (workspace-native)
   --namespace <ns>   explicit namespace (workspace-native)
+  --adopt            publish + adopt into this repo's snapshot + push
+                     (clones receive the shares; requires EKA repo cwd)
 
 Server-side filtering:
   eka get <shr-id> --level L0       identity: strict level match (server-side)
@@ -93,6 +95,7 @@ Examples:
 			projectFlag, _ := cmd.Flags().GetString("project")
 			nsFlag, _ := cmd.Flags().GetString("namespace")
 			provenanceFlag, _ := cmd.Flags().GetString("provenance")
+			adoptFlag, _ := cmd.Flags().GetBool("adopt")
 
 			// Determine batch levels: --levels L0,L1,L2 or single --level
 			var levels []string
@@ -398,6 +401,50 @@ Examples:
 					Add("Batch", fmt.Sprintf("%d shr built: %s", len(built), strings.Join(built, ", "))).
 					Render()
 			}
+
+			// --adopt: publish the built shr, re-attribute them to this
+			// repository's provenance and push, so the snapshot (and every
+			// clone) carries the shares (ADR-032). Requires the cwd to be a
+			// registered EKA repository whose namespace matches the built
+			// shares (a repository is one platform).
+			if adoptFlag {
+				s := styleFor(cmd)
+				abs, err := filepath.Abs(".")
+				if err != nil {
+					return fmt.Errorf("shr build: --adopt: %w", err)
+				}
+				_, _, hasMeta, err := metadata.Find(filepath.Clean(abs))
+				if err != nil {
+					return fmt.Errorf("shr build: --adopt: %w", err)
+				}
+				if !hasMeta {
+					return fmt.Errorf("shr build: --adopt requires an EKA repository (no eka.yaml at %s); run from the source repo or use 'eka sync push --adopt' explicitly", abs)
+				}
+				repo, found, err := r.Workspace.FindRepo(filepath.Clean(abs))
+				if err != nil {
+					return fmt.Errorf("shr build: --adopt: %w", err)
+				}
+				if !found {
+					return fmt.Errorf("shr build: --adopt: repository %s is not registered; run 'eka sync' first", abs)
+				}
+				// Publish each built draft (the adopt operates on published refs).
+				for _, form := range built {
+					if _, err := runtime.Authoring.Publish(r, form, runtime.PublishOptions{}); err != nil {
+						return fmt.Errorf("shr build: --adopt: publish %s: %w", form, err)
+					}
+				}
+				adoptRes, err := runtime.Authoring.SyncAdopt(r, ".", built, false)
+				if err != nil {
+					return fmt.Errorf("shr build: --adopt: %w", err)
+				}
+				if _, err := runtime.Authoring.Sync(r, ".", runtime.SyncOptions{Push: true}); err != nil {
+					return fmt.Errorf("shr build: --adopt: push: %w", err)
+				}
+				ui.NewSummary(s).
+					Add("Adopted", fmt.Sprintf("%d shr into %s", adoptRes.Units, repo.Name)).
+					Add("Snapshot", "pushed — clones receive the shares on next sync pull").
+					Render()
+			}
 			return nil
 		},
 	}
@@ -409,6 +456,7 @@ Examples:
 	cmd.Flags().String("description", "", "shr description (default derived from source)")
 	cmd.Flags().String("project", "", "explicit project for workspace-native authoring")
 	cmd.Flags().String("namespace", "", "explicit namespace for workspace-native authoring")
+	cmd.Flags().Bool("adopt", false, "publish the built shr, adopt into this repository's snapshot and push — clones receive the shares on next sync pull (requires EKA repo cwd)")
 	return cmd
 }
 
@@ -854,7 +902,13 @@ func newShrDeleteCommand() *cobra.Command {
 		Short: "Delete shared knowledge from workspace (respects immutability with --force)",
 		Long: `Delete a shr sharing object from the workspace store.
 Target: eka/shr:<id> or filtered by --project --version --level.
-Requires confirmation; use --force to bypass. Respects version immutability (major/minor) but allows --force override for correction.`,
+Requires confirmation (interactive select on a TTY, or --yes/--force for
+scripts and agents). Respects version immutability (major/minor) but
+allows --force override for correction.
+
+Preview first: --dry-run lists exactly what would be deleted without
+touching the store — bulk filters cross every project in the workspace,
+so preview before any bulk delete.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := ""
@@ -866,6 +920,7 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 			lvl, _ := cmd.Flags().GetString("level")
 			force, _ := cmd.Flags().GetBool("force")
 			confirm, _ := cmd.Flags().GetBool("yes")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if target == "" && proj == "" && ver == "" && lvl == "" {
 				return fmt.Errorf("shr delete: target or --project/--version/--level required")
 			}
@@ -874,58 +929,8 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 				return err
 			}
 			defer r.Close()
-			if target != "" {
-				unit, ok, err := r.Resolver.Resolve(target)
-				if err != nil {
-					return fmt.Errorf("shr delete: %w", err)
-				}
-				if !ok {
-					return fmt.Errorf("shr delete: %q not found", target)
-				}
-				// Immutability check: if unit has sourceVersion and ver flag differs in major/minor, require force
-				if ver != "" {
-					var m map[string]any
-					json.Unmarshal(unit.ContentPayload, &m)
-					if oldVer, ok := m["sourceVersion"].(string); ok && isVersionImmutableViolation(oldVer, ver) && !force {
-						return fmt.Errorf("shr delete: version immutability violation %q -> %q (major/minor immutable); use --force to override", oldVer, ver)
-					}
-				}
-			}
-			// Confirmation: interactive select if TTY and not --yes/--force, else require flag
-			if !force && !confirm {
-				sTmp := styleFor(cmd)
-				isTTY := term.IsTerminal(int(os.Stdin.Fd())) && sTmp.TTY
-				if isTTY {
-					val, err := ui.Select(sTmp, cmd.InOrStdin(), cmd.OutOrStdout(), fmt.Sprintf("Delete %s?", func() string {
-						if target != "" {
-							return target
-						} else {
-							return fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
-						}
-					}()), []ui.MenuItem{{Title: "Yes, delete", Value: "yes"}, {Title: "No, cancel", Value: "no"}}, 1)
-					if err != nil {
-						if errors.Is(err, ui.ErrCancelled) {
-							fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
-							return nil
-						}
-						return fmt.Errorf("shr delete: %w", err)
-					}
-					if val != "yes" {
-						fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
-						return nil
-					}
-				} else {
-					fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force\n")
-					return &exitError{code: exitFail}
-				}
-			}
-			s := styleFor(cmd)
-			tDisplay := target
-			if tDisplay == "" {
-				tDisplay = fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
-			}
-			ui.NewHeader(s, "Shared Knowledge — Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Delete").Render()
-			// Actual delete: remove shr from workspace store (object_refs) and draft if exists
+
+			// Compute the delete set ONCE (single target or bulk filters).
 			var toDelete []*exchange.Unit
 			if target != "" {
 				unit, ok, err := r.Resolver.Resolve(target)
@@ -937,7 +942,6 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 				}
 				toDelete = append(toDelete, unit)
 			} else {
-				// Bulk by filters: global search across all projects
 				projects, err := r.Workspace.Projects()
 				if err != nil {
 					return fmt.Errorf("shr delete: %w", err)
@@ -966,7 +970,62 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 					return &exitError{code: exitFail}
 				}
 			}
-			// Delete each shr from store
+			// Immutability check: when --version is given and the stored
+			// sourceVersion differs in its immutable part, refuse without --force.
+			if ver != "" {
+				for _, u := range toDelete {
+					var m map[string]any
+					json.Unmarshal(u.ContentPayload, &m)
+					if oldVer, ok := m["sourceVersion"].(string); ok && isVersionImmutableViolation(oldVer, ver) && !force {
+						return fmt.Errorf("shr delete: version immutability violation %q -> %q (major/minor immutable); use --force to override", oldVer, ver)
+					}
+				}
+			}
+
+			s := styleFor(cmd)
+			tDisplay := target
+			if tDisplay == "" {
+				tDisplay = fmt.Sprintf("project=%s version=%s level=%s", proj, ver, lvl)
+			}
+
+			// Dry run: preview the exact delete set, touch nothing.
+			if dryRun {
+				ui.NewHeader(s, "Shared Knowledge — Delete (dry run)").Add("Filter", tDisplay).Pipeline("Preview").Render()
+				tbl := ui.NewTable(s, "Knowledge", "Level", "Project", "Version")
+				for _, u := range toDelete {
+					form := u.Identity.Namespace + "/" + u.Identity.Type + ":" + u.Identity.ID
+					tbl.AddRow([]string{form, shrLevelOf(u), shrProjectOf(u), shrVersionOf(u)}, nil)
+				}
+				tbl.Render()
+				fmt.Fprintln(s.W, "")
+				fmt.Fprintln(s.W, s.Dim(fmt.Sprintf("Would delete %d shr — nothing changed. Re-run without --dry-run to apply.", len(toDelete))))
+				return nil
+			}
+
+			// Confirmation: interactive select on a TTY, else --yes/--force.
+			if !force && !confirm {
+				isTTY := term.IsTerminal(int(os.Stdin.Fd())) && s.TTY
+				if isTTY {
+					val, err := ui.Select(s, cmd.InOrStdin(), cmd.OutOrStdout(), fmt.Sprintf("Delete %d shr (%s)?", len(toDelete), tDisplay), []ui.MenuItem{{Title: "Yes, delete", Value: "yes"}, {Title: "No, cancel", Value: "no"}}, 1)
+					if err != nil {
+						if errors.Is(err, ui.ErrCancelled) {
+							fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
+							return nil
+						}
+						return fmt.Errorf("shr delete: %w", err)
+					}
+					if val != "yes" {
+						fmt.Fprintln(cmd.ErrOrStderr(), "shr delete: cancelled; no changes made")
+						return nil
+					}
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "shr delete: confirmation required — use --yes or --force (or --dry-run to preview)\n")
+					return &exitError{code: exitFail}
+				}
+			}
+
+			ui.NewHeader(s, "Shared Knowledge — Delete").Add("Target", tDisplay).Add("Project", proj).Add("Version", ver).Add("Level", lvl).Pipeline("Delete").Render()
+			// Delete each shr from the workspace store (refs + orphan payloads).
 			wsDir, err := workspace.HomeDir()
 			if err != nil {
 				wsDir = r.Path()
@@ -982,13 +1041,9 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 				if form == "" {
 					form = u.Identity.CanonicalForm()
 				}
-				// Delete draft if exists (pending)
-				_ = r.Workspace // keep reference
-				// Delete published ref
 				if _, err := st.DB().Exec(`DELETE FROM object_refs WHERE form = ?`, form); err != nil {
 					return fmt.Errorf("shr delete: cannot delete %q: %w", form, err)
 				}
-				// Also try to delete payload if orphan (optional, ignore error)
 				if u.Digest != "" {
 					var cnt int
 					_ = st.DB().QueryRow(`SELECT COUNT(*) FROM object_refs WHERE object_hash = ?`, u.Digest).Scan(&cnt)
@@ -1000,7 +1055,7 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 			}
 			ui.NewSummary(s).Add("Deleted", fmt.Sprintf("%d shr", deleted)).Add("Target", tDisplay).Render()
 			fmt.Fprintln(s.W, "")
-			fmt.Fprintln(s.W, s.Dim("Verify: eka shr list --level L0 (should no longer show deleted)"))
+			fmt.Fprintln(s.W, s.Dim("Verify: eka shr list (the deleted shares are gone)"))
 			return nil
 		},
 	}
@@ -1009,5 +1064,6 @@ Requires confirmation; use --force to bypass. Respects version immutability (maj
 	cmd.Flags().String("level", "", "filter by level L0|L1|L2")
 	cmd.Flags().Bool("force", false, "force delete even if version immutability would block")
 	cmd.Flags().BoolP("yes", "y", false, "confirm without prompt")
+	cmd.Flags().Bool("dry-run", false, "preview what would be deleted without changing the store")
 	return cmd
 }
