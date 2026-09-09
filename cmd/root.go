@@ -31,7 +31,7 @@
 // Tests MAY import store/workspace/sync for seeding and corruption
 // fixtures (test-only, documented).
 //
-// Two documented exceptions exist, each justified in its file: the
+// Three documented exceptions exist, each justified in its file: the
 // workspace registry writes of `eka project register` (cmd/project.go
 // — the Runtime's WorkspaceService does not expose the metadata
 // registration path), and the assignment edge writes of
@@ -39,7 +39,14 @@
 // `eka unassign`/`eka reassign` mirror the relate published-path
 // re-point and the draft rewrite at the store/workspace layer; the
 // mirror stays a faithful copy of the runtime mechanism so the two
-// cannot drift).
+// cannot drift), the retire new-instance publishes of cmd/retire.go
+// (the Authoring API has no retire operation, so `eka retire` mirrors
+// the publish new-instance mechanism — MaxInstanceVersion+1,
+// CKO-level ValidateCKO, store.PutUnit — under the same faithful-copy
+// discipline), and the ticket edge removals of cmd/unrelate.go (the
+// Authoring API's relate is edge-add only, so `eka unrelate` mirrors
+// the relate same-version re-point and the draft rewrite for the
+// ticket's derives-from edges).
 //
 // Layout rationale: the reusable engines stay where they are
 // (bootstrap/, conformance/, exchange/, ...). There is deliberately no
@@ -232,7 +239,7 @@ Exit codes:
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
 		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand(), newCaptureCommand(),
-		newShrCommand())
+		newShrCommand(), newRetireCommand(), newUnrelateCommand())
 	root.AddCommand(newAuthoringCommands()...)
 	// The root help and the landing Commands list are grouped by intent
 	// (Authoring / Repository & Exchange / Knowledge Access / Runtime &

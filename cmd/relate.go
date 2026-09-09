@@ -87,6 +87,12 @@ are refused. On the published path, unresolved targets follow the Rule
 content-state is draft, an error otherwise (a pending-draft target is
 therefore tolerated on a draft-state artifact).
 
+Relate only ADDS edges. To REMOVE a ticket's derives-from edge use
+'eka unrelate' (unlink membership, same instance version); to
+WITHDRAW a line without removing edges use 'eka retire' (new
+instance, edges frozen — a retired ticket stays an all-done blocker
+until explicitly unlinked).
+
 Flags:
   --depends-on <ref>[,<ref>...]   relationship targets (also
   --derives-from, --validates, --supersedes, --amends); comma-joined

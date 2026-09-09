@@ -63,6 +63,8 @@ var commandGroupsByName = map[string]string{
 	"assign":     groupAuthoring,
 	"reassign":   groupAuthoring,
 	"unassign":   groupAuthoring,
+	"retire":     groupAuthoring,
+	"unrelate":   groupAuthoring,
 	"capture":    groupAuthoring,
 	"shr":        groupAuthoring,
 	"share":      groupAuthoring,
