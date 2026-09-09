@@ -14,6 +14,7 @@ description: Builds shr snapshots (L0-L2, pinned sourceHash) for any EKA project
 eka shr build <source> --level L0 --id <shr-id>
 eka shr build <source> --levels L0,L1,L2
 eka publish <ns>/shr:<id>
+eka shr build <source> --level L0 --adopt   # publish + adopt into this repo's snapshot + push (clones receive it)
 ```
 
 ## Flags
