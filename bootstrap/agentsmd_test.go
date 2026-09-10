@@ -8,16 +8,24 @@ import (
 	"testing"
 )
 
-// TestBuildAgentsMDBlock pins the managed block bytes: markers,
-// identity line and the static command/skill lines.
+// TestBuildAgentsMDBlock pins the managed block: markers, the identity
+// line, the working loop, read/change verbs, hard rules and the skill
+// routing pointer — the minimum viable operating picture per session.
 func TestBuildAgentsMDBlock(t *testing.T) {
 	b := string(buildAgentsMDBlock("atrium", "atrium-api"))
 	for _, want := range []string{
 		agentsMDMarkerStart,
 		agentsMDMarkerEnd,
 		"Project: atrium | Namespace: atrium-api | Active ctr: none",
-		"eka get <form>",
-		"eka-orientation",
+		"Understand → Context → Reason",
+		"eka status",
+		"eka get <ns>/<type>:<id>",
+		"eka context <subject>",
+		"eka transition <line> <to>",
+		"eka sync push",
+		"eka-router",
+		"eka-engineering-workflow",
+		"eka-troubleshooting",
 	} {
 		if !strings.Contains(b, want) {
 			t.Errorf("block must contain %q:\n%s", want, b)
@@ -25,6 +33,10 @@ func TestBuildAgentsMDBlock(t *testing.T) {
 	}
 	if !strings.HasSuffix(b, agentsMDMarkerEnd) {
 		t.Errorf("block must end at the end marker (no trailing newline — merge owns separation):\n%s", b)
+	}
+	// Token economy: the block must stay compact (~30 lines).
+	if lines := strings.Count(b, "\n"); lines > 32 {
+		t.Errorf("block = %d lines, want ≤ 32 (token budget)", lines)
 	}
 }
 
