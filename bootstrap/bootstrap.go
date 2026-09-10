@@ -58,6 +58,13 @@ type Options struct {
 	// `namespace`): when non-empty the wizard skips it. Must be a valid
 	// EKA identifier.
 	Namespace string
+	// AgentsMD opts into AGENTS.md workflow-context management
+	// (--agents-md): the wizard question is skipped as answered yes.
+	AgentsMD bool
+	// NoAgentsMD opts out (--no-agents-md): the wizard question is
+	// skipped as answered no. It wins over AgentsMD when both are set
+	// (the command refuses that combination before Run).
+	NoAgentsMD bool
 	// DryRun prints the plan and writes nothing.
 	DryRun bool
 	// Stdin feeds the wizard in interactive mode and overwrite
@@ -165,12 +172,23 @@ func Run(opts Options) (*Outcome, error) {
 	// fixes the identity on every path (fresh, adopted, already-eka).
 	interactive := !opts.DryRun && isInteractive(opts.Stdin)
 	already := d.Exists && d.IsEkaRepo
+	// The agent-context answer is tri-state: --agents-md fixes yes,
+	// --no-agents-md fixes no, unset asks (interactive) or defaults to
+	// no (non-interactive, already-initialized).
+	var presetAgentsMD *bool
+	if opts.AgentsMD {
+		presetAgentsMD = &opts.AgentsMD
+	}
+	if opts.NoAgentsMD {
+		no := false
+		presetAgentsMD = &no
+	}
 	var answers Answers
 	switch {
 	case already:
 		answers = DefaultAnswers(d)
 	case interactive:
-		answers, err = Ask(d, opts.Stdin, opts.Stdout, PreAnswers{Project: opts.Project, Namespace: opts.Namespace})
+		answers, err = Ask(d, opts.Stdin, opts.Stdout, PreAnswers{Project: opts.Project, Namespace: opts.Namespace, AgentsMD: presetAgentsMD})
 		if err != nil {
 			return nil, fmt.Errorf("wizard failed: %w", err)
 		}
@@ -182,6 +200,9 @@ func Run(opts Options) (*Outcome, error) {
 	}
 	if opts.Namespace != "" {
 		answers.Namespace = opts.Namespace
+	}
+	if presetAgentsMD != nil {
+		answers.AgentsMD = *presetAgentsMD
 	}
 
 	// Stage 2: deterministic plan derived from discovery + answers.

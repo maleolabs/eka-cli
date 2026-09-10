@@ -80,8 +80,3 @@ if [ "$installed" -eq 0 ]; then
 fi
 
 echo "[platform_sync] done: $installed hook(s) installed from $TEMPLATE_SRC" >&2
-
-# EKA AGENTS.md auto append (ses-auto-wiring)
-if [ -x scripts/agents-md-sync.sh ]; then
-  sh scripts/agents-md-sync.sh || true
-fi

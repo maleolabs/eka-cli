@@ -47,7 +47,18 @@ Identity options:
 When given, the corresponding wizard question is skipped. Both must be
 valid EKA identifiers (lowercase letters, digits, single hyphens).
 
-Prompts (project id, namespace, git init) are asked only when stdin is
+Agent-context options:
+  --agents-md     manage the AGENTS.md workflow-context block (create it
+                  when missing, reconcile drift, never touch other
+                  content); skips the wizard question as yes
+  --no-agents-md  never touch AGENTS.md; skips the wizard question as no
+Without either flag the wizard asks last (default yes). Re-running init
+is idempotent: missing files are backfilled and drifted content is
+reconciled — conflicting eka.yaml/EKA files are never overwritten
+silently, and AGENTS.md user content outside the managed block is
+never touched.
+
+Prompts (project id, namespace, git init, agent context) are asked only when stdin is
 a terminal; otherwise deterministic defaults are used and git is never
 initialized.
 
@@ -60,6 +71,7 @@ Exit codes:
   eka init myproject    create and bootstrap ./myproject
   eka init --project atrium --namespace atrium-api
                         bootstrap with a fixed identity
+  eka init --agents-md   also manage the AGENTS.md workflow block
   eka init --dry-run    preview the plan without writing anything`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,6 +86,17 @@ Exit codes:
 			namespace, err := cmd.Flags().GetString("namespace")
 			if err != nil {
 				return fmt.Errorf("init failed: %w", err)
+			}
+			agentsMD, err := cmd.Flags().GetBool("agents-md")
+			if err != nil {
+				return fmt.Errorf("init failed: %w", err)
+			}
+			noAgentsMD, err := cmd.Flags().GetBool("no-agents-md")
+			if err != nil {
+				return fmt.Errorf("init failed: %w", err)
+			}
+			if agentsMD && noAgentsMD {
+				return fmt.Errorf("init failed: --agents-md and --no-agents-md are mutually exclusive")
 			}
 			target := "."
 			if len(args) == 1 {
@@ -91,13 +114,15 @@ Exit codes:
 
 			s := styleFor(cmd)
 			outcome, err := bootstrap.Run(bootstrap.Options{
-				Target:    target,
-				Project:   project,
-				Namespace: namespace,
-				DryRun:    dryRun,
-				Stdin:     cmd.InOrStdin(),
-				Stdout:    cmd.OutOrStdout(),
-				Stderr:    cmd.ErrOrStderr(),
+				Target:     target,
+				Project:    project,
+				Namespace:  namespace,
+				AgentsMD:   agentsMD,
+				NoAgentsMD: noAgentsMD,
+				DryRun:     dryRun,
+				Stdin:      cmd.InOrStdin(),
+				Stdout:     ui.MarginWriter(cmd.OutOrStdout()),
+				Stderr:     cmd.ErrOrStderr(),
 			})
 			if err != nil {
 				return fmt.Errorf("init failed: %w", err)
@@ -121,6 +146,10 @@ Exit codes:
 		"fix the project id (eka.yaml project); a valid EKA identifier")
 	cmd.Flags().String("namespace", "",
 		"fix the namespace (eka.yaml namespace); a valid EKA identifier")
+	cmd.Flags().Bool("agents-md", false,
+		"manage the AGENTS.md workflow-context block (skips the wizard question as yes)")
+	cmd.Flags().Bool("no-agents-md", false,
+		"never touch AGENTS.md (skips the wizard question as no)")
 	return cmd
 }
 
@@ -200,6 +229,7 @@ func renderInit(s *ui.Style, o *bootstrap.Outcome) {
 		Add("Git Status", o.GitStatus).
 		Add("Standard", "EKA v"+standardVersion).
 		Add("Validation", validationDetail(o.Report)).
+		Add("Agents.md", agentsMDStatus(o)).
 		Render()
 	renderInitIdentity(s, o)
 }
@@ -239,10 +269,41 @@ func renderInitDryRun(s *ui.Style, o *bootstrap.Outcome) {
 		Add("Git Status", dryRunGitStatus(o.Plan)).
 		Add("Standard", "EKA v"+standardVersion).
 		Add("Validation", "not run (dry-run)").
+		Add("Agents.md", agentsMDStatus(o)).
 		Render()
 	// Same identity line as a real run: deterministic output for the
 	// same inputs.
 	renderInitIdentity(s, o)
+}
+
+// agentsMDStatus derives the AGENTS.md line of the init summary: what
+// happened on a real run (created/reconciled/reused), what is planned
+// on a dry-run, or not planned when unmanaged.
+func agentsMDStatus(o *bootstrap.Outcome) string {
+	for _, f := range o.CreatedFiles {
+		if f == bootstrap.AgentsMDName {
+			return "created"
+		}
+	}
+	for _, f := range o.OverwrittenFiles {
+		if f == bootstrap.AgentsMDName {
+			return "reconciled"
+		}
+	}
+	for _, f := range o.ReusedFiles {
+		if f == bootstrap.AgentsMDName {
+			return "reused (current)"
+		}
+	}
+	for _, a := range o.Plan {
+		if a.Path == bootstrap.AgentsMDName {
+			if a.Kind == bootstrap.ActionReuse {
+				return "reused (current)"
+			}
+			return "planned (merge)"
+		}
+	}
+	return "not planned"
 }
 
 // dryRunGitStatus derives the git status of a dry-run from the plan

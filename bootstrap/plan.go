@@ -38,6 +38,13 @@ const (
 	// the embedded compact consumer summary (standardembed — the vendored
 	// eka-standard release asset), the same bytes every repository gets.
 	ActionGenerateEKA ActionKind = "generate-eka"
+	// ActionAgentsMDMerge reconciles the AGENTS.md workflow-context
+	// block (agentsmd.go): missing files are created, marked regions
+	// are replaced on drift, unmarked files gain the block appended.
+	// Only the marked region is ever rewritten — user content outside
+	// it is preserved byte-identical — so the merge applies without
+	// confirmation, interactive or not.
+	ActionAgentsMDMerge ActionKind = "agents-md-merge"
 	// ActionReuse leaves an existing file untouched (identical content).
 	ActionReuse ActionKind = "reuse"
 	// ActionOverwriteConfirm marks an existing file whose content differs
@@ -84,6 +91,8 @@ func (a Action) String() string {
 		return "generate file: " + a.Path + " (repository identity)"
 	case ActionGenerateEKA:
 		return "generate file: " + a.Path + " (standard declaration)"
+	case ActionAgentsMDMerge:
+		return "merge file: " + a.Path + " (workflow context)"
 	case ActionReuse:
 		if a.Detail != "" {
 			return "reuse: " + a.Path + " (" + a.Detail + ")"
@@ -107,7 +116,7 @@ func (a Action) String() string {
 
 // BuildPlan derives the deterministic plan for target from discovery d and
 // answers a. Ordering is stable: target directory, identity file, standard
-// declaration, git, validation. A target that is already an EKA repository
+// declaration, agent context (when requested), git, validation. A target that is already an EKA repository
 // yields a reuse + validate plan only — nothing is ever planned to be
 // overwritten silently — with the standard declaration backfilled when it
 // is missing from the already-initialized repository. An existing eka.yaml
@@ -140,6 +149,9 @@ func BuildPlan(target string, d *Discovery, a Answers) []Action {
 		// The standard declaration follows the same contract: a missing
 		// file on an already-initialized repository is backfilled.
 		plan = planStandardDeclaration(plan, d)
+		// The agent context file: merged (never silently destructive —
+		// only the marked region is rewritten) whenever requested.
+		plan = planAgentsMD(plan, d, a)
 		plan = append(plan, Action{Kind: ActionValidate, Path: target})
 		return plan
 	}
@@ -172,6 +184,11 @@ func BuildPlan(target string, d *Discovery, a Answers) []Action {
 	// summary (standardembed), written after the identity file and
 	// before git, with the same reuse/overwrite-confirm contract.
 	plan = planStandardDeclaration(plan, d)
+
+	// The agent context file (AGENTS.md): merged after the declaration
+	// and before git whenever requested — missing files created, drift
+	// reconciled, user content outside the markers preserved.
+	plan = planAgentsMD(plan, d, a)
 
 	// Git.
 	switch {

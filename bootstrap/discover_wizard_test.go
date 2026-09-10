@@ -252,18 +252,21 @@ func TestSanitizeNamespace(t *testing.T) {
 // TestNeededQuestions pins the fixed question set: the project id and
 // the namespace are ALWAYS asked, in that order, followed by the git
 // question when the target is not already a git repository and git is
-// available. No other question exists in the identity-only wizard.
+// available, then the AGENTS.md workflow-context confirm last.
 func TestNeededQuestions(t *testing.T) {
 	base := &Discovery{BaseName: "my-project", HasReadme: true, IsGitRepo: true, GitAvailable: true}
 	qs := NeededQuestions(base)
-	if len(qs) != 2 {
-		t.Fatalf("project + namespace questions expected, got %d: %v", len(qs), qs)
+	if len(qs) != 3 {
+		t.Fatalf("project + namespace + agents-md questions expected, got %d: %v", len(qs), qs)
 	}
 	if qs[0].Kind != QProject || qs[0].Prompt != "Project id" {
 		t.Errorf("first question must be the project id, got %+v", qs[0])
 	}
 	if qs[1].Kind != QNamespace {
 		t.Errorf("second question must be the namespace, got %+v", qs[1])
+	}
+	if qs[2].Kind != QAgentsMD {
+		t.Errorf("last question must be the agent-context confirm, got %+v", qs[2])
 	}
 	// The defaults decouple the two only when the user overrides: by
 	// default both derive from the sanitized basename.
@@ -273,13 +276,13 @@ func TestNeededQuestions(t *testing.T) {
 }
 
 // TestNeededQuestionsUnusableBaseName: even an unusable base name
-// (filesystem root, empty) keeps the fixed project + namespace
-// questions; their defaults fall back deterministically.
+// (filesystem root, empty) keeps the fixed project + namespace +
+// agents-md questions; their defaults fall back deterministically.
 func TestNeededQuestionsUnusableBaseName(t *testing.T) {
 	for _, base := range []string{"", "/"} {
 		qs := NeededQuestions(&Discovery{BaseName: base, HasReadme: true, IsGitRepo: true})
-		if len(qs) != 2 || qs[0].Kind != QProject || qs[1].Kind != QNamespace {
-			t.Errorf("BaseName %q: project + namespace questions must always be asked, got %v", base, qs)
+		if len(qs) != 3 || qs[0].Kind != QProject || qs[1].Kind != QNamespace || qs[2].Kind != QAgentsMD {
+			t.Errorf("BaseName %q: project + namespace + agents-md questions must always be asked, got %v", base, qs)
 		}
 		if qs[0].Default != fallbackName || qs[1].Default != fallbackName {
 			t.Errorf("BaseName %q: defaults must fall back to %q, got %q/%q", base, fallbackName, qs[0].Default, qs[1].Default)
@@ -303,11 +306,12 @@ func TestNeededQuestionsGit(t *testing.T) {
 }
 
 // TestNeededQuestionsFixedOrder pins the ordering contract: project,
-// then namespace, then git — the git question always comes last.
+// then namespace, then git, then the agent-context confirm — the
+// agents-md question always comes last.
 func TestNeededQuestionsFixedOrder(t *testing.T) {
 	qs := NeededQuestions(&Discovery{BaseName: "x", HasReadme: true, IsGitRepo: false, GitAvailable: true})
-	if len(qs) != 3 || qs[0].Kind != QProject || qs[1].Kind != QNamespace || qs[2].Kind != QGit {
-		t.Errorf("question order must be project, namespace, git, got %v", qs)
+	if len(qs) != 4 || qs[0].Kind != QProject || qs[1].Kind != QNamespace || qs[2].Kind != QGit || qs[3].Kind != QAgentsMD {
+		t.Errorf("question order must be project, namespace, git, agents-md, got %v", qs)
 	}
 }
 
