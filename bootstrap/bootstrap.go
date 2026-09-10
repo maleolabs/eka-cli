@@ -187,6 +187,12 @@ func Run(opts Options) (*Outcome, error) {
 	switch {
 	case already:
 		answers = DefaultAnswers(d)
+		// Re-runs reconcile the managed block (missing files are
+		// backfilled, drift is merged) — the same backfill precedent
+		// as the EKA declaration. Only an explicit --no-agents-md
+		// opts out; the merge never touches user content outside
+		// the markers, so managing by default is safe.
+		answers.AgentsMD = true
 	case interactive:
 		answers, err = Ask(d, opts.Stdin, opts.Stdout, PreAnswers{Project: opts.Project, Namespace: opts.Namespace, AgentsMD: presetAgentsMD})
 		if err != nil {

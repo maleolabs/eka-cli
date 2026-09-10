@@ -170,8 +170,79 @@ func TestAskAgentsMDPreset(t *testing.T) {
 	}
 }
 
-// TestRunAgentsMDEndToEnd: --agents-md creates the file with the
-// managed block on a fresh target (and re-runs reconcile to reuse).
+// TestRunRerunBackfillsAgentsMD: re-running init on an
+// already-initialized repository manages AGENTS.md by default (missing
+// files backfilled) even with no flags — the wizard is skipped there,
+// so the opt-in cannot come from a question.
+func TestRunRerunBackfillsAgentsMD(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "eka.yaml"), []byte("version: 1\nproject: p\nname: d\nnamespace: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if _, err := Run(Options{
+		Target: dir,
+		Stdin:  strings.NewReader(""),
+		Stdout: &out,
+		Stderr: &errb,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, AgentsMDName))
+	if err != nil {
+		t.Fatalf("re-run must backfill AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(got), "Project: p | Namespace: p") {
+		t.Errorf("backfilled block must carry the eka.yaml identity:\n%s", got)
+	}
+}
+
+// TestRunRerunNoAgentsMDOptsOut: --no-agents-md leaves AGENTS.md alone
+// on re-runs.
+func TestRunRerunNoAgentsMDOptsOut(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "eka.yaml"), []byte("version: 1\nproject: p\nname: d\nnamespace: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if _, err := Run(Options{
+		Target: dir, NoAgentsMD: true,
+		Stdin:  strings.NewReader(""),
+		Stdout: &out,
+		Stderr: &errb,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, AgentsMDName)); !os.IsNotExist(err) {
+		t.Errorf("--no-agents-md must leave AGENTS.md untouched, stat err = %v", err)
+	}
+}
+
+// TestRunRerunAgentsMDIdempotent: a current block reconciles to reuse.
+func TestRunRerunAgentsMDIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "eka.yaml"), []byte("version: 1\nproject: p\nname: d\nnamespace: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	block := append(append([]byte(nil), buildAgentsMDBlock("p", "p")...), '\n')
+	if err := os.WriteFile(filepath.Join(dir, AgentsMDName), block, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, AgentsMDName))
+	var out, errb bytes.Buffer
+	if _, err := Run(Options{
+		Target: dir,
+		Stdin:  strings.NewReader(""),
+		Stdout: &out,
+		Stderr: &errb,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, AgentsMDName))
+	if string(after) != string(before) {
+		t.Errorf("current block must stay byte-identical")
+	}
+}
 func TestRunAgentsMDEndToEnd(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "proj")
 	var out, errb bytes.Buffer

@@ -681,8 +681,10 @@ func TestInitNonConformantExitsOne(t *testing.T) {
 	}
 }
 
-// TestInitTwiceIsIdempotent verifies the second run is a no-op and the
-// repository still validates.
+// TestInitTwiceIsIdempotent verifies the re-run contract: the second
+// run backfills the AGENTS.md block the fresh non-interactive first
+// run never created, and the third run is a true no-op. The repository
+// still validates.
 func TestInitTwiceIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	chdirInto(t, dir)
@@ -693,6 +695,9 @@ func TestInitTwiceIsIdempotent(t *testing.T) {
 	before, err := snapshot(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := before["AGENTS.md"]; ok {
+		t.Fatalf("fresh non-interactive init must not create AGENTS.md without opt-in")
 	}
 	code, text, _ := runIn([]string{"init"})
 	if code != 0 {
@@ -705,17 +710,33 @@ func TestInitTwiceIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before) {
-		t.Errorf("second init changed the tree: %d files before, %d after", len(before), len(after))
+	if len(after) != len(before)+1 {
+		t.Fatalf("second init must add exactly AGENTS.md: %d files before, %d after", len(before), len(after))
 	}
 	for path, data := range before {
 		if got, ok := after[path]; !ok || !bytes.Equal(got, data) {
 			t.Errorf("second init modified %s", path)
 		}
 	}
+	code, _, _ = runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("third init: exit = %d, want 0", code)
+	}
+	third, err := snapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third) != len(after) {
+		t.Errorf("third init changed the tree: %d files before, %d after", len(after), len(third))
+	}
+	for path, data := range after {
+		if got, ok := third[path]; !ok || !bytes.Equal(got, data) {
+			t.Errorf("third init modified %s", path)
+		}
+	}
 	code, _, _ = runIn([]string{"validate", dir})
 	if code != 0 {
-		t.Errorf("repository must still validate after second init")
+		t.Errorf("repository must still validate after repeated init")
 	}
 }
 

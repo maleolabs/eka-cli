@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/maleolabs/eka-core/metadata"
 )
 
 // This file implements the AGENTS.md workflow-context management of
@@ -92,13 +94,28 @@ func planAgentsMD(plan []Action, d *Discovery, a Answers) []Action {
 	if !a.AgentsMD {
 		return plan
 	}
+	project, namespace := identityForAgentsMD(d, a)
 	path := filepath.Join(d.AbsTarget, AgentsMDName)
 	existing, err := os.ReadFile(path)
 	if err != nil {
-		return append(plan, Action{Kind: ActionAgentsMDMerge, Path: AgentsMDName, Content: mergeAgentsMD(nil, buildAgentsMDBlock(a.Project, a.Namespace))})
+		return append(plan, Action{Kind: ActionAgentsMDMerge, Path: AgentsMDName, Content: mergeAgentsMD(nil, buildAgentsMDBlock(project, namespace))})
 	}
-	if merged := mergeAgentsMD(existing, buildAgentsMDBlock(a.Project, a.Namespace)); merged != nil {
+	if merged := mergeAgentsMD(existing, buildAgentsMDBlock(project, namespace)); merged != nil {
 		return append(plan, Action{Kind: ActionAgentsMDMerge, Path: AgentsMDName, Content: merged})
 	}
 	return append(plan, Action{Kind: ActionReuse, Path: AgentsMDName})
+}
+
+// identityForAgentsMD resolves the identity the managed block carries:
+// the existing eka.yaml is the authority when present and parseable
+// (the retired shell script grepped the same fields) — re-runs then
+// reconcile against the frozen identity instead of the derived one;
+// otherwise the plan answers apply (fresh targets).
+func identityForAgentsMD(d *Discovery, a Answers) (project, namespace string) {
+	if raw, err := os.ReadFile(filepath.Join(d.AbsTarget, "eka.yaml")); err == nil {
+		if m, perr := metadata.Parse(raw); perr == nil && m.Project != "" && m.Namespace != "" {
+			return m.Project, m.Namespace
+		}
+	}
+	return a.Project, a.Namespace
 }

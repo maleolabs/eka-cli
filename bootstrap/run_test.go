@@ -240,14 +240,14 @@ func TestRunExistingEkaRepo(t *testing.T) {
 	if outcome.RepoType != "existing-eka" {
 		t.Errorf("RepoType = %q, want existing-eka", outcome.RepoType)
 	}
-	if len(outcome.Plan) != 4 {
-		t.Errorf("plan must be reuse + generate eka.yaml + generate EKA + validate, got %d actions", len(outcome.Plan))
+	if len(outcome.Plan) != 5 {
+		t.Errorf("plan must be reuse + generate eka.yaml + generate EKA + merge AGENTS.md + validate, got %d actions", len(outcome.Plan))
 	}
 	if len(outcome.CreatedDirs) != 0 || len(outcome.OverwrittenFiles) != 0 || len(outcome.SkippedFiles) != 0 {
 		t.Errorf("adoption must create no dirs and skip/overwrite nothing: %+v", outcome)
 	}
-	if !reflect.DeepEqual(outcome.CreatedFiles, []string{"eka.yaml", "EKA"}) {
-		t.Errorf("adoption must create exactly [eka.yaml EKA], got %v", outcome.CreatedFiles)
+	if !reflect.DeepEqual(outcome.CreatedFiles, []string{"eka.yaml", "EKA", "AGENTS.md"}) {
+		t.Errorf("adoption must create exactly [eka.yaml EKA AGENTS.md], got %v", outcome.CreatedFiles)
 	}
 	// The adopted identity file exists, parses and carries the
 	// deterministic default identity: name == basename, project ==
@@ -308,10 +308,11 @@ func TestRunExistingEkaRepoWithoutGit(t *testing.T) {
 }
 
 // Scenario 6: a metadata-only repository (eka.yaml present, no docs/
-// tree) is already initialized (ADR-018 Decision 3): the run is a
-// reuse-only no-op and NEVER scaffolds the legacy docs skeleton into a
-// v2 repository. Validation skips cleanly (no docs/ knowledge tree).
-func TestRunMetadataOnlyRepoIsNoop(t *testing.T) {
+// tree) is already initialized (ADR-018 Decision 3): identity and
+// declaration reuse, the missing AGENTS.md block is backfilled, and the
+// run NEVER scaffolds the legacy docs skeleton into a v2 repository.
+// Validation skips cleanly (no docs/ knowledge tree).
+func TestRunMetadataOnlyRepoBackfillsAgentsMD(t *testing.T) {
 	dir := t.TempDir()
 	d := &Discovery{AbsTarget: dir, BaseName: filepath.Base(dir)}
 	identity := generatedEkaYAML(d, DefaultAnswers(d))
@@ -335,8 +336,8 @@ func TestRunMetadataOnlyRepoIsNoop(t *testing.T) {
 	if outcome.RepoType != "existing-eka" {
 		t.Errorf("RepoType = %q, want existing-eka", outcome.RepoType)
 	}
-	if len(outcome.Plan) != 4 {
-		t.Errorf("plan must be reuse + reuse eka.yaml + reuse EKA + validate, got %d actions", len(outcome.Plan))
+	if len(outcome.Plan) != 5 {
+		t.Errorf("plan must be reuse + reuse eka.yaml + reuse EKA + merge AGENTS.md + validate, got %d actions", len(outcome.Plan))
 	}
 	if outcome.Plan[1].Kind != ActionReuse || outcome.Plan[1].Path != "eka.yaml" {
 		t.Errorf("existing eka.yaml must be planned as reuse, got %+v", outcome.Plan[1])
@@ -344,13 +345,16 @@ func TestRunMetadataOnlyRepoIsNoop(t *testing.T) {
 	if outcome.Plan[2].Kind != ActionReuse || outcome.Plan[2].Path != "EKA" {
 		t.Errorf("existing EKA declaration must be planned as reuse, got %+v", outcome.Plan[2])
 	}
+	if outcome.Plan[3].Kind != ActionAgentsMDMerge || outcome.Plan[3].Path != "AGENTS.md" {
+		t.Errorf("missing AGENTS.md must plan a merge, got %+v", outcome.Plan[3])
+	}
 	// No legacy skeleton may be scaffolded into a v2 repository.
 	if _, err := os.Stat(filepath.Join(dir, "docs")); !os.IsNotExist(err) {
 		t.Error("metadata-only repo must not gain a docs/ tree")
 	}
-	if len(outcome.CreatedDirs) != 0 || len(outcome.CreatedFiles) != 0 ||
+	if len(outcome.CreatedDirs) != 0 || !reflect.DeepEqual(outcome.CreatedFiles, []string{"AGENTS.md"}) ||
 		len(outcome.OverwrittenFiles) != 0 || len(outcome.SkippedFiles) != 0 {
-		t.Errorf("no-op run must write nothing: %+v", outcome)
+		t.Errorf("re-run must backfill exactly AGENTS.md: %+v", outcome)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "eka.yaml")); !bytes.Equal(data, identity) {
 		t.Error("existing eka.yaml must be reused byte-identically")
@@ -420,8 +424,9 @@ func makeEkaRepo(t *testing.T, dir string) {
 	os.WriteFile(filepath.Join(dir, "docs", "exchange", "transfer.md"), []byte("# t"), 0o644)
 }
 
-// Scenario 7: repeated initialization — the second run is a no-op and the
-// repository still validates.
+// Scenario 7: repeated initialization — the second run backfills the
+// AGENTS.md block the fresh non-interactive first run never created,
+// and the third run is a true no-op. The repository still validates.
 func TestRunTwiceIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	opts, _, _ := runOpts(dir, "")
@@ -436,15 +441,23 @@ func TestRunTwiceIsNoop(t *testing.T) {
 	if !second.AlreadyInitialized {
 		t.Error("second run must detect the existing EKA repository")
 	}
-	if len(second.CreatedFiles) != 0 || len(second.OverwrittenFiles) != 0 || len(second.SkippedFiles) != 0 {
-		t.Errorf("second run must write nothing: %+v", second)
+	if !reflect.DeepEqual(second.CreatedFiles, []string{"AGENTS.md"}) ||
+		len(second.OverwrittenFiles) != 0 || len(second.SkippedFiles) != 0 {
+		t.Errorf("second run must backfill exactly AGENTS.md: %+v", second)
 	}
 	after := walkFiles(t, dir)
-	if !reflect.DeepEqual(before, after) {
-		t.Errorf("second run changed the tree:\nbefore: %v\nafter:  %v", before, after)
+	if len(after) != len(before)+1 || !contains(after, "AGENTS.md") {
+		t.Errorf("second run must add exactly AGENTS.md:\nbefore: %v\nafter:  %v", before, after)
 	}
-	if second.Report == nil || !second.Report.Pass() {
-		t.Error("repo must still validate after the second run")
+	third, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.CreatedFiles) != 0 || len(third.OverwrittenFiles) != 0 || len(third.SkippedFiles) != 0 {
+		t.Errorf("third run must write nothing: %+v", third)
+	}
+	if third.Report == nil || !third.Report.Pass() {
+		t.Error("repo must still validate after the runs")
 	}
 }
 
@@ -578,12 +591,12 @@ func TestRunBackfillsMissingDeclaration(t *testing.T) {
 	if !second.AlreadyInitialized {
 		t.Error("second run must detect the existing EKA repository")
 	}
-	if !reflect.DeepEqual(second.CreatedFiles, []string{"EKA"}) {
-		t.Errorf("backfill must create exactly [EKA], got %v", second.CreatedFiles)
+	if !reflect.DeepEqual(second.CreatedFiles, []string{"EKA", "AGENTS.md"}) {
+		t.Errorf("backfill must create exactly [EKA AGENTS.md], got %v", second.CreatedFiles)
 	}
 	after := walkFiles(t, dir)
-	if len(after) != len(before)+1 || !contains(after, "EKA") {
-		t.Errorf("backfill must add exactly the EKA file:\nbefore: %v\nafter:  %v", before, after)
+	if len(after) != len(before)+2 || !contains(after, "EKA") || !contains(after, "AGENTS.md") {
+		t.Errorf("backfill must add exactly the EKA file and AGENTS.md:\nbefore: %v\nafter:  %v", before, after)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "EKA"))
 	if err != nil {
@@ -598,29 +611,33 @@ func TestRunBackfillsMissingDeclaration(t *testing.T) {
 }
 
 // TestRunReusesIdenticalDeclaration: an already-initialized repository
-// with an identical declaration reuses it — no write, no skip, no
-// overwrite.
+// with an identical declaration and a current AGENTS.md block reuses
+// both — no write, no skip, no overwrite. (The second run backfills
+// AGENTS.md; the third run is the clean one.)
 func TestRunReusesIdenticalDeclaration(t *testing.T) {
 	dir := t.TempDir()
 	opts, _, _ := runOpts(dir, "")
 	if _, err := Run(opts); err != nil {
 		t.Fatal(err)
 	}
-	second, err := Run(opts)
+	if _, err := Run(opts); err != nil {
+		t.Fatal(err)
+	}
+	third, err := Run(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.CreatedFiles) != 0 || len(second.OverwrittenFiles) != 0 || len(second.SkippedFiles) != 0 {
-		t.Errorf("identical run must write nothing: %+v", second)
+	if len(third.CreatedFiles) != 0 || len(third.OverwrittenFiles) != 0 || len(third.SkippedFiles) != 0 {
+		t.Errorf("identical run must write nothing: %+v", third)
 	}
 	found := false
-	for _, a := range second.Plan {
+	for _, a := range third.Plan {
 		if a.Path == "EKA" && a.Kind == ActionReuse {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("identical EKA must be planned as reuse, plan: %+v", second.Plan)
+		t.Errorf("identical EKA must be planned as reuse, plan: %+v", third.Plan)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "EKA")); !bytes.Equal(data, generatedEKA()) {
 		t.Error("reused EKA must stay byte-identical")
