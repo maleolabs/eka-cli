@@ -36,6 +36,8 @@ import (
 //	                       Domain tokens (discovery|architecture|
 //	                       planning|execution|operations): the
 //	                       "domain" collection of every matching unit.
+//	"ses:execution-state"  latest execution snapshot for current repository project;
+//	                        use <ns>/ses:execution-state for explicit cross-project lookup
 //	"containers"           the containers query: every execution
 //	                       container line as a "containers" collection
 //	                       (plan, items/tickets, started/ended,
@@ -469,6 +471,26 @@ type getOptions struct {
 	pagination paginationFlags
 }
 
+func resolveProjectSES(r *runtime.Runtime, repo runtime.Repo) (*exchange.Unit, bool, error) {
+	ns := repo.Namespace
+	if ns == "" {
+		ns = "eka"
+	}
+	units, err := r.Knowledge.Search(runtime.SearchQuery{
+		ProjectID: repo.ProjectID,
+		Namespace: ns,
+		Type:      "ses",
+		ID:        "execution-state",
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(units) == 0 {
+		return nil, false, nil
+	}
+	return units[len(units)-1], true, nil
+}
+
 // getIdentity resolves the identity target and builds its retrieval
 // Document: the resolved unit, optionally stripped of content, with
 // the requested traversal (--upstream/--downstream) and instance-line
@@ -476,11 +498,19 @@ type getOptions struct {
 // compactly or in the indented form. All runtime failures and
 // inapplicable combinations surface as deterministic errors (exit 2).
 func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOptions) ([]byte, error) {
-	// Identity lookup: canonical form (exact instance) or qualified
-	// line form (highest instance — the latest knowledge version) —
-	// the Resolver contract. Unqualified
-	// forms are refused by the Resolver with the expected forms listed.
-	unit, ok, err := r.Resolver.Resolve(target)
+	// SES convenience lookup must stay within current repository project.
+	var unit *exchange.Unit
+	var ok bool
+	var err error
+	if target == "ses:execution-state" {
+		unit, ok, err = resolveProjectSES(r, repo)
+	} else {
+		// Identity lookup: canonical form (exact instance) or qualified
+		// line form (highest instance — the latest knowledge version) —
+		// the Resolver contract. Unqualified forms are refused by the
+		// Resolver with the expected forms listed.
+		unit, ok, err = r.Resolver.Resolve(target)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err) // Exit 2: usage.
 	}
