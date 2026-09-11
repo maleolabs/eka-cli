@@ -223,3 +223,80 @@ func TestCodeDiscoverAndGetParityCLI(t *testing.T) {
 		t.Fatalf("get CLI/core divergence: cli %s core %s", cliGetJSON, coreGetJSON)
 	}
 }
+
+// Symlinked repos (Flutter .plugin_symlinks) plus a symlink loop must index
+// without "build index: read <path>: is a directory".
+func TestCodeDiscoverSymlinkedRepoCLI(t *testing.T) {
+	root := t.TempDir()
+	mustWrite := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(filepath.Join(root, "eka.yaml"), "version: 1\nproject: p\nname: p\nnamespace: p\n")
+	mustWrite(filepath.Join(root, "main.go"), "package main\nfunc Hello() {}\n")
+	mustWrite(filepath.Join(root, "real", "plug.go"), "package real\nfunc Plug(){}\n")
+	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, ".plugin_symlinks")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	loopDir := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(loopDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "a"), filepath.Join(loopDir, "loop")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	orig, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"code-discover", "Plug", "--limit", "8"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("code-discover with symlinks exit %d: %q", code, errOut.String())
+	}
+	var resp codegraph.DiscoverResponse
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("CLI discover JSON invalid: %v", err)
+	}
+	found := false
+	for _, c := range resp.Candidates {
+		if c.Path == ".plugin_symlinks/plug.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("symlinked file not discovered: %+v", resp.Candidates)
+	}
+	// Opt-out flag parses and skips symlinked entries.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"code-discover", "Plug", "--follow-symlinks=false", "--limit", "8"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("code-discover --follow-symlinks=false exit %d: %q", code, errOut.String())
+	}
+	var noFollow codegraph.DiscoverResponse
+	if err := json.Unmarshal(out.Bytes(), &noFollow); err != nil {
+		t.Fatalf("CLI discover JSON invalid: %v", err)
+	}
+	for _, c := range noFollow.Candidates {
+		if strings.HasPrefix(c.Path, ".plugin_symlinks/") {
+			t.Fatalf("symlinked entry indexed with follow disabled: %+v", noFollow.Candidates)
+		}
+	}
+	// code-get and code-context accept the flag too.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"code-get", "--follow-symlinks=false", "main.go"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("code-get --follow-symlinks=false exit %d: %q", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"code-context", "--follow-symlinks=false", "--level", "0"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("code-context --follow-symlinks=false exit %d: %q", code, errOut.String())
+	}
+}

@@ -16,9 +16,10 @@ func newCodeDiscoverCmd() *cobra.Command {
 		Short: "Discover code candidates deterministically (natural query/scope -> candidates with reason/confidence)",
 		Args:  cobra.RangeArgs(1, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			scope, _ := cmd.Flags().GetString("scope")
-			limit, _ := cmd.Flags().GetInt("limit")
-			compact, _ := cmd.Flags().GetBool("compact")
+		scope, _ := cmd.Flags().GetString("scope")
+		limit, _ := cmd.Flags().GetInt("limit")
+		compact, _ := cmd.Flags().GetBool("compact")
+		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			query := args[0]
 			if query == "" {
 				return fmt.Errorf("code-discover: query must be non-empty")
@@ -45,7 +46,7 @@ func newCodeDiscoverCmd() *cobra.Command {
 			if err := os.MkdirAll(filepath.Dir(cache), 0700); err != nil {
 				return fmt.Errorf("code-discover: prepare cache: %w", err)
 			}
-			idx, _, err := codegraph.LoadOrBuild(root, cache)
+			idx, _, err := codegraph.LoadOrBuildWithOptions(root, cache, codegraph.BuildOptions{FollowSymlinks: followSymlinks})
 			if err != nil {
 				return fmt.Errorf("code-discover: build index: %w", err)
 			}
@@ -75,5 +76,6 @@ func newCodeDiscoverCmd() *cobra.Command {
 	cmd.Flags().String("scope", "", "optional file path scope filter")
 	cmd.Flags().Int("limit", 16, "maximum candidates (1..64)")
 	cmd.Flags().Bool("compact", false, "emit single-line JSON")
+	cmd.Flags().Bool("follow-symlinks", true, "follow symlinked directories safely with cycle detection")
 	return cmd
 }
