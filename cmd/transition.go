@@ -76,9 +76,13 @@ The destination is the explicit <to> value, or the derived step of
 sequential state (planned -> todo -> in-progress -> in-review -> done;
 canceled -> todo), --backward the one-step pull-back (in-review ->
 in-progress, in-progress -> todo). For plans: --forward approves a
-draft plan (draft -> approved); planning-state immutable is the
-container lock — it happens atomically with the container activation
-(eka transition ctr:<id> active) and cannot be requested directly. For
+draft plan (draft -> approved), or retires a locked plan whose
+containers are all completed (immutable -> superseded); planning-state
+immutable is the container lock — it happens atomically with the
+container activation (eka transition ctr:<id> active) and cannot be
+requested directly, while superseded is the terminal retirement
+(eka transition plan:<id> superseded, gated on no active container
+deriving from the plan; retired plans accept no new containers). For
 containers (three states, planned -> active -> completed): --forward
 activates a planned container (planned -> active) or completes an
 active one (active -> completed, gated on every work item the
