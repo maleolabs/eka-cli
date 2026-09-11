@@ -514,6 +514,19 @@ func TestPublishAllUsageErrors(t *testing.T) {
 			t.Errorf("args %v: stderr missing the single-target-flag refusal:\n%s", args, errText)
 		}
 	}
+	// --only/--dry-run without a batch mode are usage errors too.
+	for _, args := range [][]string{
+		{"publish", "sto:x", "--only", "sto:y"},
+		{"publish", "sto:x", "--dry-run"},
+	} {
+		code, _, errText = runIn(args)
+		if code != 2 {
+			t.Errorf("args %v: exit = %d, want 2 (scopers require --all/--pending)\nstderr: %s", args, code, errText)
+		}
+		if !strings.Contains(errText, "require --all/--pending") {
+			t.Errorf("args %v: stderr missing the requires---all/--pending refusal:\n%s", args, errText)
+		}
+	}
 }
 
 // TestPublishAllDraftNotFoundSummary: when a draft vanishes between the
@@ -553,5 +566,121 @@ func TestPublishAllDraftNotFoundSummary(t *testing.T) {
 	}
 	if !strings.Contains(errText, "sto:renamed") {
 		t.Errorf("stderr must name the failing draft:\n%s", errText)
+	}
+}
+
+// TestPublishAllOnlySubset: --only publishes exactly the listed drafts;
+// the rest stay pending.
+func TestPublishAllOnlySubset(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "sto", "id": "a"},
+		{"type": "sto", "id": "b"},
+	})
+	if code, _, errText := runIn([]string{"new", "--file", path}); code != 0 {
+		t.Fatalf("new --file: exit = %d\nstderr: %s", code, errText)
+	}
+	project := projectOf(t, w, mustAbs(t, "."))
+
+	code, text, errText := runIn([]string{"publish", "--all", "--only", "sto:a"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "sto:a ->") {
+		t.Errorf("the selected draft must be published:\n%s", text)
+	}
+	if strings.Contains(text, "sto:b ->") {
+		t.Errorf("the unselected draft must NOT be published:\n%s", text)
+	}
+	// sto:b stays pending.
+	if _, serr := os.Stat(draftFile(t, w, project, "sto", "b")); serr != nil {
+		t.Errorf("the unselected draft must stay pending: %v", serr)
+	}
+	if _, serr := os.Stat(draftFile(t, w, project, "sto", "a")); !os.IsNotExist(serr) {
+		t.Errorf("the published draft ticket must be consumed: %v", serr)
+	}
+}
+
+// TestPublishAllOnlyUnknownRefused: an --only entry matching no pending
+// draft refuses before anything publishes.
+func TestPublishAllOnlyUnknownRefused(t *testing.T) {
+	authoringEnv(t, "atrium-api")
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "sto", "id": "a"},
+	})
+	if code, _, errText := runIn([]string{"new", "--file", path}); code != 0 {
+		t.Fatalf("new --file: exit = %d\nstderr: %s", code, errText)
+	}
+	code, text, errText := runIn([]string{"publish", "--all", "--only", "sto:ghost"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(errText, "sto:ghost") || !strings.Contains(errText, "match no pending draft") {
+		t.Errorf("stderr must name the unknown entry:\n%s", errText)
+	}
+	if strings.Contains(text, "->") {
+		t.Errorf("a refused run must publish nothing:\n%s", text)
+	}
+}
+
+// TestPublishAllOnlyBoundaryRefused: a selected draft depending on a
+// pending-but-unselected draft refuses with the hint to include it;
+// nothing publishes.
+func TestPublishAllOnlyBoundaryRefused(t *testing.T) {
+	authoringEnv(t, "atrium-api")
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "plan", "id": "roadmap-v2", "dimension": "planning"},
+		{"type": "ctr", "id": "wave-7", "relationships": map[string]any{"dependsOn": []any{"plan:roadmap-v2"}}},
+	})
+	if code, _, errText := runIn([]string{"new", "--file", path}); code != 0 {
+		t.Fatalf("new --file: exit = %d\nstderr: %s", code, errText)
+	}
+	code, text, errText := runIn([]string{"publish", "--all", "--only", "ctr:wave-7"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{"ctr:wave-7", "plan:roadmap-v2", "outside --only"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("stderr missing %q:\n%s", want, errText)
+		}
+	}
+	if strings.Contains(text, "->") {
+		t.Errorf("a refused run must publish nothing:\n%s", text)
+	}
+}
+
+// TestPublishAllDryRun: --dry-run prints the topological order and
+// publishes nothing (every draft stays pending).
+func TestPublishAllDryRun(t *testing.T) {
+	w, _ := authoringEnv(t, "atrium-api")
+	path := writeBatchFile(t, []map[string]any{
+		{"type": "plan", "id": "roadmap-v2", "dimension": "planning"},
+		{"type": "ctr", "id": "wave-7", "relationships": map[string]any{"dependsOn": []any{"plan:roadmap-v2"}}},
+	})
+	if code, _, errText := runIn([]string{"new", "--file", path}); code != 0 {
+		t.Fatalf("new --file: exit = %d\nstderr: %s", code, errText)
+	}
+	project := projectOf(t, w, mustAbs(t, "."))
+
+	code, text, errText := runIn([]string{"publish", "--all", "--dry-run"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	planIdx := strings.Index(text, "plan:roadmap-v2")
+	ctrIdx := strings.Index(text, "ctr:wave-7")
+	if planIdx < 0 || ctrIdx < 0 || ctrIdx < planIdx {
+		t.Errorf("dry run must print the referenced-first order:\n%s", text)
+	}
+	if !strings.Contains(text, "would publish") {
+		t.Errorf("dry run rows must be marked:\n%s", text)
+	}
+	if strings.Contains(text, " -> ") {
+		t.Errorf("dry run must not publish (no arrows):\n%s", text)
+	}
+	// Both drafts stay pending.
+	for _, id := range [][2]string{{"plan", "roadmap-v2"}, {"ctr", "wave-7"}} {
+		if _, serr := os.Stat(draftFile(t, w, project, id[0], id[1])); serr != nil {
+			t.Errorf("dry run must leave %s:%s pending: %v", id[0], id[1], serr)
+		}
 	}
 }

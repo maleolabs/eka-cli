@@ -341,10 +341,14 @@ func cliBatchKey(ns, typeToken, id string) string {
 	return ns + "/" + typeToken + ":" + id
 }
 
-// runPublishBatch publishes every pending draft of the repository's
-// project in topological order (referenced drafts first). Pre-flight
-// refusals — a cycle among the pending drafts, or a draft referencing a
-// target that is neither pending nor published — publish nothing. The
+// runPublishBatch publishes pending drafts of the repository's project
+// in topological order (referenced drafts first). Without --only every
+// pending draft is published; --only restricts the run to the listed
+// drafts (pending-but-unselected dependencies refuse with the hint to
+// include them). --dry-run prints the topological order without
+// publishing. Pre-flight refusals — unknown --only entries, a cycle in
+// the selected set, or a draft referencing a target that is neither
+// selected, pending-selected, nor published — publish nothing. The
 // publish loop is per-draft atomic: a draft failing CKO-level
 // validation stops the run (already-published objects stay, the
 // remaining drafts stay pending). An empty backlog is informational.
@@ -362,8 +366,16 @@ func runPublishBatch(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("publish: %w", err)
 	}
+	only, err := cmd.Flags().GetStringSlice(flagPublishOnly)
+	if err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+	dryRun, err := cmd.Flags().GetBool(flagPublishDryRun)
+	if err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
 	s := styleFor(cmd)
-	if len(drafts) == 0 {
+	if len(drafts) == 0 && len(only) == 0 {
 		ui.NewHeader(s, "Draft").
 			Add("Project", project).
 			Add("Pending", "0").
@@ -394,10 +406,49 @@ func runPublishBatch(cmd *cobra.Command) error {
 		nodes[key] = &cliBatchNode{draft: d, artifact: a, deps: map[string]bool{}}
 	}
 
-	// Edges: a relationship target addressing a pending draft is a
-	// dependency (referenced first); a target addressing nothing is a
-	// pre-flight refusal unless the line already exists in the store.
-	for _, node := range nodes {
+	// Scope: --only restricts the run to the listed drafts. Entries
+	// use the draft-target grammar ("<ns>/<type>:<id>" or
+	// "<type>:<id>"); an unqualified entry matches any namespace. An
+	// entry matching no pending draft is a pre-flight refusal (a typo
+	// must never silently narrow the run).
+	selected := nodes
+	if len(only) > 0 {
+		var filters []conformance.Reference
+		for _, raw := range only {
+			ref, perr := parseDraftTarget(strings.TrimSpace(raw))
+			if perr != nil {
+				return fmt.Errorf("publish: invalid --only entry %q: %w", raw, perr) // Exit 2: usage.
+			}
+			filters = append(filters, ref)
+		}
+		selected = make(map[string]*cliBatchNode, len(filters))
+		var unknown []string
+		for _, f := range filters {
+			matched := false
+			for key, node := range nodes {
+				if node.artifact.Type == f.Type && node.artifact.ID == f.ID &&
+					(f.Namespace == "" || node.artifact.Namespace == f.Namespace) {
+					selected[key] = node
+					matched = true
+				}
+			}
+			if !matched {
+				unknown = append(unknown, f.Type+":"+f.ID)
+			}
+		}
+		sort.Strings(unknown)
+		if len(unknown) > 0 {
+			return refuse(cmd, "publish: --only entries match no pending draft: %s", strings.Join(unknown, ", "))
+		}
+	}
+
+	// Edges: a relationship target addressing a selected draft is a
+	// dependency (referenced first); a target addressing a
+	// pending-but-unselected draft refuses with the hint to include it
+	// (the selection must be self-contained); a target addressing
+	// nothing is a pre-flight refusal unless the line already exists in
+	// the store.
+	for _, node := range selected {
 		for _, field := range conformance.RelationshipFieldNames() {
 			for _, raw := range node.artifact.Relations[field] {
 				ref, perr := conformance.ParseReference(raw, node.artifact.Namespace, node.artifact.Type)
@@ -414,8 +465,12 @@ func runPublishBatch(cmd *cobra.Command) error {
 					continue
 				}
 				if _, pending := nodes[key]; pending {
-					node.deps[key] = true
-					continue
+					if _, sel := selected[key]; sel {
+						node.deps[key] = true
+						continue
+					}
+					return refuse(cmd, "publish: draft %s depends on pending draft %s outside --only: include %s in --only to publish them together",
+						node.artifact.Type+":"+node.artifact.ID, ref.Type+":"+ref.ID, ref.Type+":"+ref.ID)
 				}
 				units, rerr := r.Resolver.ResolveLine(ref.Namespace, ref.Type, ref.ID)
 				if rerr != nil {
@@ -431,40 +486,69 @@ func runPublishBatch(cmd *cobra.Command) error {
 		}
 	}
 
-	order, cycle := cliBatchOrder(nodes)
+	order, cycle := cliBatchOrder(selected)
 	if len(cycle) > 0 {
-		return refuse(cmd, "publish: cycle among pending drafts: %s (referenced drafts must be published first)",
-			strings.Join(cycle, ", "))
+		scope := "pending drafts"
+		if len(only) > 0 {
+			scope = "--only selection"
+		}
+		return refuse(cmd, "publish: cycle among %s: %s (referenced drafts must be published first)",
+			scope, strings.Join(cycle, ", "))
+	}
+
+	// Header: Pending names the selected set; a scoped run also names
+	// the backlog total it was drawn from.
+	pendingLabel := fmt.Sprint(len(selected))
+	if len(only) > 0 {
+		pendingLabel = fmt.Sprintf("%d of %d", len(selected), len(nodes))
+	}
+	header := ui.NewHeader(s, "Draft").
+		Add("Project", project).
+		Add("Pending", pendingLabel).
+		Pipeline("Publish")
+	if dryRun {
+		header.Add("Mode", "dry-run")
+	}
+	header.Render()
+
+	// Dry run: the same atomic preflight and order, nothing published
+	// (the single-use draft tickets are untouched).
+	if dryRun {
+		for _, key := range order {
+			node := selected[key]
+			fmt.Fprintf(s.W, "  %s %s %s\n",
+				ui.IconBullet, node.artifact.Type+":"+node.artifact.ID, s.Dim("would publish"))
+		}
+		ui.NewSummary(s).
+			Add("WouldPublish", fmt.Sprint(len(order))).
+			Add("Next", "eka publish --all"+onlyNextSuffix(only)+" to persist the set").
+			Render()
+		return nil
 	}
 
 	// Publish in topological order; per-draft atomic (spec §5.1).
-	ui.NewHeader(s, "Draft").
-		Add("Project", project).
-		Add("Pending", fmt.Sprint(len(nodes))).
-		Pipeline("Publish").
-		Render()
 	var published []*runtime.PublishResult
 	for _, key := range order {
-		node := nodes[key]
+		node := selected[key]
 		target := node.artifact.Type + ":" + node.artifact.ID
 		res, perr := runtime.Authoring.Publish(r, target, runtime.PublishOptions{Project: project})
 		if perr != nil {
 			var pe *runtime.PublishError
 			if errors.As(perr, &pe) {
 				fmt.Fprintf(s.W, "  %s %s %s\n", ui.IconBullet, s.Error(target), s.Dim("failed validation"))
-				renderPublishBatchFailure(cmd, s, project, published, order, nodes, key, pe)
+				renderPublishBatchFailure(cmd, s, project, published, order, selected, key, pe)
 				return &exitError{code: exitFail}
 			}
 			var se *conformance.ScanError
 			if errors.As(perr, &se) {
 				fmt.Fprintf(s.W, "  %s %s %s\n", ui.IconBullet, s.Error(target), s.Dim("malformed"))
-				renderPublishBatchFailure(cmd, s, project, published, order, nodes, key, perr)
+				renderPublishBatchFailure(cmd, s, project, published, order, selected, key, perr)
 				return &exitError{code: exitFail}
 			}
 			var dne *runtime.DraftNotFoundError
 			if errors.As(perr, &dne) {
 				fmt.Fprintf(s.W, "  %s %s %s\n", ui.IconBullet, s.Error(target), s.Dim("not found"))
-				renderPublishBatchFailure(cmd, s, project, published, order, nodes, key, perr)
+				renderPublishBatchFailure(cmd, s, project, published, order, selected, key, perr)
 				return &exitError{code: exitFail}
 			}
 			return fmt.Errorf("publish: %w", perr)
@@ -478,6 +562,15 @@ func runPublishBatch(cmd *cobra.Command) error {
 		Add("Next", "eka get "+published[len(published)-1].Form).
 		Render()
 	return nil
+}
+
+// onlyNextSuffix renders the --only filter back for the dry-run Next
+// hint (empty when the run was unscoped).
+func onlyNextSuffix(only []string) string {
+	if len(only) == 0 {
+		return ""
+	}
+	return " --only " + strings.Join(only, ",")
 }
 
 // renderPublishBatchFailure completes the batch publish output after a
