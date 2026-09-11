@@ -17,6 +17,7 @@ func newCodeGetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			compact, _ := cmd.Flags().GetBool("compact")
+		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			path := args[0]
 			if path == "" {
 				return fmt.Errorf("code-get: path must be non-empty")
@@ -40,7 +41,7 @@ func newCodeGetCmd() *cobra.Command {
 			if err := os.MkdirAll(filepath.Dir(cache), 0700); err != nil {
 				return fmt.Errorf("code-get: prepare cache: %w", err)
 			}
-			idx, _, err := codegraph.LoadOrBuild(root, cache)
+			idx, _, err := codegraph.LoadOrBuildWithOptions(root, cache, codegraph.BuildOptions{FollowSymlinks: followSymlinks})
 			if err != nil {
 				return fmt.Errorf("code-get: build index: %w", err)
 			}
@@ -68,5 +69,6 @@ func newCodeGetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("compact", false, "emit single-line JSON")
+	cmd.Flags().Bool("follow-symlinks", true, "follow symlinked directories safely with cycle detection")
 	return cmd
 }

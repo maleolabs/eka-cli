@@ -21,8 +21,9 @@ func newCodeContextCmd() *cobra.Command {
 			depth, _ := cmd.Flags().GetString("depth")
 			level, _ := cmd.Flags().GetInt("level")
 			noContent, _ := cmd.Flags().GetBool("no-content")
-			compact, _ := cmd.Flags().GetBool("compact")
-			limit, _ := cmd.Flags().GetInt("limit")
+		compact, _ := cmd.Flags().GetBool("compact")
+		limit, _ := cmd.Flags().GetInt("limit")
+		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			if !validCodeContextDepth(depth) {
 				return fmt.Errorf("code-context: invalid --depth %q (want local, dependency, or engineering)", depth)
 			}
@@ -51,7 +52,7 @@ func newCodeContextCmd() *cobra.Command {
 			if err := os.MkdirAll(filepath.Dir(cache), 0700); err != nil {
 				return fmt.Errorf("code-context: prepare cache: %w", err)
 			}
-			idx, _, err := codegraph.LoadOrBuild(root, cache)
+			idx, _, err := codegraph.LoadOrBuildWithOptions(root, cache, codegraph.BuildOptions{FollowSymlinks: followSymlinks})
 			if err != nil {
 				return fmt.Errorf("code-context: build index: %w", err)
 			}
@@ -94,6 +95,7 @@ func newCodeContextCmd() *cobra.Command {
 	cmd.Flags().Bool("no-content", false, "omit source content")
 	cmd.Flags().Bool("compact", false, "emit single-line JSON")
 	cmd.Flags().Int("limit", 32, "maximum units, symbols, and refs (1..64)")
+	cmd.Flags().Bool("follow-symlinks", true, "follow symlinked directories safely with cycle detection")
 	return cmd
 }
 

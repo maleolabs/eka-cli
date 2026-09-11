@@ -15,10 +15,10 @@ Module path: `github.com/maleolabs/eka-cli` · CLI `v1.10.0` · EKA Standard `1.
 
 **Code Context, Discovery & Indexing** (`v1.9`, `eka-core/codegraph`) — deterministic local source indexing without embeddings:
 
-- `eka code-context [query] --depth local|dependency|engineering --level 0..3 --limit 1..64` — bounded context: level 0 inventory, 1 symbols, 2 imports, 3 source content. Cache `~/.cache/eka/codegraph/<sha256(root)[:16]>.json`, atomic `tmp+rename`, fingerprint `sha256(path␀language␀digest␀size)`. Invalidation by `Root+Digest` comparison, safe to delete.
-- `eka code-discover <query> [--scope <path>] --limit 1..64` — natural-language tokenized (lower, `-_/.` → space), scored by path + `go/ast` symbols (`function|type|value`, import refs), `reason` + normalized `confidence`, fallback inventory when no match (`provenance confidence 0.1`).
-- `eka code-get <path>` — exact retrieval with traversal guard (`..` rejected), returns `Unit{content}` + per-file symbols/refs, sorted deterministically.
-- Go-aware (`go/parser` + `ast.Inspect`), others remain `language: unsupported` inventory entries. Skips `.git/vendor/node_modules`. Response schema `eka/code-context/1`, `eka/code-discover/1`, `eka/code-get/1` with `indexDigest` + `provenance{source:local-index, method:deterministic-*}`.
+- `eka code-context [query] --depth local|dependency|engineering --level 0..3 --limit 1..64 [--follow-symlinks=true|false]` — bounded context: level 0 inventory, 1 symbols, 2 imports, 3 source content. Cache `~/.cache/eka/codegraph/<sha256(root)[:16]>.json`, atomic `tmp+rename`, fingerprint `sha256(path␀language␀digest␀size)`. Invalidation by `Root+Digest` comparison, safe to delete.
+- `eka code-discover <query> [--scope <path>] --limit 1..64 [--follow-symlinks=true|false]` — natural-language tokenized (lower, `-_/.` → space), scored by path + `go/ast` symbols (`function|type|value`, import refs), `reason` + normalized `confidence`, fallback inventory when no match (`provenance confidence 0.1`).
+- `eka code-get <path> [--follow-symlinks=true|false]` — exact retrieval with traversal guard (`..` rejected), returns `Unit{content}` + per-file symbols/refs, sorted deterministically.
+- Go-aware (`go/parser` + `ast.Inspect`), others remain `language: unsupported` inventory entries. Skips `.git/vendor/node_modules`. Symlinked directories (e.g. Flutter `.plugin_symlinks`) are followed safely with cycle detection (each real directory visited once, so symlink loops terminate); `--follow-symlinks=false` skips symlinked entries. Response schema `eka/code-context/1`, `eka/code-discover/1`, `eka/code-get/1` with `indexDigest` + `provenance{source:local-index, method:deterministic-*}`.
 - See `research-LLM-context-efficiency.md` §3 — code was out-of-graph (raw `read/grep`), now bounded/deterministic instead of dump.
 
 **Universal Capture Gateway** (`v1.10`, ADR-035 v3, spec `provenance-capture:1`):
