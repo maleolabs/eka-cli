@@ -167,14 +167,18 @@ func renderSESExecution(s *ui.Style, r *runtime.Runtime) error {
 			u = units[len(units)-1]
 		}
 	}
-	if u == nil {
-		// Fallback to global resolver (maintain backward compat).
+	if u == nil && (!found || (ferr == nil && projRepo.Namespace == "" && projRepo.ProjectID == "eka")) {
+		// Legacy fallback applies only outside a registered repo or for the
+		// legacy EKA project; never leak another project's execution state.
 		var ok bool
 		var err error
 		u, ok, err = r.Resolver.Resolve("eka/ses:execution-state")
 		if err != nil || !ok {
 			return nil
 		}
+	}
+	if u == nil {
+		return nil
 	}
 	doc, err := machine.NewDocument(u)
 	if err != nil {
