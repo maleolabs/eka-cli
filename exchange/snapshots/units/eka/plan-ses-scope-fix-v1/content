@@ -1,0 +1,1 @@
+{"objective":"Fix project-scoped execution state retrieval in `eka status` and `eka get ses:execution-state`","scope":"Ensure `eka status` execution section and `eka get ses:execution-state` resolve the execution state for the current repository/project, not the hard-coded EKA project.","outOfScope":"Changing the implementation of other commands."}
