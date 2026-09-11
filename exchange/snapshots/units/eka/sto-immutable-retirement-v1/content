@@ -1,0 +1,1 @@
+{"description":"Expose sanctioned plan retirement path","acceptanceCriteria":"- `eka transition` allows immutable → supersed/replaced state.","impact":"Stale plans can be archived without violating immutability."}
