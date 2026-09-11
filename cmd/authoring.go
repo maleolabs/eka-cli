@@ -92,6 +92,8 @@ const (
 	flagPublishVersion      = "instance-version"
 	flagPublishAll          = "all"
 	flagPublishPending      = "pending"
+	flagPublishOnly         = "only"
+	flagPublishDryRun       = "dry-run"
 	flagDiscardForce        = "force"
 	flagDraftListProject    = "project"
 	flagDraftListProvenance = "provenance"
@@ -1034,6 +1036,15 @@ validation stops the run — the objects already published stay
 pending, and the failure report names them. An empty backlog is
 informational: nothing to publish, exit 0.
 
+Scoped publishing: --only <type:id,...> (repeatable, comma-separated;
+"<ns>/<type>:<id>" or "<type>:<id>") restricts the batch to the listed
+drafts. The preflight is atomic over the selection: unknown entries,
+cycles within the selection, references to nothing, and references to
+pending-but-unselected drafts all refuse BEFORE anything publishes
+(the last names the missing dependency with the hint to include it).
+--dry-run runs the same preflight and prints the topological order
+without publishing anything. --only/--dry-run require --all/--pending.
+
 The command requires an EKA repository: a directory tree carrying
 eka.yaml (run 'eka init' to create one — outside an EKA repository
 the command is refused).
@@ -1052,14 +1063,18 @@ step for repository-attributed knowledge.
 
 Exit codes:
   0  published (form + instance version + object hash); --all with an
-     empty backlog (informational)
-  1  validation failure, malformed draft, draft not found, batch cycle
-     or unresolved-reference refusal, or not an EKA repository
+     empty backlog (informational); --dry-run (order printed, nothing
+     published)
+  1  validation failure, malformed draft, draft not found, batch cycle,
+     unresolved-reference, --only unknown-entry or
+     pending-but-unselected-dependency refusal, or not an EKA repository
   2  usage or internal error`,
 		Example: `  eka publish feather/sto:my-item
   eka publish feather/sto:my-item --instance-version 2
   eka publish --all
-  eka publish --pending`,
+  eka publish --pending
+  eka publish --all --only sto:a,sto:b
+  eka publish --all --dry-run`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			all, _ := cmd.Flags().GetBool(flagPublishAll)
 			pending, _ := cmd.Flags().GetBool(flagPublishPending)
@@ -1085,6 +1100,11 @@ Exit codes:
 					return fmt.Errorf("publish: --instance-version is a single-target flag and is not available with --all/--pending; versions are auto-assigned per draft")
 				}
 				return runPublishBatch(cmd)
+			}
+			// --only / --dry-run are batch scopers: without
+			// --all/--pending there is no batch to scope.
+			if cmd.Flags().Changed(flagPublishOnly) || cmd.Flags().Changed(flagPublishDryRun) {
+				return fmt.Errorf("publish: --only and --dry-run require --all/--pending (there is no batch to scope for a single target)")
 			}
 			target := args[0]
 			if _, err := parseDraftTarget(target); err != nil {
@@ -1168,6 +1188,8 @@ Exit codes:
 	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign; not available with --all/--pending)")
 	cmd.Flags().Bool(flagPublishAll, false, "publish every pending draft of the project in topological order (referenced drafts first)")
 	cmd.Flags().Bool(flagPublishPending, false, "synonym of --all: publish every pending draft of the project in topological order")
+	cmd.Flags().StringSlice(flagPublishOnly, nil, "restrict the batch to the listed drafts (repeatable, comma-separated: <type>:<id> or <ns>/<type>:<id>); requires --all/--pending")
+	cmd.Flags().Bool(flagPublishDryRun, false, "run the batch preflight and print the topological order without publishing; requires --all/--pending")
 	return cmd
 }
 
