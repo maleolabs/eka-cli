@@ -16,10 +16,10 @@ func newCodeDiscoverCmd() *cobra.Command {
 		Short: "Discover code candidates deterministically (natural query/scope -> candidates with reason/confidence)",
 		Args:  cobra.RangeArgs(1, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-		scope, _ := cmd.Flags().GetString("scope")
-		limit, _ := cmd.Flags().GetInt("limit")
-		compact, _ := cmd.Flags().GetBool("compact")
-		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
+			scope, _ := cmd.Flags().GetString("scope")
+			limit, _ := cmd.Flags().GetInt("limit")
+			compact, _ := cmd.Flags().GetBool("compact")
+			followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			query := args[0]
 			if query == "" {
 				return fmt.Errorf("code-discover: query must be non-empty")

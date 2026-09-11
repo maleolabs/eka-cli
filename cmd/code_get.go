@@ -17,7 +17,7 @@ func newCodeGetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			compact, _ := cmd.Flags().GetBool("compact")
-		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
+			followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			path := args[0]
 			if path == "" {
 				return fmt.Errorf("code-get: path must be non-empty")

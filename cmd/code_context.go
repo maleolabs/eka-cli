@@ -21,9 +21,9 @@ func newCodeContextCmd() *cobra.Command {
 			depth, _ := cmd.Flags().GetString("depth")
 			level, _ := cmd.Flags().GetInt("level")
 			noContent, _ := cmd.Flags().GetBool("no-content")
-		compact, _ := cmd.Flags().GetBool("compact")
-		limit, _ := cmd.Flags().GetInt("limit")
-		followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
+			compact, _ := cmd.Flags().GetBool("compact")
+			limit, _ := cmd.Flags().GetInt("limit")
+			followSymlinks, _ := cmd.Flags().GetBool("follow-symlinks")
 			if !validCodeContextDepth(depth) {
 				return fmt.Errorf("code-context: invalid --depth %q (want local, dependency, or engineering)", depth)
 			}
