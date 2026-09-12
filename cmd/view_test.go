@@ -329,11 +329,13 @@ func TestViewExecutionAliasesIdentical(t *testing.T) {
 	}
 }
 
-// TestViewMultipleActiveWarning: the multi-active container anomaly is
-// surfaced at the CLI — the warning line names the deterministically
-// chosen container (lexicographically smallest canonical identity) and
-// the command still exits 0.
-func TestViewMultipleActiveWarning(t *testing.T) {
+// TestViewMultipleActiveBoards: the multi-active state is a VALID
+// parallel execution state (dec:parallel-container-execution) — the
+// execution projection renders ONE board per active container plus a
+// containers summary, and the old anomaly warning is gone. The
+// deterministically chosen primary container (lexicographically
+// smallest canonical identity) leads; the command exits 0.
+func TestViewMultipleActiveBoards(t *testing.T) {
 	seedViewRepo(t, "multi-active")
 	code, out, errText := runIn([]string{"view", "execution"})
 	if code != 0 {
@@ -342,17 +344,21 @@ func TestViewMultipleActiveWarning(t *testing.T) {
 	if errText != "" {
 		t.Errorf("stderr must be empty, got %q", errText)
 	}
+	// Both active containers render their own board header.
 	for _, want := range []string{
-		"Multiple active containers — showing eka-view-fixture/ctr:wave-1",
-		"Container    eka-view-fixture/ctr:wave-1",
-		"│ Planned (0)",
-		"│ Done (0)",
-		"—",
-		"Active Work: 0",
-		"Overall Progress: ░░░░░░░░░░ 0/0 (0%)",
+		"eka-view-fixture/ctr:wave-1",
+		"eka-view-fixture/ctr:wave-2",
+		"Active: 2 container(s) running in parallel",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output must contain %q:\n%s", want, out)
+		}
+	}
+	// The anomaly warning is gone: multi-active is valid, never a
+	// warning.
+	for _, stale := range []string{"Multiple active containers — showing", "anomaly"} {
+		if strings.Contains(out, stale) {
+			t.Errorf("output must not contain the stale anomaly warning %q:\n%s", stale, out)
 		}
 	}
 	// Deterministic across runs, like every other projection.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -71,7 +72,7 @@ Exit codes:
 			if showJSON {
 				return renderStatusJSON(s, st, home)
 			}
-			if err := renderStatus(s, st); err != nil {
+			if err := renderStatus(s, r, st); err != nil {
 				return err
 			}
 			return renderSESExecution(s, r)
@@ -85,7 +86,7 @@ Exit codes:
 // renderStatus renders the workspace overview deterministically. Any
 // store failure is propagated: status is a monitoring command and must
 // never report a false healthy state (exit code 2 on internal error).
-func renderStatus(s *ui.Style, st *runtime.WorkspaceStatus) error {
+func renderStatus(s *ui.Style, rt *runtime.Runtime, st *runtime.WorkspaceStatus) error {
 	ui.NewHeader(s, "Runtime").
 		Add("Workspace", st.Path).
 		Add("Schema", "v"+strconv.Itoa(st.SchemaVersion)).
@@ -108,9 +109,35 @@ func renderStatus(s *ui.Style, st *runtime.WorkspaceStatus) error {
 		fmt.Fprintf(s.W, "\n%s %s\n", ui.IconBullet, s.Accent(p.Project.ID))
 		for _, r := range p.Repos {
 			fmt.Fprintf(s.W, "  %s %s  (%s)%s\n", ui.IconBullet, s.Info(r.Repo.Name), displayPath(r.Repo.Path), lastSyncDetail(r.LastSync))
+			if actives, ok := repoActiveContainers(rt, p.Project.ID, r.Repo.Name); ok && len(actives) > 0 {
+				for _, a := range actives {
+					fmt.Fprintf(s.W, "    active: %s\n", a)
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// repoActiveContainers returns the ACTIVE container lines of one
+// repository (its provenance source_repo — one-active-per-source_repo,
+// dec:parallel-container-execution), sorted by canonical identity.
+// ok=false when the store cannot be read (status stays a truthful
+// probe: a store failure surfaces, never a fabricated active line).
+func repoActiveContainers(r *runtime.Runtime, projectID, sourceRepo string) ([]string, bool) {
+	units, err := r.Knowledge.Units(projectID, sourceRepo)
+	if err != nil {
+		return nil, false
+	}
+	var active []string
+	for _, u := range units {
+		if u.Identity.Type != "ctr" || u.StateVector.ContainerState != "active" {
+			continue
+		}
+		active = append(active, u.Identity.Namespace+"/"+u.Identity.Type+":"+u.Identity.ID)
+	}
+	sort.Strings(active)
+	return active, true
 }
 
 // scopeStatus returns a view of the workspace status scoped to the
