@@ -54,14 +54,16 @@ func boardTitle(state string) string {
 }
 
 // renderExecution renders the Execution projection: the context
-// header, the container line (with the multiple-active warning when
-// the repository is in that invalid state), the six-column kanban
+// header, the container line(s) — one board per ACTIVE container plus
+// a containers summary when several containers run in parallel
+// (multi-active, dec:parallel-container-execution; multi-active is a
+// valid state, never an anomaly warning) — the six-column kanban
 // board (canceled added, ADR-019), one footer line tying the board
 // to its tickets (or the no-tickets warning when the active
 // container has no tkt- membership), and the insight summary.
 //
 // When no container is active the board is empty (0 items) — the
-// projection is scoped to the active container only. Planned
+// projection is scoped to the active container(s) only. Planned
 // containers with queued work are invisible in that empty board, so
 // this renderer surfaces the queued planned containers SUMMARY
 // (name, plan, items/tickets, status=planned) plus a hint to use
@@ -80,9 +82,6 @@ func renderExecution(s *ui.Style, g *view.Graph, p *view.ExecutionProjection) {
 		Pipeline("View").
 		Render()
 	fmt.Fprintln(s.W)
-	if p.MultipleActive {
-		fmt.Fprintf(s.W, "%s\n", s.Warning("Multiple active containers — showing "+p.Container.Identity))
-	}
 	if p.Container == nil {
 		// Empty projection: a calm line, still exit 0 with the summary.
 		// When planned containers exist the empty board hides queued
@@ -96,10 +95,36 @@ func renderExecution(s *ui.Style, g *view.Graph, p *view.ExecutionProjection) {
 			fmt.Fprintln(s.W)
 			fmt.Fprintf(s.W, "%s\n", s.Dim("Use `eka view board` or `eka view containers` to inspect queued work, or `eka transition ctr:<id> active` to start execution."))
 		}
-	} else {
-		fmt.Fprintf(s.W, "%s\n", stateMark(s, p.Container.State)+" "+p.Container.Identity+
-			"  "+s.Dim("("+p.Container.State+")"))
+		fmt.Fprintln(s.W)
+		renderBoard(s, g, p.Columns)
+		renderExecutionInsights(s, p)
+		return
 	}
+	if p.MultipleActive {
+		// Multi-active (valid parallel state): one board per active
+		// container plus a containers summary. The primary container
+		// (smallest identity) leads; the remaining actives follow.
+		for i, b := range p.Boards {
+			if i > 0 {
+				fmt.Fprintln(s.W)
+			}
+			fmt.Fprintf(s.W, "%s\n", stateMark(s, b.Container.State)+" "+b.Container.Identity+
+				"  "+s.Dim("("+b.Container.State+")"))
+			fmt.Fprintln(s.W)
+			renderBoard(s, g, b.Columns)
+			if len(b.Tickets) > 0 {
+				fmt.Fprintln(s.W)
+				fmt.Fprintf(s.W, "%s\n", s.Dim(plural(len(b.Tickets), "ticket", "tickets")+
+					" project these work items"))
+			}
+		}
+		fmt.Fprintln(s.W)
+		renderActiveContainersSummary(s, g, p.Actives)
+		renderExecutionInsights(s, p)
+		return
+	}
+	fmt.Fprintf(s.W, "%s\n", stateMark(s, p.Container.State)+" "+p.Container.Identity+
+		"  "+s.Dim("("+p.Container.State+")"))
 	fmt.Fprintln(s.W)
 	renderBoard(s, g, p.Columns)
 	if p.Container != nil && len(p.Tickets) > 0 {
@@ -118,17 +143,41 @@ func renderExecution(s *ui.Style, g *view.Graph, p *view.ExecutionProjection) {
 	// queued planned containers are still relevant — surface them as
 	// an optional hint after the board without breaking the active
 	// board (sto:execution-view-planned-hint AC 2).
-	if p.Container != nil {
-		if queued := plannedContainers(g); len(queued) > 0 {
-			fmt.Fprintln(s.W)
-			fmt.Fprintf(s.W, "%s\n", s.Info(fmt.Sprintf("Queued: %d planned container(s) — ready to activate", len(queued))))
-			fmt.Fprintln(s.W)
-			renderQueuedPlanned(s, g, queued)
-			fmt.Fprintln(s.W)
-			fmt.Fprintf(s.W, "%s\n", s.Dim("Use `eka view board` or `eka view containers` to inspect queued work."))
-		}
+	if queued := plannedContainers(g); len(queued) > 0 {
+		fmt.Fprintln(s.W)
+		fmt.Fprintf(s.W, "%s\n", s.Info(fmt.Sprintf("Queued: %d planned container(s) — ready to activate", len(queued))))
+		fmt.Fprintln(s.W)
+		renderQueuedPlanned(s, g, queued)
+		fmt.Fprintln(s.W)
+		fmt.Fprintf(s.W, "%s\n", s.Dim("Use `eka view board` or `eka view containers` to inspect queued work."))
 	}
 	renderExecutionInsights(s, p)
+}
+
+// renderActiveContainersSummary renders the multi-active containers
+// summary: every active container with its id, plan and work-item
+// count — the second half of "one board per active container plus a
+// containers summary" (dec:parallel-container-execution). Table on
+// wide terminals, stacked cards on narrow.
+func renderActiveContainersSummary(s *ui.Style, g *view.Graph, actives []view.Container) {
+	fmt.Fprintf(s.W, "%s\n", s.Info(fmt.Sprintf("Active: %d container(s) running in parallel", len(actives))))
+	if s.Width > 0 && s.Width < ui.CompactLayoutWidth {
+		cards := ui.NewCards(s)
+		for _, c := range actives {
+			items := len(g.WorkItemsForContainer(c.Identity))
+			cards.Add(stateIcon(c.State)+" "+c.ID, containerStateColor(s, c.State),
+				[]string{fmt.Sprintf("items: %d", items), "status: " + c.State})
+		}
+		cards.Render()
+		return
+	}
+	table := ui.NewTable(s, "NAME", "ITEMS", "STATUS")
+	for _, c := range actives {
+		items := len(g.WorkItemsForContainer(c.Identity))
+		table.AddRow([]string{c.ID, fmt.Sprintf("%d", items),
+			containerStateColor(s, c.State)(stateIcon(c.State)) + " " + c.State}, nil)
+	}
+	table.Render()
 }
 
 // plannedContainers returns the planned container details of the graph,
