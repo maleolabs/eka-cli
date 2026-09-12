@@ -87,10 +87,14 @@ containers (three states, planned -> active -> completed): --forward
 activates a planned container (planned -> active) or completes an
 active one (active -> completed, gated on every work item the
 container registers being done or canceled). Activation is gated on
-the exactly-one-active rule (no other container may be active — a
-planned container activates only after the active one completes) and
-on the depends-on plan being approved; the activation LOCKS the plan
-(planning-state -> immutable) atomically with the activation. The
+the one-active-container-per-source_repo rule (no OTHER active
+container may share the activating container's source_repo — the
+same-repo refusal names the blocking container; cross-repo activation
+additionally requires the activating container's transitive
+depends-on/derives-from plan closure to be disjoint from every other
+active container's, a shared node refusing with the shared plan line)
+and on the depends-on plan being approved; the activation LOCKS the
+plan (planning-state -> immutable) atomically with the activation. The
 three destination flags are mutually exclusive.
 
 For knowledge artifacts (vis/str/req/scp/epc/adr/dec/arc/spec/std/run/

@@ -37,6 +37,8 @@ github.com/maleolabs/eka-core v1.10.2 h1:OK0jxTS9/nZHhZqnOluaELZTKaU5+UfJzfkdBHz
 github.com/maleolabs/eka-core v1.10.2/go.mod h1:LaBsE/YGz/B4qS1quxJUNOKFklWbkhctXvBgBB2dXaI=
 github.com/maleolabs/eka-core v1.10.3 h1:abaPv8aGQ/q/SnpakIa6FVoH4cgnZpBm7BQazIRN2XA=
 github.com/maleolabs/eka-core v1.10.3/go.mod h1:LaBsE/YGz/B4qS1quxJUNOKFklWbkhctXvBgBB2dXaI=
+github.com/maleolabs/eka-core v1.10.4 h1:hWhGeRPImpL44QC7AfaPxJ92NtYQ9n8+sKVvt3L2+9A=
+github.com/maleolabs/eka-core v1.10.4/go.mod h1:LaBsE/YGz/B4qS1quxJUNOKFklWbkhctXvBgBB2dXaI=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mattn/go-localereader v0.0.1 h1:ygSAOl7ZXTx4RdPYinUpg6W99U8jWvWi9Ye2JC/oIi4=
