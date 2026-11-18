@@ -90,6 +90,7 @@ var commandGroupsByName = map[string]string{
 	// Utility: CLI maintenance and help.
 	"update":     groupUtility,
 	"version":    groupUtility,
+	"schema":     groupUtility,
 	"feedback":   groupUtility,
 	"plugin":     groupUtility,
 	"mcp":        groupUtility,

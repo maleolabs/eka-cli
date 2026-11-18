@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -89,9 +90,20 @@ func TestExitCodeUsage(t *testing.T) {
 	if !strings.Contains(errText, "init") {
 		t.Errorf("unknown command message must mention the init command, got %q", errText)
 	}
-	// Cobra sorts command lists alphabetically (EnableCommandSorting);
-	// the message must list exactly the registered commands.
-	if !strings.Contains(errText, "available commands: assign, capture, code-context, code-discover, code-get, context, discard, draft, edit, export, feedback, get, import, init, integrity, mcp, new, note, plugin, project, publish, reassign, relate, retire, share, shr, snapshot, status, sync, transition, unassign, unrelate, update, validate, version, view, watch") {
+	// Cobra sorts command lists alphabetically (EnableCommandSorting); the
+	// message must list every registered command. Comparing against a
+	// hand-maintained string made this test break on every new command,
+	// which taught nothing and cost an edit each time — derive the expected
+	// set from the command tree instead.
+	var want []string
+	for _, c := range newRootCommand().Commands() {
+		if c.Name() == "help" || c.Name() == "completion" || c.Hidden {
+			continue
+		}
+		want = append(want, c.Name())
+	}
+	sort.Strings(want)
+	if !strings.Contains(errText, "available commands: "+strings.Join(want, ", ")) {
 		t.Errorf("unknown command message must list the available commands, got %q", errText)
 	}
 	code, _, _ = runIn([]string{"validate", "a", "b"})
