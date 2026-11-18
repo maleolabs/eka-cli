@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
 	"github.com/maleolabs/eka-core/exchange"
@@ -56,7 +57,7 @@ Exit codes:
 			showJSON, _ := cmd.Flags().GetBool("json")
 			if !r.Exists() {
 				if showJSON {
-					return renderStatusJSON(s, nil, home)
+					return renderStatusJSON(s, nil, home, nil)
 				}
 				fmt.Fprintf(s.W, "%s\n", s.Accent("Runtime"))
 				fmt.Fprintf(s.W, "  %s\n", s.Info("No EKA workspace at "+home+" yet. Run 'eka project register' to create it."))
@@ -70,7 +71,7 @@ Exit codes:
 				st = scopeStatus(st)
 			}
 			if showJSON {
-				return renderStatusJSON(s, st, home)
+				return renderStatusJSON(s, st, home, statusFreshness(r, st))
 			}
 			if err := renderStatus(s, r, st); err != nil {
 				return err
@@ -116,10 +117,56 @@ func renderStatus(s *ui.Style, rt *runtime.Runtime, st *runtime.WorkspaceStatus)
 			}
 		}
 	}
+	// One freshness line: the count of units past their declared
+	// horizon out of the units that declared one. Advisory — it never
+	// changes the exit code and never blocks.
+	if f := statusFreshness(rt, st); f != nil {
+		fmt.Fprintf(s.W, "\n%s %s\n", ui.IconBullet, s.Info(fmt.Sprintf("Stale knowledge: %d (of %d bounded)", f.Stale, f.Scanned)))
+	}
 	return nil
 }
 
-// repoActiveContainers returns the ACTIVE container lines of one
+// repoFreshness is the stale/bounded tally of one status probe.
+type repoFreshness struct {
+	Stale   int `json:"stale"`
+	Scanned int `json:"scanned"`
+}
+
+// statusFreshness counts the units past their declared validity horizon
+// across the projects of the status probe, plus the total scanned. The
+// scan is the per-repository Knowledge.Units call status already makes
+// for the active-container line, indexed by source repo, so a scoped or
+// global status does not double the store reads. The clock is read once
+// per probe: every unit is judged at the same instant. A store failure
+// is reported as a truthful zero tally, never as a fabricated healthy
+// count (the status probe must not invent state).
+func statusFreshness(rt *runtime.Runtime, st *runtime.WorkspaceStatus) *repoFreshness {
+	now := time.Now()
+	byRepo := map[string][]*exchange.Unit{}
+	out := repoFreshness{}
+	for _, p := range st.Projects {
+		for _, rs := range p.Repos {
+			key := p.Project.ID + "\x00" + rs.Repo.Name
+			units, ok := byRepo[key]
+			if !ok {
+				var err error
+				units, err = rt.Knowledge.Units(p.Project.ID, rs.Repo.Name)
+				if err != nil {
+					return &out
+				}
+				byRepo[key] = units
+			}
+			for _, u := range units {
+				out.Scanned++
+				if runtime.FreshnessFor(u, now).Status == runtime.FreshnessStale {
+					out.Stale++
+				}
+			}
+		}
+	}
+	return &out
+}
+
 // repository (its provenance source_repo — one-active-per-source_repo,
 // dec:parallel-container-execution), sorted by canonical identity.
 // ok=false when the store cannot be read (status stays a truthful
@@ -269,6 +316,9 @@ type statusJSON struct {
 	Payloads      int           `json:"payloads"`
 	Attachments   int           `json:"attachments"`
 	Projects      []jsonProject `json:"projects"`
+	// Freshness is the stale/bounded tally (schema-additive: a probe
+	// with no workspace omits it).
+	Freshness *repoFreshness `json:"freshness,omitempty"`
 }
 type jsonProject struct {
 	ID      string     `json:"id"`
@@ -285,7 +335,7 @@ type jsonRepo struct {
 	LastSync  *runtime.SyncEntry `json:"lastSync,omitempty"`
 }
 
-func renderStatusJSON(s *ui.Style, st *runtime.WorkspaceStatus, home string) error {
+func renderStatusJSON(s *ui.Style, st *runtime.WorkspaceStatus, home string, fresh *repoFreshness) error {
 	if st == nil {
 		out := map[string]string{"schema": "status-v1", "message": "No EKA workspace at " + home + " yet. Run 'eka project register' to create it."}
 		b, _ := json.Marshal(out)
@@ -302,6 +352,7 @@ func renderStatusJSON(s *ui.Style, st *runtime.WorkspaceStatus, home string) err
 		Payloads:      st.Payloads,
 		Attachments:   st.Attachments,
 		Projects:      make([]jsonProject, 0, len(st.Projects)),
+		Freshness:     fresh,
 	}
 	for _, p := range st.Projects {
 		jp := jsonProject{ID: p.Project.ID, Name: p.Project.Name, Created: p.Project.Created}

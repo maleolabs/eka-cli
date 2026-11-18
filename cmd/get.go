@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/exchange"
@@ -229,6 +230,7 @@ Exit codes:
 			withUpstream, _ := cmd.Flags().GetBool(flagGetUpstream)
 			withDownstream, _ := cmd.Flags().GetBool(flagGetDownstream)
 			withTimeline, _ := cmd.Flags().GetBool(flagGetTimeline)
+			withFreshness, _ := cmd.Flags().GetBool(flagGetFreshness)
 			typeFilter, _ := cmd.Flags().GetString(flagGetType)
 			dimFilter, _ := cmd.Flags().GetString(flagGetDimension)
 			phaseFilter, _ := cmd.Flags().GetString(flagGetPhase)
@@ -279,6 +281,9 @@ Exit codes:
 			}
 			if isContainers && (typeFilter != "" || dimFilter != "" || phaseFilter != "") {
 				return fmt.Errorf("get: --type, --dimension and --phase require a domain target (one of the five Engineering Domains)")
+			}
+			if isContainers && withFreshness {
+				return fmt.Errorf("get: --freshness requires an identity or domain target, not the containers query")
 			}
 			// Pagination flag value and combination rules (pure flag
 			// validation — before the target applicability checks).
@@ -360,6 +365,7 @@ Exit codes:
 				upstream:      withUpstream,
 				downstream:    withDownstream,
 				timeline:      withTimeline,
+				freshness:     withFreshness,
 				typeFilter:    typeFilter,
 				dimFilter:     dimFilter,
 				phaseFilter:   phaseFilter,
@@ -407,6 +413,7 @@ Exit codes:
 	cmd.Flags().Bool(flagGetUpstream, false, "identity lookup: include the resolved upstream units (the units the target's relationships point at) as an \"upstream\" array")
 	cmd.Flags().Bool(flagGetDownstream, false, "identity lookup: include the units that reference the target as a \"downstream\" array")
 	cmd.Flags().Bool(flagGetTimeline, false, "identity lookup: include the line's instances as a \"timeline\" array ({canonical_form, instance_version, revision, object_hash, change_log})")
+	cmd.Flags().Bool(flagGetFreshness, false, "include the freshness block ({validUntil, lastConfirmed, daysUntilExpiry, status}) on every document — status is stale|current|undeclared")
 	cmd.Flags().String(flagGetType, "", "domain query: filter by artifact type token (e.g. adr, sto, ctr)")
 	cmd.Flags().String(flagGetDimension, "", "domain query: filter by primary knowledge dimension")
 	cmd.Flags().String(flagGetPhase, "", "domain query: filter by phase context attribute")
@@ -433,6 +440,7 @@ const (
 	flagGetUpstream   = "upstream"
 	flagGetDownstream = "downstream"
 	flagGetTimeline   = "timeline"
+	flagGetFreshness  = "freshness"
 	flagGetType       = "type"
 	flagGetDimension  = "dimension"
 	flagGetPhase      = "phase"
@@ -452,11 +460,15 @@ const (
 // getOptions carries the retrieval options of one get run, already
 // validated for target applicability by the command prologue.
 type getOptions struct {
-	compact       bool
-	noContent     bool
-	upstream      bool
-	downstream    bool
-	timeline      bool
+	compact    bool
+	noContent  bool
+	upstream   bool
+	downstream bool
+	timeline   bool
+	// freshness appends the clock-dependent freshness block to every
+	// document of this retrieval (--freshness; identity and domain
+	// forms). Absent, the output is byte-identical to today's.
+	freshness     bool
 	typeFilter    string
 	dimFilter     string
 	phaseFilter   string
@@ -604,6 +616,12 @@ func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOpti
 		}
 		doc.AddTimeline(tl)
 	}
+	if o.freshness {
+		// One clock reading for the whole retrieval: every document of
+		// the response is judged as of the same instant.
+		f := runtime.FreshnessFor(unit, time.Now())
+		doc.Freshness = &f
+	}
 	if o.compact {
 		return doc.MarshalCompact()
 	}
@@ -633,6 +651,19 @@ func dedupLinesLatest(units []*exchange.Unit) []*exchange.Unit {
 		return out[i].CanonicalIdentityForm < out[j].CanonicalIdentityForm
 	})
 	return out
+}
+
+// unitByCanonicalForm finds the unit a collection document was built
+// from (NewCollection sorts documents by canonical form; the source
+// units keep their store order). Linear because collections are
+// page-sized and the mapping is needed only under --freshness.
+func unitByCanonicalForm(units []*exchange.Unit, form string) *exchange.Unit {
+	for _, u := range units {
+		if u.CanonicalIdentityForm == form {
+			return u
+		}
+	}
+	return nil
 }
 
 // getDomain runs the domain query: every unit of the Engineering
@@ -670,6 +701,15 @@ func getDomain(r *runtime.Runtime, repo runtime.Repo, target string, o getOption
 	col, err := machine.NewCollection(name, units)
 	if err != nil {
 		return nil, fmt.Errorf("get failed: %w", err) // Exit 2: internal.
+	}
+	if o.freshness {
+		// The same clock instant for the whole collection keeps the
+		// response internally consistent.
+		now := time.Now()
+		for _, d := range col.Units {
+			f := runtime.FreshnessFor(unitByCanonicalForm(units, d.CanonicalForm), now)
+			d.Freshness = &f
+		}
 	}
 	if o.noContent {
 		// NewCollection builds the unit documents internally; strip
