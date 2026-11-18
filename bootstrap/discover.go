@@ -32,8 +32,9 @@ type Discovery struct {
 
 	// IsGitRepo reports whether the target is inside a git repository: a
 	// ".git" entry (directory for a normal clone, file for a worktree) is
-	// looked for in the target itself, then in every ancestor up to the
-	// filesystem root.
+	// looked for in the target itself, then in every ancestor below the
+	// home directory (a repository at or above home belongs to the user's
+	// environment, not to the target).
 	IsGitRepo bool
 	// GitRoot is the directory whose ".git" entry was found ("" when none).
 	GitRoot string
@@ -92,11 +93,27 @@ func Discover(target string) (*Discovery, error) {
 	return d, nil
 }
 
-// detectGitRepo walks from the target up to the filesystem root looking for
-// a ".git" entry.
+// detectGitRepo resolves the repository containing the target the same way
+// git does: the enclosing repository is the nearest ancestor carrying a
+// ".git" entry, and discovery stops there.
+//
+// The walk is bounded so that a repository enclosing the user's home
+// directory is not reported as the target's repository. A ".git" at or above
+// the home directory belongs to the user's environment, not to the project
+// being scaffolded: reporting it makes a scratch directory look like an
+// existing checkout and silently skips the git-init step. The walk therefore
+// terminates before the home directory, which leaves the "no repository"
+// answer intact for scratch targets while keeping the normal nested-repository
+// case (a checkout inside another checkout) working.
 func detectGitRepo(d *Discovery) {
+	home, _ := os.UserHomeDir()
 	dir := d.AbsTarget
 	for {
+		// Stop before the home directory: a repository at or above it is the
+		// user's environment, never the target's project.
+		if home != "" && dir == home {
+			return
+		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			d.IsGitRepo = true
 			d.GitRoot = dir

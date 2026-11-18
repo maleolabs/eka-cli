@@ -142,6 +142,10 @@ func runCapture(cmd *cobra.Command, args []string) error {
 
 	// Combine signal: staged + recent
 	allFiles := mergeFileLists(stagedFiles, recentFiles)
+	// Drop transport/derived paths before classification: snapshots under
+	// exchange/ carry names like dec-.../unit.json, so matching them would
+	// let a snapshot filename decide the artifact type of a code change.
+	allFiles = excludeTransportPaths(allFiles)
 	commitText := strings.Join(recentCommits, " ")
 
 	// No signal?
@@ -152,6 +156,10 @@ func runCapture(cmd *cobra.Command, args []string) error {
 
 	// Heuristic classification -> type token, title, confidence
 	typeToken, title, confidence := classifyGitHeuristic(allFiles, commitText, threshold)
+	// Knowledge artifacts must declare the dimension their token owns (R6);
+	// operating tokens own none, so this is empty for them and the draft
+	// carries no dimension, which is correct for those types.
+	dimension, _ := dimensionForToken(typeToken)
 	dedupeKey := runtime.Capture.DedupeKey(title)
 	sourceHash := runtime.Capture.SourcePromptHash(strings.Join(allFiles, ",") + "|" + commitText)
 	classifier := "git-heuristic v1"
@@ -240,6 +248,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 		Namespace:        namespace,
 		Type:             typeToken,
 		ID:               id,
+		Dimension:        dimension,
 		By:               by,
 		Provenance:       conformance.ProvenanceReconciled,
 		SourcePromptHash: sourceHash,
@@ -261,6 +270,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 				Namespace:        namespace,
 				Type:             typeToken,
 				ID:               altID,
+				Dimension:        dimension,
 				By:               by,
 				Provenance:       conformance.ProvenanceReconciled,
 				SourcePromptHash: sourceHash,
@@ -509,18 +519,148 @@ func mergeFileLists(a, b []string) []string {
 	return out
 }
 
+// captureConfidenceFloor is the lowest confidence a captured draft carries.
+// Below it the classifier has no usable signal, so the draft is a chore
+// carrying this floor rather than a claim of strength it cannot support.
+const captureConfidenceFloor = 0.4
+
+// captureTransportDirs are directory names whose contents are transports or
+// derived artifacts rather than authored sources: knowledge snapshots, the
+// local workspace, draft files, and the feedback store. They mirror the
+// code-graph skip-list (eka-core/codegraph skippedTransportDirs) because the
+// same reasoning applies: a snapshot filename must never be evidence about
+// the source change itself.
+var captureTransportDirs = map[string]bool{
+	"exchange": true,
+	".eka":     true,
+	"drafts":   true,
+	"feedback": true,
+}
+
+// excludeTransportPaths drops every path that passes through a transport
+// directory (at any depth) and paths ending in a .ekapkg archive, so
+// classification and staged-content summaries see only authored sources.
+func excludeTransportPaths(files []string) []string {
+	if len(files) == 0 {
+		return files
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if strings.HasSuffix(f, ".ekapkg") || hasTransportSegment(f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// hasTransportSegment reports whether any path segment is a transport
+// directory name.
+func hasTransportSegment(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if captureTransportDirs[seg] {
+			return true
+		}
+	}
+	return false
+}
+
+// isSpeculativeToken reports whether an artifact token was chosen from a word
+// in the commit text rather than from an explicit path segment. Only these
+// tokens are subject to the confidence threshold; a token backed by the shape
+// of the change itself is evidence and must not be downgraded.
+func isSpeculativeToken(token string) bool {
+	switch token {
+	case "sto": // chosen from "feat"/"add" appearing in prose
+		return true
+	}
+	return false
+}
+
+// dimensionForToken returns the canonical Knowledge Dimension owned by an
+// artifact type token, per the standard's token table. The second return
+// value is false for tokens that carry no dimension (operating tokens, whose
+// classification is informational and must not be emitted) and for unknown
+// tokens.
+func dimensionForToken(token string) (string, bool) {
+	switch token {
+	// Discovery (stratum 1).
+	case "vis", "str":
+		return "intent", true
+	case "req":
+		return "requirements", true
+	case "fnd":
+		return "research", true
+	// Architecture (stratum 2).
+	case "arc":
+		return "architecture", true
+	case "adr", "dec":
+		return "decisions", true
+	case "spec":
+		return "specifications", true
+	case "std":
+		return "standards", true
+	case "gls":
+		return "vocabulary", true
+	// Planning (stratum 3).
+	case "scp", "epc", "plan", "trc":
+		return "planning", true
+	// Execution knowledge (stratum 4): reviews carry `quality`; the
+	// remaining execution tokens are operating tokens without a dimension.
+	case "rvw":
+		return "quality", true
+	// Operations (stratum 5).
+	case "run":
+		return "operations", true
+	case "rel", "shr":
+		return "records", true
+	}
+	return "", false
+}
+
+// classifyPathSignals reports which artifact-family signals appear as whole
+// path segments or basenames. Segment matching is what distinguishes a
+// specifications/ directory from an unrelated word containing "spec".
+func classifyPathSignals(files []string) map[string]bool {
+	signals := map[string]bool{}
+	for _, f := range files {
+		slash := strings.ToLower(filepath.ToSlash(f))
+		base := filepath.Base(slash)
+		for _, seg := range strings.Split(slash, "/") {
+			switch seg {
+			case "adr", "adrs", "decisions", "decision":
+				signals["adr"] = true
+			case "spec", "specs", "specification", "specifications":
+				signals["spec"] = true
+			case "plan", "plans", "planning", "roadmap":
+				signals["plan"] = true
+			case "docs", "doc":
+				signals["docs"] = true
+			}
+		}
+		if strings.HasPrefix(base, "readme") {
+			signals["readme"] = true
+		}
+	}
+	return signals
+}
+
 func classifyGitHeuristic(files []string, commitText string, threshold float64) (typeToken, title string, confidence float64) {
-	lowerFiles := strings.ToLower(strings.Join(files, " "))
 	lowerCommits := strings.ToLower(commitText)
+	// Path signals are read per SEGMENT, never as a substring of the joined
+	// list: a segment "specifications" is evidence, while "spec" appearing
+	// inside an unrelated word is not.
+	pathSignals := classifyPathSignals(files)
+	lowerFiles := strings.ToLower(strings.Join(files, " "))
 	combined := lowerFiles + " " + lowerCommits
 
 	// Heuristic priority: bug/fix -> bug, feat/add -> sto, adr/dec/spec -> adr/spec, chore -> ch
 	hasFix := strings.Contains(combined, "fix") || strings.Contains(combined, "bug") || strings.Contains(combined, "hotfix")
 	hasFeat := strings.Contains(combined, "feat") || strings.Contains(combined, "add ") || strings.Contains(combined, "feature")
-	isADR := strings.Contains(lowerFiles, "adr") || strings.Contains(lowerCommits, "adr") || strings.Contains(lowerFiles, "decision")
-	isSpec := strings.Contains(lowerFiles, "spec") || strings.Contains(lowerCommits, "spec")
-	isPlan := strings.Contains(lowerFiles, "plan") || strings.Contains(lowerCommits, "plan") || strings.Contains(lowerFiles, "roadmap")
-	isDoc := strings.Contains(lowerFiles, ".md") && (strings.Contains(lowerFiles, "docs/") || strings.Contains(lowerFiles, "readme"))
+	isADR := pathSignals["adr"] || pathSignals["decision"] || strings.Contains(lowerCommits, "adr")
+	isSpec := pathSignals["spec"] || strings.Contains(lowerCommits, "spec")
+	isPlan := pathSignals["plan"] || pathSignals["roadmap"] || strings.Contains(lowerCommits, "plan")
+	isDoc := pathSignals["docs"] || pathSignals["readme"]
 
 	words := len(strings.Fields(combined))
 	hasVerb := runtime.Capture.ContainsVerb(combined)
@@ -568,12 +708,18 @@ func classifyGitHeuristic(files []string, commitText string, threshold float64) 
 		typeToken = "ch"
 		title = buildTitle("chore reconciled changes", files, commitText)
 	}
-	// Ensure threshold gate: if confidence below threshold, keep ch but mark title
-	if confidence < threshold {
-		confidence = threshold - 0.05 // still create but flagged low
-		if confidence < 0.4 {
-			confidence = 0.4
-		}
+	// The threshold gates only speculative tokens: those chosen from a word
+	// in the commit text rather than from the shape of the change. A token
+	// backed by an explicit path segment (adr/, specification/, plans/) is
+	// evidence, not a guess, and stays whatever the confidence says. The
+	// confidence is clamped up to the floor, never down to a value below the
+	// threshold by arithmetic accident.
+	if confidence < threshold && isSpeculativeToken(typeToken) {
+		typeToken = "ch"
+		title = buildTitle("chore reconciled changes", files, commitText)
+	}
+	if confidence < captureConfidenceFloor {
+		confidence = captureConfidenceFloor
 	}
 	return typeToken, title, confidence
 }
