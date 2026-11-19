@@ -81,7 +81,7 @@ The complete command list, with one-line descriptions:
 | `watch` | Watch a projection live, redrawn on change. |
 | `sync` | Sync a repository with the EKA workspace. |
 | `project` | Manage EKA workspace projects. |
-| `status` | Show the EKA workspace status. |
+| `status` | Show the EKA workspace status (`--json`, `--all`, `--stale`, `--fail-on-stale`). |
 | `integrity` | Verify the EKA workspace integrity. |
 | `update` | Update the EKA CLI to the latest release. |
 | `version` | Print version information. |
