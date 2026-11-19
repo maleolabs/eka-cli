@@ -75,6 +75,31 @@ func TestReadmeStandardVersionMatchesConformanceRules(t *testing.T) {
 	}
 }
 
+// TestReadmeStatesProjectVersion fails when the README's CLI claim
+// disagrees with the version anvil.yaml releases. anvil.yaml is the single
+// source of truth for the tag the release workflow builds and checks the tag
+// against; the README was the only place restating it with nothing verifying
+// the restatement, which is how it stayed at v1.10.5 while the released line
+// reached v1.20.1 and kept climbing.
+func TestReadmeStatesProjectVersion(t *testing.T) {
+	claims := parseReadmeClaims(t)
+	raw, err := os.ReadFile("anvil.yaml")
+	if err != nil {
+		t.Fatalf("anvil.yaml is unreadable: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(fields) == 2 && fields[0] == "version" {
+			released := strings.TrimSpace(fields[1])
+			if claims.cli != released {
+				t.Errorf("README advertises CLI v%s, anvil.yaml releases %s", claims.cli, released)
+			}
+			return
+		}
+	}
+	t.Fatal("anvil.yaml states no project version")
+}
+
 // requiredModuleVersion returns the version go.mod requires for module path.
 func requiredModuleVersion(t *testing.T, path string) string {
 	t.Helper()
