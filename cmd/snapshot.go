@@ -152,14 +152,15 @@ Examples:
 // snapshotRepositoryRoot locates the repository root of cwd: the
 // nearest directory carrying eka.yaml (the ADR-018 walk-up, shared with
 // the sync engine). A directory without eka.yaml is not an EKA
-// repository — its snapshot cannot be repaired.
+// repository. The error message is deliberately neutral (no snapshot
+// wording) so any caller can surface it verbatim.
 func snapshotRepositoryRoot(cwd string) (string, error) {
 	_, mdir, hasMeta, err := metadata.Find(cwd)
 	if err != nil {
 		return "", err
 	}
 	if !hasMeta {
-		return "", fmt.Errorf("%s is not an EKA repository (no eka.yaml); cannot regenerate the snapshot", cwd)
+		return "", fmt.Errorf("%s is not an EKA repository (no eka.yaml); run 'eka init' first", cwd)
 	}
 	return mdir, nil
 }

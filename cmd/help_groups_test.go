@@ -20,7 +20,7 @@ import (
 // help assertions below).
 var groupMember = map[string][]string{
 	groupAuthoring:          {"assign", "capture", "discard", "draft", "edit", "new", "note", "publish", "reassign", "relate", "retire", "share", "shr", "transition", "unassign", "unrelate"},
-	groupRepositoryExchange: {"export", "import", "init", "validate"},
+	groupRepositoryExchange: {"agents-md", "export", "import", "init", "validate"},
 	groupKnowledgeAccess:    {"code-context", "code-discover", "code-get", "context", "get", "view", "watch"},
 	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync"},
 	groupUtility:            {"feedback", "mcp", "plugin", "schema", "update", "version"},
