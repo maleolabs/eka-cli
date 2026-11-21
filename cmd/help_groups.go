@@ -69,10 +69,11 @@ var commandGroupsByName = map[string]string{
 	"shr":        groupAuthoring,
 	"share":      groupAuthoring,
 	// Repository & Exchange: repository lifecycle and RSF exchange.
-	"init":     groupRepositoryExchange,
-	"validate": groupRepositoryExchange, // user intent: repo conformance, though it runs through the Authoring API internally
-	"export":   groupRepositoryExchange,
-	"import":   groupRepositoryExchange,
+	"init":      groupRepositoryExchange,
+	"validate":  groupRepositoryExchange, // user intent: repo conformance, though it runs through the Authoring API internally
+	"export":    groupRepositoryExchange,
+	"import":    groupRepositoryExchange,
+	"agents-md": groupRepositoryExchange, // generates the committed AGENTS.md entry point (repo tooling)
 	// Knowledge Access: reading Engineering Knowledge.
 	"get":           groupKnowledgeAccess,
 	"context":       groupKnowledgeAccess,
