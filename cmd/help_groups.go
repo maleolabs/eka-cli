@@ -83,6 +83,7 @@ var commandGroupsByName = map[string]string{
 	"code-discover": groupKnowledgeAccess,
 	"code-get":      groupKnowledgeAccess,
 	// Runtime & Workspace: the Knowledge Runtime and its local workspace.
+	"verify":    groupRuntimeWorkspace, // the repo-scope verification gate runs over the workspace tree
 	"sync":      groupRuntimeWorkspace,
 	"project":   groupRuntimeWorkspace,
 	"status":    groupRuntimeWorkspace,
