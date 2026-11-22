@@ -1,0 +1,1 @@
+{"notes":["self-review (mode: solo) [role: code-review] PASS: changes localized, no hidden coupling, EKA copy verbatim, model constant updated, export_test fixed to use constant, anvil version bump minimal, go.mod replace isolated for verification, no secret leakage, maintainability ok"],"role":"review","verdict":"approve"}

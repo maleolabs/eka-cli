@@ -1,0 +1,1 @@
+{"notes":["Review is project-scoped as required. This addresses the issue where `eka status` and `eka get ses:execution-state` incorrectly displayed the legacy EKA execution state."],"role":"review","verdict":"approve"}

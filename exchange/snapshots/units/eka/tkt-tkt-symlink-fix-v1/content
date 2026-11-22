@@ -1,0 +1,1 @@
+{"commands":"\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n","projectedStatus":"","description":"Implement safe symlink walking for index building, add `--follow-symlinks` flag, and regression tests.","summary":"Fix code-discover / code-get / code-context symlink handling"}

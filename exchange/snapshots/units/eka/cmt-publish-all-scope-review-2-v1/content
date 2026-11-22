@@ -1,0 +1,1 @@
+{"notes":["self-review (mode: solo) [role: code-review]: selection matched on type+id with optional-ns rule; boundary check runs before store resolution so unselected-pending never leaks into deps; failure renderer receives the selected subgraph; dry-run performs zero Publish calls (tickets untouched); no blocking findings"],"role":"review","verdict":"approve"}

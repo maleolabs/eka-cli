@@ -1,0 +1,1 @@
+{"notes":["self-review (mode: solo) [role: qa]: acceptance verified — --only filters by namespace/ID list; dry-run added (described in item body); preflight atomic (refusals publish nothing, asserted per case); unscoped --all path byte-identical behavior (existing suite untouched green)"],"role":"review","verdict":"approve"}
