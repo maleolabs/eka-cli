@@ -89,6 +89,7 @@ var commandGroupsByName = map[string]string{
 	"status":    groupRuntimeWorkspace,
 	"integrity": groupRuntimeWorkspace,
 	"snapshot":  groupRuntimeWorkspace, // inspection/repair of workspace snapshots is a runtime concern, not authoring
+	"telemetry": groupRuntimeWorkspace, // the append-only session event log is an operations/runtime concern
 	// Utility: CLI maintenance and help.
 	"update":     groupUtility,
 	"version":    groupUtility,

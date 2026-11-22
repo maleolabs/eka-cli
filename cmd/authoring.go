@@ -1149,12 +1149,14 @@ Exit codes:
 				if errors.As(err, &pe) {
 					printCKOReport(styleFor(cmd), target, pe.Report)
 					fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", err)
+					telemetryAutoEmit(telKindGateRefusal, target, "", telGateConformance, err.Error())
 					return &exitError{code: exitFail}
 				}
 				var se *conformance.ScanError
 				if errors.As(err, &se) {
 					printScanReport(styleFor(cmd), target, se)
 					fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", err)
+					telemetryAutoEmit(telKindGateRefusal, target, "", telGateConformance, err.Error())
 					return &exitError{code: exitFail}
 				}
 				var dne *runtime.DraftNotFoundError
@@ -1182,6 +1184,10 @@ Exit codes:
 			if res.Note != "" {
 				fmt.Fprintf(s.W, "  %s %s\n", ui.IconBullet, s.Info(res.Note))
 			}
+			// Opt-in telemetry: a successful publish is a write (the
+			// session's first-write when it has none yet). Best-effort,
+			// it never changes the exit code or the output.
+			telemetryAutoEmit(telKindWrite, res.Form, "", "", "")
 			return nil
 		},
 	}

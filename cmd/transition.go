@@ -223,7 +223,7 @@ Exit codes:
 						// agents use --force).
 						s := styleFor(cmd)
 						if !isTTYReader(cmd.InOrStdin()) || !s.TTY {
-							return transitionRefused(cmd, jsonOut, refusal.Reason, refusal.Hint)
+							return transitionRefused(cmd, jsonOut, target, refusal.Reason, refusal.Hint)
 						}
 						// The reusable arrow-selected menu (the m2apps
 						// bubbletea pattern — the same primitive the
@@ -259,7 +259,7 @@ Exit codes:
 						if err != nil {
 							var again *runtime.TransitionRefusal
 							if errors.As(err, &again) {
-								return transitionRefused(cmd, jsonOut, again.Reason, again.Hint)
+								return transitionRefused(cmd, jsonOut, target, again.Reason, again.Hint)
 							}
 							return fmt.Errorf("transition: %w", err)
 						}
@@ -267,7 +267,7 @@ Exit codes:
 						if refusal.Warning != "" {
 							fmt.Fprintf(cmd.ErrOrStderr(), "%seka: warning: %s\n", ui.Margin, refusal.Warning)
 						}
-						return transitionRefused(cmd, jsonOut, refusal.Reason, refusal.Hint)
+						return transitionRefused(cmd, jsonOut, target, refusal.Reason, refusal.Hint)
 					}
 				} else {
 					return fmt.Errorf("transition: %w", err) // Exit 2: usage/internal.
@@ -334,8 +334,11 @@ func transitionUsage(cmd *cobra.Command, jsonOut bool, message string) error {
 
 // transitionRefused renders a deterministic refusal (exit 1): the
 // single-line human refusal on stderr, and the machine refusal document
-// on stdout with --json.
-func transitionRefused(cmd *cobra.Command, jsonOut bool, reason, hint string) error {
+// on stdout with --json. It also records the refusal as an opt-in
+// telemetry gate-refusal (gate "transition") when a session id is
+// present — best-effort, it never changes the exit code or the output.
+func transitionRefused(cmd *cobra.Command, jsonOut bool, subject, reason, hint string) error {
+	telemetryAutoEmit(telKindGateRefusal, subject, "", telGateTransition, reason)
 	if jsonOut {
 		_ = emitJSON(cmd, transitionJSON{Schema: transitionSchema, OK: false, Reason: reason, Hint: hint})
 	}
