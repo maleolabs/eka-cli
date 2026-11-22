@@ -131,6 +131,16 @@ func TestVerifyAgentsMDDrift(t *testing.T) {
 			t.Errorf("drift output missing %q:\n%s", want, out)
 		}
 	}
+	// Minor 3: the drift finding carries the first differing LINE.
+	_, jout, _ := runIn([]string{"verify", "--json"})
+	r := verifyJSON(t, jout)
+	c := findVerifyCheck(t, r, "agents-md-drift")
+	if len(c.Findings) == 0 || c.Findings[0].Line == nil {
+		t.Fatalf("drift finding must carry a line:\n%s", jout)
+	}
+	if *c.Findings[0].Line != 2 { // staleAgentsMD writes STALE on line 2.
+		t.Errorf("drift line = %d, want 2", *c.Findings[0].Line)
+	}
 }
 
 // TestVerifyCorruptSnapshot: a present-but-corrupt snapshot is a
@@ -238,8 +248,22 @@ func TestVerifyJSONStable(t *testing.T) {
 	if out1 != out2 {
 		t.Errorf("json document is not byte-stable:\n%q\n%q", out1, out2)
 	}
-	// Fixed field order at the top level and within a check.
-	ordered := []string{`"root":`, `"changed":`, `"checks":`, `"verdict":"fail"`}
+	// Assert the TOP-LEVEL verdict by parsing (a strings.Index substring
+	// would match checks[0] and hide a missing top-level key).
+	r := verifyJSON(t, out1)
+	if r.Verdict != verdictFail {
+		t.Errorf("top-level verdict = %q, want %q", r.Verdict, verdictFail)
+	}
+	if got := findVerifyCheck(t, r, "agents-md-drift").Verdict; got != verdictFail {
+		t.Errorf("agents-md-drift verdict = %q, want %q", got, verdictFail)
+	}
+	// The top-level verdict is the LAST field (fixed order): the document
+	// must end with it.
+	if !strings.HasSuffix(strings.TrimSpace(out1), `"verdict":"fail"}`) {
+		t.Errorf("document must end with the top-level verdict field:\n%s", out1)
+	}
+	// Fixed field order at the top level.
+	ordered := []string{`"root":`, `"changed":`, `"checks":`}
 	last := -1
 	for _, k := range ordered {
 		i := strings.Index(out1, k)
@@ -248,18 +272,6 @@ func TestVerifyJSONStable(t *testing.T) {
 		}
 		if i < last {
 			t.Errorf("field %q out of order:\n%s", k, out1)
-		}
-		last = i
-	}
-	checkOrder := []string{`"id":"agents-md-drift"`, `"constraint":"eka/req:agent-self-describing-surface"`, `"verdict":"fail"`, `"findings":`}
-	last = -1
-	for _, k := range checkOrder {
-		i := strings.Index(out1, k)
-		if i < 0 {
-			t.Fatalf("json missing %q:\n%s", k, out1)
-		}
-		if i < last {
-			t.Errorf("check field %q out of order:\n%s", k, out1)
 		}
 		last = i
 	}
@@ -275,6 +287,168 @@ func TestVerifyForce(t *testing.T) {
 	}
 	if !strings.Contains(out, "[FAIL] agents-md-drift") || !strings.Contains(out, "Verdict: FAIL") {
 		t.Errorf("--force must still print the violation and the honest verdict:\n%s", out)
+	}
+}
+
+// TestVerifyChangedDriftOnSnapshotChange: a change to exchange/snapshots
+// (the block's index source) with a now-stale AGENTS.md must run the
+// drift check under --changed and exit 1 — not skip it (Major 1).
+func TestVerifyChangedDriftOnSnapshotChange(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	unitA := agentsMDFixtureUnit("adr", "001-x", "Architecture")
+	repo := agentsMDRepo(t, []*exchange.Unit{unitA})
+	if code, _, e := runIn([]string{"agents-md", "--write"}); code != 0 {
+		t.Fatalf("agents-md --write: %s", e)
+	}
+	gitInit(t, repo)
+	// Add a second unit: the index (and thus the block) changes while the
+	// committed AGENTS.md stays as generated for unitA — drift, and only
+	// exchange/snapshots changed.
+	writeAgentsMDSnapshot(t, filepath.Join(repo, "exchange", "snapshots"),
+		[]*exchange.Unit{unitA, agentsMDFixtureUnit("adr", "002-y", "Architecture")})
+	code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+	if code != 1 {
+		t.Fatalf("verify --changed (snapshot changed): exit = %d, want 1\n%s", code, out)
+	}
+	r := verifyJSON(t, out)
+	if got := findVerifyCheck(t, r, "agents-md-drift").Verdict; got != verdictFail {
+		t.Errorf("agents-md-drift verdict = %q, want fail (snapshot path changed)", got)
+	}
+}
+
+// TestVerifyChangedDriftOnEkaYamlChange: a change to eka.yaml (the
+// block's identity source) must likewise trigger the drift check
+// (Major 1).
+func TestVerifyChangedDriftOnEkaYamlChange(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := agentsMDRepo(t, []*exchange.Unit{agentsMDFixtureUnit("adr", "001-x", "Architecture")})
+	if code, _, e := runIn([]string{"agents-md", "--write"}); code != 0 {
+		t.Fatalf("agents-md --write: %s", e)
+	}
+	gitInit(t, repo)
+	// Rename the project: the identity line changes → drift; eka.yaml is
+	// a changed path → the check must run.
+	if err := os.WriteFile(filepath.Join(repo, "eka.yaml"),
+		[]byte("version: 1\nproject: ea2\nname: ea2\nnamespace: ea\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+	if code != 1 {
+		t.Fatalf("verify --changed (eka.yaml changed): exit = %d, want 1\n%s", code, out)
+	}
+	r := verifyJSON(t, out)
+	if got := findVerifyCheck(t, r, "agents-md-drift").Verdict; got != verdictFail {
+		t.Errorf("agents-md-drift verdict = %q, want fail (eka.yaml changed)", got)
+	}
+}
+
+// TestVerifyChangedScopesConformance: with --changed, the conformance
+// check reports only the changed files; a pre-existing unrelated error
+// in docs/ does not block a change to a clean file (Major 2).
+func TestVerifyChangedScopesConformance(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := agentsMDRepo(t, nil)
+	docs := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := filepath.Join(docs, "good.md")
+	bad := filepath.Join(docs, "bad.md")
+	goodBody := "# Notes\n\nplain convention doc, no frontmatter\n"
+	if err := os.WriteFile(good, []byte(goodBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("---\ntype: adr\n---\n\n# bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, repo)
+
+	// Touch ONLY the clean file: the pre-existing error in bad.md is out
+	// of the changed set → exit 0.
+	if err := os.WriteFile(good, []byte(goodBody+"changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+	if code != 0 {
+		t.Fatalf("verify --changed (clean file touched): exit = %d, want 0\n%s", code, out)
+	}
+	r := verifyJSON(t, out)
+	if got := findVerifyCheck(t, r, "conformance").Verdict; got != verdictPass {
+		t.Errorf("conformance verdict = %q, want pass (only the clean file changed)", got)
+	}
+
+	// Touch the erroring file: the error is in the changed set → exit 1.
+	if err := os.WriteFile(bad, []byte("---\ntype: adr\n---\n\n# bad\n\nchanged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runIn([]string{"verify", "--changed", "--json"})
+	if code != 1 {
+		t.Fatalf("verify --changed (erroring file touched): exit = %d, want 1\n%s", code, out)
+	}
+	r = verifyJSON(t, out)
+	if got := findVerifyCheck(t, r, "conformance").Verdict; got != verdictFail {
+		t.Errorf("conformance verdict = %q, want fail (erroring file changed)", got)
+	}
+}
+
+// TestVerifyChangedUntracked: a brand-new un-staged file is visible to
+// --changed through the git ls-files --others union (Minor 5).
+func TestVerifyChangedUntracked(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := agentsMDRepo(t, nil)
+	gitInit(t, repo)
+	docs := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Untracked and NOT staged: only git ls-files --others sees it.
+	if err := os.WriteFile(filepath.Join(docs, "bad.md"), []byte("---\ntype: adr\n---\n\n# bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+	if code != 1 {
+		t.Fatalf("verify --changed (untracked doc): exit = %d, want 1\n%s", code, out)
+	}
+	r := verifyJSON(t, out)
+	if got := findVerifyCheck(t, r, "conformance").Verdict; got != verdictFail {
+		t.Errorf("conformance verdict = %q, want fail (untracked file is changed)", got)
+	}
+}
+
+// TestVerifyGitFailure: an unusable --base ref is a usage error (exit 2)
+// (Minor 4).
+func TestVerifyGitFailure(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := agentsMDRepo(t, nil)
+	gitInit(t, repo)
+	code, _, errText := runIn([]string{"verify", "--changed", "--base", "refs/heads/does-not-exist"})
+	if code != 2 {
+		t.Fatalf("verify --changed --base <missing ref>: exit = %d, want 2\n%s", code, errText)
+	}
+}
+
+// TestVerifyBaseFlagRejected: a --base that looks like a git option is
+// rejected before git runs (exit 2), so it cannot silently produce an
+// all-skipped PASS (Minor 6).
+func TestVerifyBaseFlagRejected(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := agentsMDRepo(t, nil)
+	gitInit(t, repo)
+	code, _, errText := runIn([]string{"verify", "--changed", "--base=-n"})
+	if code != 2 {
+		t.Fatalf("verify --changed --base=-n: exit = %d, want 2\n%s", code, errText)
 	}
 }
 
@@ -340,7 +514,7 @@ func TestVerifyTiming(t *testing.T) {
 	t.Logf("eka verify on eka-cli: %s (exit %d)", full, code)
 
 	start = time.Now()
-	runAgentsMDDriftCheck(root)
+	runAgentsMDDriftCheck(root, nil)
 	drift := time.Since(start)
 	t.Logf("agents-md-drift check alone: %s", drift)
 

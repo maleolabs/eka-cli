@@ -12,8 +12,8 @@ import (
 
 	"github.com/maleolabs/eka-cli/bootstrap"
 	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/metadata"
 	"github.com/maleolabs/eka-core/runtime"
 	"github.com/spf13/cobra"
 )
@@ -114,8 +114,15 @@ const (
 )
 
 // verifyFinding is one finding of one check. Field order is fixed
-// (deterministic JSON bytes): file, line, severity, message. Line is a
-// pointer so an unknown line serializes as JSON null (never 0).
+// (deterministic JSON bytes): file, line, severity, message.
+//
+// Line is the 1-based file line of the finding when the check can
+// attribute one (the AGENTS.md drift finding carries the line of the
+// first differing line); it is nil — JSON null — when no line is
+// available, which is the case for every finding that is not
+// line-attributable, including all conformance results (the eka-core
+// conformance.Result exposes no position) and repository-level findings.
+// A line is never invented.
 type verifyFinding struct {
 	File     string `json:"file"`
 	Line     *int   `json:"line"`
@@ -145,13 +152,18 @@ type verifyReport struct {
 // plain data row: id, constraint id, the repository-relative paths that
 // make it relevant (for --changed), a human requirement line, the fix
 // command, and the run function. No interface, no factory.
+//
+// The run function receives the changed set (nil when --changed was not
+// passed) so a check can scope itself: the conformance check filters its
+// results to the changed files; the drift and snapshot checks are
+// whole-repository by nature and ignore it.
 type verifyCheck struct {
 	id          string
 	constraint  string
 	paths       []string
 	requirement string
 	fix         string
-	run         func(root string) (findings []verifyFinding, skipped bool)
+	run         func(root string, changedPaths []string) (findings []verifyFinding, skipped bool)
 }
 
 // verifyChecks is the fixed built-in registry (stage A of M3a). Order is
@@ -166,7 +178,7 @@ var verifyChecks = []verifyCheck{
 	{
 		id:          "agents-md-drift",
 		constraint:  "eka/req:agent-self-describing-surface",
-		paths:       []string{bootstrap.AgentsMDName},
+		paths:       []string{bootstrap.AgentsMDName, "exchange/snapshots", "eka.yaml"},
 		requirement: "the AGENTS.md managed region must equal the block generated from the committed snapshot",
 		fix:         "eka agents-md --write",
 		run:         runAgentsMDDriftCheck,
@@ -205,6 +217,12 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 	}
 	var changedPaths []string
 	if changed {
+		// A --base that starts with "-" would be parsed by git as an
+		// option (never a ref), silently yielding an empty changed set and
+		// an all-skipped PASS. Reject it as a usage error (exit 2).
+		if strings.HasPrefix(base, "-") {
+			return fmt.Errorf("verify: --base %q is not a valid git ref", base)
+		}
 		changedPaths, err = gitChangedFiles(root, base)
 		if err != nil {
 			return fmt.Errorf("verify: %w", err) // Exit 2: unusable diff base.
@@ -219,7 +237,7 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 			// violation.
 			res.Verdict = verdictSkipped
 		} else {
-			findings, skipped := chk.run(root)
+			findings, skipped := chk.run(root, changedPaths)
 			res.Findings = sortFindings(findings)
 			res.Verdict = checkVerdict(res.Findings, skipped)
 		}
@@ -248,56 +266,71 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 // the committed-snapshot index and fails when the merge is non-nil
 // (MergeAgentsMD semantics: nil means "already current"). A missing
 // AGENTS.md is a WARNING, not a blocking violation. An unreadable
-// eka.yaml/snapshot is a blocking finding (it cannot be certified).
-func runAgentsMDDriftCheck(root string) ([]verifyFinding, bool) {
+// eka.yaml/snapshot is a blocking finding (it cannot be certified). The
+// changed set is ignored: the block derives from eka.yaml and the whole
+// snapshot, so the check is whole-repository by nature.
+func runAgentsMDDriftCheck(root string, _ []string) ([]verifyFinding, bool) {
 	path := filepath.Join(root, bootstrap.AgentsMDName)
 	existing, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []verifyFinding{{
 				File:     bootstrap.AgentsMDName,
-				Severity: string(severityWarning),
+				Severity: severityWarning,
 				Message:  "AGENTS.md does not exist; run 'eka agents-md --write' (or 'eka init') to generate it",
 			}}, false
 		}
-		return []verifyFinding{{File: bootstrap.AgentsMDName, Severity: string(severityError), Message: "cannot read AGENTS.md: " + err.Error()}}, false
+		return []verifyFinding{{File: bootstrap.AgentsMDName, Severity: severityError, Message: "cannot read AGENTS.md: " + err.Error()}}, false
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "eka.yaml"))
+	block, _, _, _, err := bootstrap.RenderAgentsMDBlock(root)
 	if err != nil {
-		return []verifyFinding{{File: "eka.yaml", Severity: string(severityError), Message: "cannot read eka.yaml: " + err.Error()}}, false
+		return []verifyFinding{{File: bootstrap.AgentsMDName, Severity: severityError, Message: err.Error()}}, false
 	}
-	meta, err := metadata.Parse(raw)
-	if err != nil {
-		return []verifyFinding{{File: "eka.yaml", Severity: string(severityError), Message: "invalid eka.yaml: " + err.Error()}}, false
-	}
-	index, _, err := bootstrap.ConstraintsFromSnapshot(filepath.Join(root, "exchange", "snapshots"))
-	if err != nil {
-		return []verifyFinding{{File: "exchange/snapshots", Severity: string(severityError), Message: "cannot read the committed snapshot: " + err.Error()}}, false
-	}
-	block, _ := bootstrap.BuildAgentsMDBlock(meta.Project, meta.Namespace, index)
 	merged := bootstrap.MergeAgentsMD(existing, block)
 	if merged == nil {
 		return nil, false
 	}
+	summary := agentsMDFirstDiff(existing, merged)
 	return []verifyFinding{{
 		File:     bootstrap.AgentsMDName,
-		Severity: string(severityError),
-		Message:  "managed region drifted from the generated block (" + agentsMDFirstDiff(existing, merged) + "); run 'eka agents-md --write'",
+		Line:     verifyFirstDiffLine(summary),
+		Severity: severityError,
+		Message:  "managed region drifted from the generated block (" + summary + "); run 'eka agents-md --write'",
 	}}, false
+}
+
+// verifyFirstDiffLine extracts the 1-based line from the first-diff
+// summary agentsMDFirstDiff produces ("line N: ..."); nil when the
+// summary carries no line. It never invents a line.
+func verifyFirstDiffLine(summary string) *int {
+	const prefix = "line "
+	if !strings.HasPrefix(summary, prefix) {
+		return nil
+	}
+	digits := summary[len(prefix):]
+	if i := strings.IndexByte(digits, ':'); i >= 0 {
+		digits = digits[:i]
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return nil
+	}
+	return &n
 }
 
 // runSnapshotIntegrityCheck loads and verifies the committed snapshot
 // with exchange.LoadSnapshot (ADR-027 source-only transport). A missing
 // snapshot directory is SKIPPED (a fresh v2 repository may have none);
 // a present-but-unloadable directory (corrupt unit, partial aggregate
-// state, undecodable) is a blocking finding carrying the error text.
-func runSnapshotIntegrityCheck(root string) ([]verifyFinding, bool) {
+// state, undecodable) is a blocking finding carrying the error text. The
+// changed set is ignored: the snapshot is verified as one package.
+func runSnapshotIntegrityCheck(root string, _ []string) ([]verifyFinding, bool) {
 	dir := filepath.Join(root, "exchange", "snapshots")
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil, true // No snapshot directory: skipped, not a violation.
 	}
 	if _, err := exchange.LoadSnapshot(dir); err != nil {
-		return []verifyFinding{{File: "exchange/snapshots", Severity: string(severityError), Message: err.Error()}}, false
+		return []verifyFinding{{File: "exchange/snapshots", Severity: severityError, Message: err.Error()}}, false
 	}
 	return nil, false
 }
@@ -308,16 +341,36 @@ func runSnapshotIntegrityCheck(root string) ([]verifyFinding, bool) {
 // blocking errors fails; each blocking result carries its rule id in the
 // message (no rule→store-id mapping is invented — the constraint is the
 // standard itself). Warnings are reported but never block.
-func runConformanceCheck(root string) ([]verifyFinding, bool) {
+//
+// When changedPaths is non-empty (--changed), the report results are
+// filtered to the files in the changed set (exact repo-relative slash
+// match on res.File): a pre-existing unrelated error in docs/ does not
+// block a change to a clean file. With no changed set the scan is the
+// full tree (unchanged behaviour).
+func runConformanceCheck(root string, changedPaths []string) ([]verifyFinding, bool) {
 	report, err := runtime.Authoring.Validate(root)
 	if err != nil {
-		return []verifyFinding{{File: "docs", Severity: string(severityError), Message: "cannot run the conformance gate: " + err.Error()}}, false
+		return []verifyFinding{{File: "docs", Severity: severityError, Message: "cannot run the conformance gate: " + err.Error()}}, false
 	}
 	if report.Skipped != "" {
 		return nil, true // No docs/ tree: skipped.
 	}
+	results := report.SortedResults()
+	if len(changedPaths) > 0 {
+		inChanged := make(map[string]bool, len(changedPaths))
+		for _, p := range changedPaths {
+			inChanged[p] = true
+		}
+		filtered := make([]conformance.Result, 0, len(results))
+		for _, res := range results {
+			if inChanged[filepath.ToSlash(res.File)] {
+				filtered = append(filtered, res)
+			}
+		}
+		results = filtered
+	}
 	var findings []verifyFinding
-	for _, res := range report.SortedResults() {
+	for _, res := range results {
 		findings = append(findings, verifyFinding{
 			File:     res.File,
 			Severity: string(res.Severity),
@@ -391,28 +444,50 @@ func pathsChanged(paths, changed []string) bool {
 	return false
 }
 
-// gitChangedFiles returns the changed paths (repo-relative, slash form)
-// reported by `git diff --name-only <base>` run at root.
+// gitChangedFiles returns the changed paths (repo-relative, slash form,
+// sorted) of the working tree vs base: the modified/staged set from
+// `git diff --name-only <base>` UNIONED with the untracked, non-ignored
+// files from `git ls-files --others --exclude-standard` (so a brand-new
+// un-staged file is visible to --changed).
 //
-// ponytail: untracked files are not in `git diff` output, so a brand-new
-// un-staged file is not "changed" for --changed. Ceiling: untracked
-// additions are missed. Upgrade path: also union `git ls-files
-// --others --exclude-standard` if a hook needs to gate new files.
+// ponytail: ignored files (matched by .gitignore) are deliberately out —
+// they are not part of the repository. Remaining ceiling: a path deleted
+// from the working tree still appears in the diff (fine), and a
+// submodule/DENY-listed path is not expanded. Upgrade path: none needed
+// until a hook must gate ignored artifacts.
 func gitChangedFiles(root, base string) ([]string, error) {
-	c := exec.Command("git", "diff", "--name-only", base)
-	c.Dir = root
-	out, err := c.CombinedOutput()
+	diffOut, err := gitOutput(root, "diff", "--name-only", base)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --name-only %s: %w", base, err)
 	}
-	var files []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, filepath.ToSlash(line))
-		}
+	othersOut, err := gitOutput(root, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others: %w", err)
 	}
+	seen := map[string]bool{}
+	var files []string
+	for _, line := range strings.Split(string(diffOut)+"\n"+string(othersOut), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		slash := filepath.ToSlash(line)
+		if seen[slash] {
+			continue
+		}
+		seen[slash] = true
+		files = append(files, slash)
+	}
+	sort.Strings(files)
 	return files, nil
+}
+
+// gitOutput runs one git command at root and returns its combined
+// stdout.
+func gitOutput(root string, args ...string) ([]byte, error) {
+	c := exec.Command("git", args...)
+	c.Dir = root
+	return c.CombinedOutput()
 }
 
 // writeVerifyJSON emits the report as a single JSON document plus one

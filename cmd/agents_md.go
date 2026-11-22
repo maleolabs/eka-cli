@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-core/metadata"
 	"github.com/spf13/cobra"
 )
 
@@ -127,22 +126,13 @@ func runAgentsMD(cmd *cobra.Command, write, check, asJSON bool) error {
 	if err != nil {
 		return fmt.Errorf("agents-md: %w", err) // Exit 2: no eka.yaml.
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "eka.yaml"))
+	block, omitted, constraints, missingSnapshot, err := bootstrap.RenderAgentsMDBlock(root)
 	if err != nil {
-		return fmt.Errorf("agents-md: cannot read eka.yaml: %w", err)
-	}
-	meta, err := metadata.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("agents-md: invalid eka.yaml: %w", err)
-	}
-	index, missingSnapshot, err := bootstrap.ConstraintsFromSnapshot(filepath.Join(root, "exchange", "snapshots"))
-	if err != nil {
-		return fmt.Errorf("agents-md: cannot read the committed snapshot: %w", err) // Exit 2.
+		return fmt.Errorf("agents-md: %w", err) // Exit 2.
 	}
 	if missingSnapshot {
 		fmt.Fprintln(cmd.ErrOrStderr(), "eka: agents-md: no committed snapshot (exchange/snapshots) — identity-only block, constraint index omitted")
 	}
-	block, omitted := bootstrap.BuildAgentsMDBlock(meta.Project, meta.Namespace, index)
 	path := filepath.Join(root, bootstrap.AgentsMDName)
 	existing, rerr := os.ReadFile(path)
 	missingFile := false
@@ -155,7 +145,7 @@ func runAgentsMD(cmd *cobra.Command, write, check, asJSON bool) error {
 	merged := bootstrap.MergeAgentsMD(existing, block)
 	report := agentsMDReport{
 		File:        bootstrap.AgentsMDName,
-		Constraints: agentsMDEntryCount(index),
+		Constraints: constraints,
 		BlockBytes:  len(block),
 		Budget:      bootstrap.AgentsMDBlockBudget,
 		Truncated:   omitted > 0,
@@ -260,13 +250,4 @@ func agentsMDFirstDiff(existing, merged []byte) string {
 		}
 	}
 	return "(no line difference)"
-}
-
-// agentsMDEntryCount is the number of index entries (constraint lines).
-func agentsMDEntryCount(index []bootstrap.IndexEntry) int {
-	n := 0
-	for _, e := range index {
-		n += len(e.IDs)
-	}
-	return n
 }
