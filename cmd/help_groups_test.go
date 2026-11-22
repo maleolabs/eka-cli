@@ -22,7 +22,7 @@ var groupMember = map[string][]string{
 	groupAuthoring:          {"assign", "capture", "discard", "draft", "edit", "new", "note", "publish", "reassign", "relate", "retire", "share", "shr", "transition", "unassign", "unrelate"},
 	groupRepositoryExchange: {"agents-md", "export", "import", "init", "validate"},
 	groupKnowledgeAccess:    {"code-context", "code-discover", "code-get", "context", "get", "view", "watch"},
-	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync"},
+	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync", "verify"},
 	groupUtility:            {"feedback", "mcp", "plugin", "schema", "update", "version"},
 }
 
@@ -130,6 +130,7 @@ func TestRootHelpShowsGroups(t *testing.T) {
 		"Construct the engineering context around a knowledge subject",
 		"Sync a repository with the EKA workspace",
 		"Verify the EKA workspace integrity",
+		"Run the repository-scope verification gate",
 		"Generate the autocompletion script for the specified shell",
 		"Help about any command",
 		"Update the EKA CLI to the latest release",

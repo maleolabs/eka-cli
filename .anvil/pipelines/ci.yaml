@@ -32,6 +32,16 @@ pipeline:
               env:
                 GOOS: windows
                 GOARCH: amd64
+            # Repository-scope verification gate: runs `eka verify` on the
+            # checked-out tree (the full repo-scope check set, not
+            # --changed — CI diffs are unreliable). A blocking violation
+            # fails the pipeline (exit 1).
+            - name: verify
+              command: go
+              args:
+                - run
+                - ./cmd/eka
+                - verify
         - name: test
           tasks:
             - name: unit-tests

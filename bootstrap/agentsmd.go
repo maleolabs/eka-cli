@@ -210,6 +210,47 @@ func agentsMDTruncationLine(omitted int) string {
 	return fmt.Sprintf("%s%d more (eka status)", AgentsMDTruncatedPrefix, omitted)
 }
 
+// RenderAgentsMDBlock reads the repository identity (eka.yaml) and the
+// committed-snapshot constraint index at <root>/exchange/snapshots, and
+// renders the managed AGENTS.md block — the ONE generator both `eka
+// agents-md` and `eka verify` call, so the drift comparison always uses
+// the same block the write path produces. It returns the block bytes,
+// the number of omitted index entries (0 when everything fit), the
+// number of index entries, and whether the snapshot directory is missing
+// (the identity-only-block case; a MISSING snapshot is not an error).
+//
+// An unreadable or invalid eka.yaml, or a snapshot that fails to load, is
+// returned as an error whose text already names the failing step
+// ("cannot read eka.yaml", "invalid eka.yaml", "cannot read the committed
+// snapshot"); callers add their own command prefix. The snapshot index is
+// the index for reading only — callers never touch the workspace store.
+func RenderAgentsMDBlock(root string) (block []byte, omitted, constraints int, missingSnapshot bool, err error) {
+	raw, err := os.ReadFile(filepath.Join(root, "eka.yaml"))
+	if err != nil {
+		return nil, 0, 0, false, fmt.Errorf("cannot read eka.yaml: %w", err)
+	}
+	meta, err := metadata.Parse(raw)
+	if err != nil {
+		return nil, 0, 0, false, fmt.Errorf("invalid eka.yaml: %w", err)
+	}
+	index, missingSnapshot, err := ConstraintsFromSnapshot(filepath.Join(root, "exchange", "snapshots"))
+	if err != nil {
+		return nil, 0, 0, false, fmt.Errorf("cannot read the committed snapshot: %w", err)
+	}
+	block, omitted = BuildAgentsMDBlock(meta.Project, meta.Namespace, index)
+	return block, omitted, IndexEntryCount(index), missingSnapshot, nil
+}
+
+// IndexEntryCount is the number of index entries (constraint lines) in
+// an index: the sum of every group's ids.
+func IndexEntryCount(index []IndexEntry) int {
+	n := 0
+	for _, e := range index {
+		n += len(e.IDs)
+	}
+	return n
+}
+
 // MergeAgentsMD reconciles existing file bytes with the managed block:
 // missing content yields the block plus one trailing newline; a marked
 // region is replaced verbatim (surrounding bytes untouched); unmarked
