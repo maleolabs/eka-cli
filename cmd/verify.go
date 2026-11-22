@@ -253,12 +253,33 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 	} else {
 		renderVerify(styleFor(cmd), report)
 	}
+	// Opt-in telemetry (spec:telemetry-capture:1): the verify verdict is
+	// recorded as a gate event only when a session id is present. It is
+	// best-effort and never changes the exit code or the output.
+	if report.Verdict == verdictFail {
+		telemetryAutoEmit(telKindGateRefusal, "", "", telGateVerify, verifyFailReason(report))
+	} else {
+		telemetryAutoEmit(telKindGatePass, "", "", telGateVerify, "")
+	}
 	// --force keeps the honest verdict in the document but exits 0: the
 	// deliberate-violation escape hatch.
 	if report.Verdict == verdictFail && !force {
 		return &exitError{code: exitFail} // Exit 1: blocking violation.
 	}
 	return nil
+}
+
+// verifyFailReason is the deterministic reason string of a failing
+// verify verdict: the sorted, comma-joined ids of the failing checks.
+func verifyFailReason(report verifyReport) string {
+	var ids []string
+	for _, c := range report.Checks {
+		if c.Verdict == verdictFail {
+			ids = append(ids, c.ID)
+		}
+	}
+	sort.Strings(ids)
+	return "verify failed: " + strings.Join(ids, ",")
 }
 
 // runAgentsMDDriftCheck checks the AGENTS.md managed-region drift (the

@@ -531,10 +531,11 @@ const captureConfidenceFloor = 0.4
 // same reasoning applies: a snapshot filename must never be evidence about
 // the source change itself.
 var captureTransportDirs = map[string]bool{
-	"exchange": true,
-	".eka":     true,
-	"drafts":   true,
-	"feedback": true,
+	"exchange":  true,
+	".eka":      true,
+	"drafts":    true,
+	"feedback":  true,
+	"telemetry": true,
 }
 
 // excludeTransportPaths drops every path that passes through a transport
