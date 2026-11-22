@@ -44,9 +44,9 @@ import (
 //
 //	0  record appended / list rendered
 //	1  a deterministic telemetry error (a broken prevHash chain, an
-//	   unusable file, an IO failure)
+//	   unusable file, an unsupported record version, an IO failure)
 //	2  usage error (missing/unknown --kind, an unknown --gate, a
-//	   malformed --since/--until timestamp)
+//	   gate/kind mismatch, a malformed --since/--until timestamp)
 //
 // The read path is read-only and explicit: `eka get` / `eka context`
 // never touch telemetry. The write and gate paths instrument opt-in
@@ -177,7 +177,8 @@ Exit codes:
 //
 //	0  record appended
 //	1  a deterministic telemetry error (broken chain, IO failure)
-//	2  usage error (missing/unknown --kind, unknown --gate)
+//	2  usage error (missing/unknown --kind, unknown --gate, or a
+//	   gate/kind mismatch: gate-* kinds require --gate, others forbid it)
 func newTelemetryEmitCommand() *cobra.Command {
 	var session, kind, event, subject, constraint, gate, reason string
 	cmd := &cobra.Command{
@@ -199,16 +200,24 @@ Kinds:
   gate-pass         a gate passed (gate)
 
 Gates (for gate-* kinds): conformance | transition | verify | note
+Rule: gate-refusal/gate-pass MUST carry --gate; every other kind MUST NOT.
 
 Session:
   --session <id>    the client-supplied session id (sessionSource client)
   EKA_SESSION env   used when --session is absent (sessionSource env)
   neither           sessionId "" and sessionSource "unattributed"
 
+Concurrency: emit assumes a single writer per session file (no locking).
+The session id is client-owned, so the client serialises its own writes;
+two concurrent emits for one session id can duplicate seq and break the
+chain. A broken chain makes further explicit emits fail (exit 1) and
+further auto-emits no-op silently — acceptable, telemetry is auxiliary
+and M5 reports coverage, so a gap is visible rather than masked.
+
 Exit codes:
   0  record appended
   1  deterministic telemetry error (broken chain, IO failure)
-  2  usage error (missing/unknown --kind, unknown --gate)`,
+  2  usage error (missing/unknown --kind, unknown --gate, gate/kind mismatch)`,
 		Example: `  eka telemetry emit --kind write --session 01J8Z...
   eka telemetry emit --kind gate-refusal --session s1 --gate transition --subject sto:12 --reason "illegal transition"
   eka telemetry emit --kind constraint-read --subject eka/adr:011-... --constraint eka/adr:011-...`,
@@ -230,7 +239,7 @@ Exit codes:
 	cmd.Flags().StringVar(&session, "session", "", "client-supplied session id (default: EKA_SESSION; else unattributed)")
 	cmd.Flags().StringVar(&subject, "subject", "", "the record subject (canonical or line form; default empty)")
 	cmd.Flags().StringVar(&constraint, "constraint", "", "the constraint read/refused (canonical or line form; default empty)")
-	cmd.Flags().StringVar(&gate, "gate", "", "the gate id for gate-* kinds: "+strings.Join(telemetryGates, "|"))
+	cmd.Flags().StringVar(&gate, "gate", "", "the gate id (required for gate-* kinds, forbidden otherwise): "+strings.Join(telemetryGates, "|"))
 	cmd.Flags().StringVar(&reason, "reason", "", "the deterministic refusal string (gate-refusal)")
 	return cmd
 }
@@ -247,6 +256,17 @@ func runTelemetryEmit(cmd *cobra.Command, session, kind, subject, constraint, ga
 		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry emit: --gate must be one of %s\n", strings.Join(telemetryGates, "|"))
 		return &exitError{code: exitUsage}
 	}
+	// Gate <-> kind rule (M5 keys coverage on gate-bearing events): the
+	// gate-* kinds must carry a gate, every other kind must not.
+	isGateKind := kind == telKindGateRefusal || kind == telKindGatePass
+	switch {
+	case isGateKind && gate == "":
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry emit: --kind %s requires a --gate (%s)\n", kind, strings.Join(telemetryGates, "|"))
+		return &exitError{code: exitUsage}
+	case !isGateKind && gate != "":
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry emit: --kind %s must not carry a --gate\n", kind)
+		return &exitError{code: exitUsage}
+	}
 	source := telSourceUnattributed
 	switch {
 	case session != "":
@@ -256,11 +276,13 @@ func runTelemetryEmit(cmd *cobra.Command, session, kind, subject, constraint, ga
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("telemetry: %w", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
 	}
 	root, repo, err := telemetryRoot(cwd)
 	if err != nil {
-		return fmt.Errorf("telemetry: %w", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
 	}
 	rec, err := appendTelemetry(root, repo, session, source, kind, subject, constraint, gate, reason)
 	if err != nil {
@@ -353,11 +375,13 @@ func parseTelemetryTime(flag, value string) (time.Time, error) {
 func runTelemetryList(cmd *cobra.Command, session, repo string, since, until time.Time, asJSON bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("telemetry: %w", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
 	}
 	root, _, err := telemetryRoot(cwd)
 	if err != nil {
-		return fmt.Errorf("telemetry: %w", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
 	}
 	dir := telemetryDirPath(root)
 
@@ -382,7 +406,8 @@ func runTelemetryList(cmd *cobra.Command, session, repo string, since, until tim
 	case errors.Is(err, os.ErrNotExist):
 		// No telemetry yet: empty result.
 	default:
-		return fmt.Errorf("telemetry: cannot read %s: %w", dir, err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: cannot read %s: %v\n", dir, err)
+		return &exitError{code: exitFail}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].session < files[j].session })
 
@@ -529,6 +554,12 @@ func telemetryFilePath(root, session string) string {
 // and appends exactly one record (creating the directory/file). It
 // returns the appended record. A broken chain or IO failure is an
 // error; the file is never rewritten.
+//
+// ponytail: assumes a single writer per session file — there is no
+// locking. Two concurrent appends to the same session id can duplicate
+// seq and break the chain; the session id is client-owned, so the
+// client serialises its own writes. Add platform file locking only if a
+// real multi-writer-per-session case appears.
 func appendTelemetry(root, repo, session, source, kind, subject, constraint, gate, reason string) (telemetryRecord, error) {
 	path := telemetryFilePath(root, session)
 	nextSeq, prevHash, err := telemetryAppendPoint(path)
@@ -583,6 +614,10 @@ func telemetryAppendPoint(path string) (nextSeq int, prevHash string, err error)
 	if rerr != nil {
 		return 0, "", fmt.Errorf("telemetry: cannot read %s: %w", path, rerr)
 	}
+	// Deliberate: the read-only scan tolerates a final record without a
+	// trailing newline, but append must not — appending after it would
+	// concatenate two JSON objects onto one line and corrupt the file.
+	// So append is intentionally stricter than scanTelemetry.
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		return 0, "", fmt.Errorf("telemetry: %s does not end with a newline (every record is appended with one)", path)
 	}
@@ -595,6 +630,12 @@ func telemetryAppendPoint(path string) (nextSeq int, prevHash string, err error)
 		} else {
 			line, rest = rest, nil
 		}
+		// bufio.ScanLines (scanTelemetry) strips a trailing "\r" from
+		// every line, so strip it here too: both readers must hash
+		// identical bytes. This also keeps the chain stable across an
+		// LF<->CRLF checkout, since git rewrites the bytes on checkout
+		// and the hash is taken over the on-disk bytes either way.
+		line = bytes.TrimSuffix(line, []byte("\r"))
 		rec, cerr := v.check(line)
 		if cerr != nil {
 			return 0, "", cerr
@@ -683,6 +724,12 @@ func decodeTelemetryRecord(raw []byte) (telemetryRecord, error) {
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return telemetryRecord{}, errors.New("malformed record: trailing data after the JSON object")
+	}
+	// The schema is versioned by "v": a record at an unknown version cannot
+	// be interpreted, so it is refused deterministically (the validator
+	// wraps this with the path:line).
+	if rec.V != telemetryRecordVersion {
+		return telemetryRecord{}, fmt.Errorf("malformed record: unsupported version %d", rec.V)
 	}
 	return rec, nil
 }

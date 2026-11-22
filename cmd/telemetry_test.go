@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,6 +88,38 @@ func writeTelemetryFile(t *testing.T, dir, session string, recs []telemetryRecor
 		}
 		buf.Write(line)
 		buf.WriteByte('\n')
+		prev = telemetryHash(line)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeTelemetryFileCRLF writes the same valid chain as
+// writeTelemetryFile but with CRLF line endings, emulating a checkout
+// with core.autocrlf=true. The prevHash of every record is the hash of
+// the line WITHOUT the trailing "\r" (the line the emitter hashes);
+// both readers strip the "\r" before hashing, so the chain stays valid.
+func writeTelemetryFileCRLF(t *testing.T, dir, session string, recs []telemetryRecord) string {
+	t.Helper()
+	path := telemetryPath(dir, session)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	prev := ""
+	for i, rec := range recs {
+		rec.V = telemetryRecordVersion
+		rec.SessionID = session
+		rec.Seq = i
+		rec.PrevHash = prev
+		line, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(line)
+		buf.WriteString("\r\n")
 		prev = telemetryHash(line)
 	}
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
@@ -196,6 +229,35 @@ func TestTelemetryEmitChainTamperFails(t *testing.T) {
 	}
 }
 
+// TestTelemetryCRLFChain: a CRLF-normalised checkout (core.autocrlf=true)
+// does not break the chain. Both readers strip the trailing "\r" before
+// hashing, so emit appends cleanly and list agrees. Non-vacuity: without
+// the strip, append hashes "...}\r" while the committed prevHash was
+// computed over "...}", a false "chain broken".
+func TestTelemetryCRLFChain(t *testing.T) {
+	dir := telemetryRepo(t)
+	path := writeTelemetryFileCRLF(t, dir, "s1", []telemetryRecord{{Kind: "write"}, {Kind: "write"}})
+
+	// The reader accepts the CRLF chain.
+	if code, _, errText := runIn([]string{"telemetry", "list", "--json"}); code != 0 {
+		t.Fatalf("list over CRLF: exit = %d\n%s", code, errText)
+	}
+
+	// The appender accepts it and continues the chain at seq 2.
+	if code, _, errText := runIn([]string{"telemetry", "emit", "--kind", "write", "--session", "s1"}); code != 0 {
+		t.Fatalf("emit over CRLF: exit = %d, want 0\n%s", code, errText)
+	}
+	recs := telemetryRecords(t, path)
+	if len(recs) != 3 || recs[2].Seq != 2 {
+		t.Fatalf("records = %d, want 3 ending at seq 2: %+v", len(recs), recs)
+	}
+	// The appended line is LF (the emitter writes LF); the chain still
+	// validates because the reader strips CR before hashing.
+	if code, _, errText := runIn([]string{"telemetry", "list", "--json"}); code != 0 {
+		t.Fatalf("list after append: exit = %d\n%s", code, errText)
+	}
+}
+
 // TestTelemetryEmitUnattributed: with no session id the record carries
 // sessionId "" and sessionSource "unattributed"; two runs produce two
 // records, never a synthesized session.
@@ -241,6 +303,103 @@ func TestTelemetryEmitUsage(t *testing.T) {
 	// --event alias works.
 	if code, _, errText := runIn([]string{"telemetry", "emit", "--event", "write", "--session", "s1"}); code != 0 {
 		t.Errorf("--event alias: exit = %d\n%s", code, errText)
+	}
+	// Disagreeing --kind / --event is a usage error.
+	if code, _, _ := runIn([]string{"telemetry", "emit", "--kind", "write", "--event", "gate-pass", "--session", "s1"}); code != 2 {
+		t.Errorf("disagreeing --kind/--event: exit = %d, want 2", code)
+	}
+}
+
+// TestTelemetryEmitGateKind: the gate <-> kind rule (M5 keys coverage on
+// gate-bearing events): gate-* kinds REQUIRE --gate, every other kind
+// FORBIDS it. Non-vacuity: the valid case exits 0, so the checks do not
+// over-reject.
+func TestTelemetryEmitGateKind(t *testing.T) {
+	dir := telemetryRepo(t)
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"write with a gate", []string{"--kind", "write", "--gate", "verify"}, 2},
+		{"gate-refusal without a gate", []string{"--kind", "gate-refusal"}, 2},
+		{"gate-pass without a gate", []string{"--kind", "gate-pass"}, 2},
+		{"gate-refusal with a gate", []string{"--kind", "gate-refusal", "--gate", "transition", "--subject", "sto:1"}, 0},
+		{"write without a gate", []string{"--kind", "write"}, 0},
+		{"constraint-read without a gate", []string{"--kind", "constraint-read"}, 0},
+	}
+	for _, tc := range cases {
+		args := append([]string{"telemetry", "emit", "--session", "s"}, tc.args...)
+		if code, _, errText := runIn(args); code != tc.want {
+			t.Errorf("%s: exit = %d, want %d\n%s", tc.name, code, tc.want, errText)
+		}
+	}
+	// The three exit-0 cases landed, in order, with their gate (or none).
+	recs := telemetryRecords(t, telemetryPath(dir, "s"))
+	if len(recs) != 3 {
+		t.Fatalf("records = %d, want 3 (the three exit-0 cases): %+v", len(recs), recs)
+	}
+	if recs[0].Kind != telKindGateRefusal || recs[0].Gate != telGateTransition {
+		t.Errorf("record 0 = %+v, want gate-refusal/transition", recs[0])
+	}
+	if recs[1].Kind != telKindWrite || recs[1].Gate != "" {
+		t.Errorf("record 1 = %+v, want write with no gate", recs[1])
+	}
+	if recs[2].Kind != telKindConstraintRead || recs[2].Gate != "" {
+		t.Errorf("record 2 = %+v, want constraint-read with no gate", recs[2])
+	}
+}
+
+// TestTelemetryListUnattributedFile: an unattributed session file is
+// literally ".jsonl"; list discovers it through os.ReadDir (which, unlike
+// filepath.Glob, sees dotfiles) and renders its records.
+func TestTelemetryListUnattributedFile(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryFile(t, dir, "", []telemetryRecord{
+		{Repo: "demo/app", Kind: "write", At: "2026-11-22T00:00:00Z"},
+		{Repo: "demo/app", Kind: "write", At: "2026-11-22T00:00:01Z"},
+	})
+	if _, err := os.Stat(telemetryPath(dir, "")); err != nil {
+		t.Fatalf("unattributed file .jsonl missing: %v", err)
+	}
+	recs := listJSONLines(t)
+	if len(recs) != 2 {
+		t.Fatalf("records = %d, want 2 (the dotfile session): %+v", len(recs), recs)
+	}
+	for i, rec := range recs {
+		if rec.SessionID != "" || rec.Seq != i {
+			t.Errorf("record %d = %+v, want sessionId \"\" seq %d", i, rec, i)
+		}
+	}
+}
+
+// TestTelemetryListUnsupportedVersion: a well-formed record at an unknown
+// schema version is refused deterministically, naming the file and line.
+// Non-vacuity: the identical record at v=1 lists cleanly.
+func TestTelemetryListUnsupportedVersion(t *testing.T) {
+	dir := telemetryRepo(t)
+	path := telemetryPath(dir, "s1")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const tmpl = `{"v":%d,"sessionId":"s1","seq":0,"at":"2026-11-22T00:00:00Z","repo":"demo/app","kind":"write","subject":"","constraint":"","gate":"","reason":"","prevHash":"","sessionSource":"client"}`
+	if err := os.WriteFile(path, []byte(fmt.Sprintf(tmpl, 2)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errText := runIn([]string{"telemetry", "list"})
+	if code != 1 {
+		t.Fatalf("unsupported version: exit = %d, want 1\n%s", code, errText)
+	}
+	if !strings.Contains(errText, path+":1") || !strings.Contains(errText, "unsupported version 2") {
+		t.Errorf("stderr must name the file:line and the version, got %q", errText)
+	}
+
+	// Non-vacuity: the same record at the supported version lists cleanly.
+	if err := os.WriteFile(path, []byte(fmt.Sprintf(tmpl, 1)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errText := runIn([]string{"telemetry", "list"}); code != 0 {
+		t.Fatalf("supported version: exit = %d, want 0\n%s", code, errText)
 	}
 }
 
@@ -394,12 +553,16 @@ func dirDigest(t *testing.T, dir string) map[string]string {
 }
 
 // TestTelemetryReadsNeverWrite: `eka get` and `eka context` change
-// neither the telemetry files nor the workspace store. Non-vacuity: an
-// actual telemetry write appears in the same detector.
+// neither the telemetry files nor the workspace store, EVEN with a
+// session id present (auto-emit armed) — the exact regression this
+// guards is a read path wired to telemetryAutoEmit. Non-vacuity: the
+// same armed hook, invoked as a read path would, DOES create telemetry.
 func TestTelemetryReadsNeverWrite(t *testing.T) {
 	repo := seedGetRepo(t, nil)
 	home := os.Getenv("EKA_HOME")
-	t.Setenv(telemetryEnvSession, "")
+	// Arm auto-emit: with a session id present, any read path that emits
+	// would write here. A no-op run (empty env) could not catch that.
+	t.Setenv(telemetryEnvSession, "sess-read")
 
 	if _, err := os.Stat(telemetryDirPath(repo)); !os.IsNotExist(err) {
 		t.Fatalf("telemetry dir must not exist before the reads: %v", err)
@@ -409,10 +572,16 @@ func TestTelemetryReadsNeverWrite(t *testing.T) {
 	for _, args := range [][]string{
 		{"get", "eka-view-fixture/adr:001-login-serialization:1"},
 		{"context", "eka-view-fixture/sto:alpha"},
+		{"get", "eka-view-fixture/sto:alpha"},
 	} {
 		if code, out, errText := runIn(args); code != 0 {
 			t.Fatalf("%v: exit = %d\nstdout: %s\nstderr: %s", args, code, out, errText)
 		}
+	}
+	// Also with no session env at all (unarmed): still no telemetry.
+	t.Setenv(telemetryEnvSession, "")
+	if code, _, _ := runIn([]string{"get", "eka-view-fixture/sto:alpha"}); code != 0 {
+		t.Fatal("get without a session failed")
 	}
 
 	if _, err := os.Stat(telemetryDirPath(repo)); !os.IsNotExist(err) {
@@ -422,12 +591,14 @@ func TestTelemetryReadsNeverWrite(t *testing.T) {
 		t.Errorf("the read commands changed the store:\nbefore: %v\nafter:  %v", before, after)
 	}
 
-	// Non-vacuity: an actual write IS visible to the telemetry-file check.
-	if code, _, _ := runIn([]string{"telemetry", "emit", "--kind", "write", "--session", "s"}); code != 0 {
-		t.Fatal("emit failed")
-	}
-	if _, err := os.Stat(telemetryDirPath(repo)); err != nil {
-		t.Errorf("a write must create the telemetry dir (detector non-vacuous): %v", err)
+	// Non-vacuity: the telemetry-dir guard above flips on exactly the
+	// regression it guards — a read path reaching the auto-emit hook with
+	// the same armed session id. Drive that hook directly and require the
+	// file the assertion forbids to appear.
+	t.Setenv(telemetryEnvSession, "sess-read")
+	telemetryAutoEmit(telKindConstraintRead, "eka-view-fixture/adr:001-login-serialization:1", "eka-view-fixture/adr:001-login-serialization:1", "", "")
+	if _, err := os.Stat(telemetryPath(repo, "sess-read")); err != nil {
+		t.Errorf("non-vacuity: a read-path emit must create telemetry, got %v", err)
 	}
 }
 
