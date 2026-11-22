@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,7 +128,7 @@ type telemetryRecord struct {
 func newTelemetryCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "telemetry",
-		Short: "Append-only session telemetry event log (emit, list)",
+		Short: "Append-only session telemetry event log (emit, list, report)",
 		Long: `The EKA session telemetry event log (spec:telemetry-capture:1).
 
 Telemetry is an append-only JSONL event log, one file per session at
@@ -142,15 +143,16 @@ timestamps; with neither source the record carries sessionId "" and
 sessionSource "unattributed".
 
 Subcommands:
-  emit  append one telemetry record
-  list  query the telemetry records (per session/repo/period)
+  emit    append one telemetry record
+  list    query the telemetry records (per session/repo/period)
+  report  aggregate the M5 compliance numbers (per repo/period)
 
 Exit codes:
   0  appended / rendered
   1  a deterministic telemetry error (broken chain, unusable file)
   2  usage error (missing/unknown --kind, unknown --gate, bad timestamp)`,
 	}
-	cmd.AddCommand(newTelemetryEmitCommand(), newTelemetryListCommand())
+	cmd.AddCommand(newTelemetryEmitCommand(), newTelemetryListCommand(), newTelemetryReportCommand())
 	return cmd
 }
 
@@ -383,33 +385,11 @@ func runTelemetryList(cmd *cobra.Command, session, repo string, since, until tim
 		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
 		return &exitError{code: exitFail}
 	}
-	dir := telemetryDirPath(root)
-
-	type sessionFile struct {
-		session string
-		path    string
-	}
-	var files []sessionFile
-	entries, err := os.ReadDir(dir)
-	switch {
-	case err == nil:
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), telemetryFileExt) {
-				continue
-			}
-			sid := strings.TrimSuffix(e.Name(), telemetryFileExt)
-			if session != "" && sid != session {
-				continue
-			}
-			files = append(files, sessionFile{session: sid, path: filepath.Join(dir, e.Name())})
-		}
-	case errors.Is(err, os.ErrNotExist):
-		// No telemetry yet: empty result.
-	default:
-		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: cannot read %s: %v\n", dir, err)
+	files, err := telemetrySessionFiles(telemetryDirPath(root), session)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: %v\n", err)
 		return &exitError{code: exitFail}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].session < files[j].session })
 
 	s := styleFor(cmd)
 	w := cmd.OutOrStdout()
@@ -450,6 +430,432 @@ func runTelemetryList(cmd *cobra.Command, session, repo string, since, until tim
 		fmt.Fprintf(s.W, "  (no records)\n")
 	}
 	return nil
+}
+
+// telemetrySessionFile is one discovered per-session telemetry file.
+type telemetrySessionFile struct {
+	session string
+	path    string
+}
+
+// telemetrySessionFiles discovers the per-session telemetry files under
+// dir, sorted by session id (so the (sessionId, seq) order holds, each
+// file being in seq order), optionally limited to one session id ("" =
+// all). A missing directory yields no files — an empty scope, not an
+// error. A directory that cannot be read is a deterministic error.
+func telemetrySessionFiles(dir, session string) ([]telemetrySessionFile, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("telemetry: cannot read %s: %w", dir, err)
+	}
+	var files []telemetrySessionFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), telemetryFileExt) {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), telemetryFileExt)
+		if session != "" && sid != session {
+			continue
+		}
+		files = append(files, telemetrySessionFile{session: sid, path: filepath.Join(dir, e.Name())})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].session < files[j].session })
+	return files, nil
+}
+
+// --- report (M5 consumer) --------------------------------------------
+
+// newTelemetryReportCommand builds `eka telemetry report [--repo <id>]
+// [--since <t>] [--until <t>] [--json]`: the M5
+// (sto:compliance-telemetry) aggregation of the append-only stream
+// (spec:telemetry-capture:1 §5). It is a PURE CONSUMER — no new capture
+// field is invented.
+//
+// Derivations (over the records matching --repo and the --since/--until
+// period; filtering mirrors `list` exactly, on `at`, inclusive):
+//
+//	sessions observed         distinct sessionId with a non-empty id and
+//	                          sessionSource != "unattributed"
+//	read-before-first-write   of those sessions, the ones with a
+//	                          constraint-read seq strictly below the
+//	                          session's first first-write/write seq; a
+//	                          session with no write is not counted
+//	gate failures             count of gate-refusal records
+//	repaired in same session  count of (sessionId, subject) pairs with a
+//	                          gate-refusal followed (higher seq, same
+//	                          session) by a gate-pass on that subject —
+//	                          an UPPER BOUND: a refusal then a later pass
+//	                          is not proof of a causal repair
+//
+// seq is the only ordering key; `at` is never an ordering key. Files are
+// streamed one session at a time and folded in (sessionId, seq) order.
+//
+// Honesty limits (spec §6; ALWAYS emitted, never a bare number):
+//
+//	unattributed sessions   distinct sessions with sessionSource
+//	                        "unattributed" (excluded from sessions
+//	                        observed)
+//	telemetry start         the minimum `at` in scope ("" when no records),
+//	                        so a period predating the signal is visible
+//	reads emitted           whether any constraint-read is in scope; when
+//	                        it is not, read-before-first-write is an
+//	                        undercount and is labelled ">="
+//	repaired upper bound    the repaired number is labelled an upper bound
+//
+// An empty scope (no telemetry directory or no matching records) exits 0
+// with zero sessions and an empty telemetry start — never a bare 0.
+//
+// Exit codes (the CLI 0/1/2 contract):
+//
+//	0  report rendered (possibly an empty scope)
+//	1  a deterministic telemetry error (malformed line, broken chain, an
+//	   invalid `at`)
+//	2  usage error (a malformed --since/--until timestamp)
+func newTelemetryReportCommand() *cobra.Command {
+	var repo, since, until string
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "report [--repo <id>] [--since <t>] [--until <t>] [--json]",
+		Short: "Aggregate the M5 compliance numbers (per repo and period)",
+		Long: `Aggregate the append-only telemetry stream into the four M5 numbers
+(sto:compliance-telemetry) per repository and period, with an explicit
+limits section. seq is the only ordering key.
+
+Numbers:
+  sessions observed          distinct attributed sessions in scope
+  read a constraint before    sessions with a constraint-read strictly
+  their first write            below their first write (">=" when no read
+                              was emitted in scope)
+  gate failures              gate-refusal records in scope
+  repaired in same session   gate-refusal then a later gate-pass on the
+                             same subject in the same session (upper bound)
+
+Filters (mirror list; inclusive on at):
+  --repo <id>   only records whose repo equals <id>
+  --since <t>   only records with at >= <t> (RFC3339)
+  --until <t>   only records with at <= <t> (RFC3339)
+
+Limits (always emitted): unattributed sessions, the telemetry start (the
+minimum at in scope), whether any read was emitted, and that
+repaired-in-session is an upper bound — never a bare number.
+
+Exit codes:
+  0  report rendered (possibly an empty scope)
+  1  deterministic telemetry error (malformed line, broken chain, bad at)
+  2  usage error (a malformed --since/--until timestamp)`,
+		Example: `  eka telemetry report
+  eka telemetry report --repo eka/eka-cli --json
+  eka telemetry report --since 2026-11-01T00:00:00Z --until 2026-12-01T00:00:00Z`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sinceT, err := parseTelemetryTime("--since", since)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry report: %v\n", err)
+				return &exitError{code: exitUsage}
+			}
+			untilT, err := parseTelemetryTime("--until", until)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry report: %v\n", err)
+				return &exitError{code: exitUsage}
+			}
+			return runTelemetryReport(cmd, repo, sinceT, untilT, asJSON)
+		},
+	}
+	cmd.Flags().StringVar(&repo, "repo", "", "only records whose repo equals <id> (e.g. eka/eka-cli)")
+	cmd.Flags().StringVar(&since, "since", "", "only records with at >= <t> (RFC3339)")
+	cmd.Flags().StringVar(&until, "until", "", "only records with at <= <t> (RFC3339)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit a single canonical JSON document")
+	return cmd
+}
+
+// telemetryReport is the `eka telemetry report --json` document. Field
+// order is fixed (deterministic bytes): the echoed context, the four M5
+// numbers, then the mandatory limits.
+type telemetryReport struct {
+	Root                 string          `json:"root"`
+	Repo                 string          `json:"repo"`
+	Since                string          `json:"since"`
+	Until                string          `json:"until"`
+	SessionsObserved     int             `json:"sessionsObserved"`
+	ReadBeforeFirstWrite int             `json:"readBeforeFirstWrite"`
+	GateFailures         int             `json:"gateFailures"`
+	RepairedInSession    int             `json:"repairedInSession"`
+	Limits               telemetryLimits `json:"limits"`
+}
+
+// telemetryLimits is the mandatory honesty section (spec:telemetry-
+// capture:1 §6): a report never presents a bare number.
+type telemetryLimits struct {
+	// UnattributedSessions is the number of distinct sessions whose
+	// records carry sessionSource "unattributed" (excluded from
+	// SessionsObserved).
+	UnattributedSessions int `json:"unattributedSessions"`
+	// TelemetryStart is the minimum `at` in scope ("" when no records), so
+	// a period predating the signal is visible.
+	TelemetryStart string `json:"telemetryStart"`
+	// ReadsEmitted reports whether any constraint-read is in scope (read
+	// emission is opt-in).
+	ReadsEmitted bool `json:"readsEmitted"`
+	// ReadBeforeFirstWriteIsFloor is true when no read was emitted, so
+	// ReadBeforeFirstWrite is an undercount (labelled ">=").
+	ReadBeforeFirstWriteIsFloor bool `json:"readBeforeFirstWriteIsFloor"`
+	// RepairedInSessionIsUpperBound is always true: a refusal followed by a
+	// later pass is not proof of a causal repair.
+	RepairedInSessionIsUpperBound bool `json:"repairedInSessionIsUpperBound"`
+}
+
+// telemetrySessionAgg accumulates one session's records (keyed by
+// sessionId) into the per-session state the four numbers need. Every
+// accumulator is an order-independent minimum/maximum, so a session's
+// derived contribution does not depend on file visit order.
+type telemetrySessionAgg struct {
+	attributed    bool
+	unattributed  bool
+	minReadSeq    int // smallest constraint-read seq, -1 when none
+	firstWriteSeq int // smallest first-write/write seq, -1 when none
+	refusalMinSeq map[string]int
+	passMaxSeq    map[string]int
+}
+
+// newTelemetrySessionAgg returns an empty session accumulator (-1 marks
+// "no such record"; a real seq is always >= 0).
+func newTelemetrySessionAgg() *telemetrySessionAgg {
+	return &telemetrySessionAgg{
+		minReadSeq:    -1,
+		firstWriteSeq: -1,
+		refusalMinSeq: map[string]int{},
+		passMaxSeq:    map[string]int{},
+	}
+}
+
+// telemetryAggregate is the streaming accumulator of the report: the
+// per-session state plus the cross-session totals (gate failures, read
+// presence, the minimum `at`).
+type telemetryAggregate struct {
+	sessions     map[string]*telemetrySessionAgg
+	gateFailures int
+	readsEmitted bool
+	startAt      time.Time
+	startRaw     string
+	startSet     bool
+}
+
+// newTelemetryAggregate returns an empty aggregate.
+func newTelemetryAggregate() *telemetryAggregate {
+	return &telemetryAggregate{sessions: map[string]*telemetrySessionAgg{}}
+}
+
+// session returns (creating on first use) the accumulator for sessionID.
+func (g *telemetryAggregate) session(sessionID string) *telemetrySessionAgg {
+	s := g.sessions[sessionID]
+	if s == nil {
+		s = newTelemetrySessionAgg()
+		g.sessions[sessionID] = s
+	}
+	return s
+}
+
+// add folds one already-filtered record into the aggregate. Session
+// attribution follows spec §5: a session is attributed when its id is
+// non-empty and its source is not "unattributed".
+func (g *telemetryAggregate) add(rec telemetryRecord, at time.Time) {
+	s := g.session(rec.SessionID)
+	if rec.SessionID != "" && rec.SessionSource != telSourceUnattributed {
+		s.attributed = true
+	}
+	if rec.SessionSource == telSourceUnattributed {
+		s.unattributed = true
+	}
+	switch rec.Kind {
+	case telKindConstraintRead:
+		s.minReadSeq = minTelemetrySeq(s.minReadSeq, rec.Seq)
+		g.readsEmitted = true
+	case telKindFirstWrite, telKindWrite:
+		s.firstWriteSeq = minTelemetrySeq(s.firstWriteSeq, rec.Seq)
+	case telKindGateRefusal:
+		g.gateFailures++
+		if cur, ok := s.refusalMinSeq[rec.Subject]; !ok || rec.Seq < cur {
+			s.refusalMinSeq[rec.Subject] = rec.Seq
+		}
+	case telKindGatePass:
+		if cur, ok := s.passMaxSeq[rec.Subject]; !ok || rec.Seq > cur {
+			s.passMaxSeq[rec.Subject] = rec.Seq
+		}
+	}
+	// The telemetry start is the minimum `at` in scope; the raw string is
+	// kept so the report echoes exactly the earliest record's `at`. On
+	// equal instants the lexicographically smaller raw value wins, so the
+	// value is deterministic.
+	if !g.startSet || at.Before(g.startAt) || (at.Equal(g.startAt) && rec.At < g.startRaw) {
+		g.startAt, g.startRaw, g.startSet = at, rec.At, true
+	}
+}
+
+// build derives the telemetryReport from the accumulated state. The four
+// numbers are counts of session/pair state; the limits are always
+// populated (spec §6).
+func (g *telemetryAggregate) build(root, repo string, since, until time.Time) telemetryReport {
+	rep := telemetryReport{Root: root, Repo: repo}
+	if !since.IsZero() {
+		rep.Since = since.Format(time.RFC3339)
+	}
+	if !until.IsZero() {
+		rep.Until = until.Format(time.RFC3339)
+	}
+	for _, s := range g.sessions {
+		if s.attributed {
+			rep.SessionsObserved++
+			if s.firstWriteSeq >= 0 && s.minReadSeq >= 0 && s.minReadSeq < s.firstWriteSeq {
+				rep.ReadBeforeFirstWrite++
+			}
+		}
+		if s.unattributed {
+			rep.Limits.UnattributedSessions++
+		}
+		for subject, refusalSeq := range s.refusalMinSeq {
+			if passSeq, ok := s.passMaxSeq[subject]; ok && refusalSeq < passSeq {
+				rep.RepairedInSession++
+			}
+		}
+	}
+	rep.GateFailures = g.gateFailures
+	rep.Limits.ReadsEmitted = g.readsEmitted
+	rep.Limits.ReadBeforeFirstWriteIsFloor = !g.readsEmitted
+	rep.Limits.RepairedInSessionIsUpperBound = true
+	if g.startSet {
+		rep.Limits.TelemetryStart = g.startRaw
+	}
+	return rep
+}
+
+// minTelemetrySeq folds seq into an accumulator where -1 means "unset".
+func minTelemetrySeq(cur, seq int) int {
+	if cur < 0 || seq < cur {
+		return seq
+	}
+	return cur
+}
+
+// runTelemetryReport streams the session files (already sorted, so
+// aggregation follows (sessionId, seq) order), applies the --repo/--since/
+// --until filters and folds every matching record into the aggregate. It
+// reuses the list filters and the 0/1/2 exit contract; the read path is
+// read-only.
+func runTelemetryReport(cmd *cobra.Command, repo string, since, until time.Time, asJSON bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
+	}
+	root, _, err := telemetryRoot(cwd)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry: %v\n", err)
+		return &exitError{code: exitFail}
+	}
+	files, err := telemetrySessionFiles(telemetryDirPath(root), "")
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "eka: %v\n", err)
+		return &exitError{code: exitFail}
+	}
+
+	agg := newTelemetryAggregate()
+	for _, f := range files {
+		err := scanTelemetry(f.path, func(rec telemetryRecord) error {
+			if repo != "" && rec.Repo != repo {
+				return nil
+			}
+			// `at` is always parsed here (not only when a filter is set):
+			// the telemetry start is the minimum `at`, so an invalid `at`
+			// is a deterministic error, never silently skipped.
+			at, perr := time.Parse(time.RFC3339, rec.At)
+			if perr != nil {
+				return fmt.Errorf("telemetry: %s: record seq %d carries an invalid at timestamp %q", f.path, rec.Seq, rec.At)
+			}
+			if !since.IsZero() && at.Before(since) {
+				return nil
+			}
+			if !until.IsZero() && at.After(until) {
+				return nil
+			}
+			agg.add(rec, at)
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "eka: %v\n", err)
+			return &exitError{code: exitFail}
+		}
+	}
+
+	report := agg.build(root, repo, since, until)
+	if asJSON {
+		out, merr := json.Marshal(report)
+		if merr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry report: %v\n", merr)
+			return &exitError{code: exitFail}
+		}
+		if _, werr := cmd.OutOrStdout().Write(append(out, '\n')); werr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "eka: telemetry report: %v\n", werr)
+			return &exitError{code: exitFail}
+		}
+		return nil
+	}
+	renderTelemetryReport(styleFor(cmd), report)
+	return nil
+}
+
+// renderTelemetryReport prints the human report in the deterministic
+// non-TTY style (mirrors verify): the context header, the four numbers
+// (the read-before-write number is labelled ">=" when no read was
+// emitted) and the mandatory limits.
+func renderTelemetryReport(s *ui.Style, report telemetryReport) {
+	h := ui.NewHeader(s, "Telemetry").Add("Root", report.Root)
+	if report.Repo != "" {
+		h.Add("Repo", report.Repo)
+	}
+	if report.Since != "" {
+		h.Add("Since", report.Since)
+	}
+	if report.Until != "" {
+		h.Add("Until", report.Until)
+	}
+	h.Pipeline("Report").Render()
+
+	readValue := strconv.Itoa(report.ReadBeforeFirstWrite)
+	if report.Limits.ReadBeforeFirstWriteIsFloor {
+		readValue = ">= " + readValue
+	}
+	fmt.Fprintf(s.W, "\nNumbers:\n")
+	fmt.Fprintf(s.W, "  sessions observed:                     %d\n", report.SessionsObserved)
+	fmt.Fprintf(s.W, "  read a constraint before first write:  %s\n", readValue)
+	fmt.Fprintf(s.W, "  gate failures:                         %d\n", report.GateFailures)
+	fmt.Fprintf(s.W, "  repaired in same session:              %d\n", report.RepairedInSession)
+
+	start := report.Limits.TelemetryStart
+	if start == "" {
+		start = "(none)"
+	}
+	fmt.Fprintf(s.W, "\nLimits:\n")
+	fmt.Fprintf(s.W, "  unattributed sessions (excluded):      %d\n", report.Limits.UnattributedSessions)
+	fmt.Fprintf(s.W, "  telemetry start:                       %s\n", start)
+	fmt.Fprintf(s.W, "  reads emitted:                         %s\n", yesNo(report.Limits.ReadsEmitted))
+	if report.Limits.ReadBeforeFirstWriteIsFloor {
+		fmt.Fprintf(s.W, "  read-before-first-write is a floor (>=): no read was emitted in scope, so the number is an undercount\n")
+	}
+	fmt.Fprintf(s.W, "  repaired-in-session is an upper bound: a gate-refusal followed by a later gate-pass is not proof of a causal repair\n")
+}
+
+// yesNo renders a bool for human output.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // renderTelemetryListHeader prints the human context header for the

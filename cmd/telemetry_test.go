@@ -796,6 +796,287 @@ func TestTelemetryListMalformed(t *testing.T) {
 	}
 }
 
+// --- M5: report -------------------------------------------------------
+
+// squashSpaces collapses whitespace runs to single spaces, so a human-
+// output assertion is robust to the report's column alignment.
+func squashSpaces(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// telemetryReportJSON runs `eka telemetry report --json` and decodes it.
+func telemetryReportJSON(t *testing.T, args ...string) telemetryReport {
+	t.Helper()
+	code, out, errText := runIn(append([]string{"telemetry", "report", "--json"}, args...))
+	if code != 0 {
+		t.Fatalf("report %v: exit = %d\nstderr: %s", args, code, errText)
+	}
+	var rep telemetryReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, out)
+	}
+	return rep
+}
+
+// writeTelemetryReportFixture writes the M5 acceptance fixture: one
+// compliant session (constraint-read then first-write) and one
+// non-compliant session (a write with no prior read, then a gate-refusal
+// on demo/sto:beta with no repair).
+func writeTelemetryReportFixture(t *testing.T, dir string) {
+	t.Helper()
+	writeTelemetryFile(t, dir, "comp", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindConstraintRead, Subject: "demo/adr:001-x:1", Constraint: "demo/adr:001-x:1", At: "2026-11-20T00:00:00Z", SessionSource: telSourceClient},
+		{Repo: "demo/app", Kind: telKindFirstWrite, Subject: "demo/sto:alpha:1", At: "2026-11-20T00:00:01Z", SessionSource: telSourceClient},
+	})
+	writeTelemetryFile(t, dir, "noncomp", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindWrite, Subject: "demo/sto:beta:1", At: "2026-11-21T00:00:00Z", SessionSource: telSourceClient},
+		{Repo: "demo/app", Kind: telKindGateRefusal, Gate: telGateTransition, Subject: "demo/sto:beta", Reason: "transition refused", At: "2026-11-21T00:00:01Z", SessionSource: telSourceClient},
+	})
+}
+
+// TestTelemetryReportAggregates: the four M5 numbers and the limits for
+// the compliant+non-compliant fixture, plus the human render. Non-
+// vacuity: removing a session flips sessions observed to 1.
+func TestTelemetryReportAggregates(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+
+	rep := telemetryReportJSON(t)
+	if rep.SessionsObserved != 2 || rep.ReadBeforeFirstWrite != 1 || rep.GateFailures != 1 || rep.RepairedInSession != 0 {
+		t.Errorf("numbers = observed %d, read-before %d, gate %d, repaired %d; want 2, 1, 1, 0",
+			rep.SessionsObserved, rep.ReadBeforeFirstWrite, rep.GateFailures, rep.RepairedInSession)
+	}
+	lim := rep.Limits
+	if lim.UnattributedSessions != 0 || lim.TelemetryStart != "2026-11-20T00:00:00Z" ||
+		!lim.ReadsEmitted || lim.ReadBeforeFirstWriteIsFloor || !lim.RepairedInSessionIsUpperBound {
+		t.Errorf("limits = %+v", lim)
+	}
+
+	code, out, errText := runIn([]string{"telemetry", "report"})
+	if code != 0 {
+		t.Fatalf("human report: exit = %d\n%s", code, errText)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("non-TTY report must carry no ANSI:\n%q", out)
+	}
+	for _, want := range []string{
+		"Telemetry", "Report",
+		"sessions observed: 2",
+		"read a constraint before first write: 1",
+		"gate failures: 1",
+		"repaired in same session: 0",
+		"telemetry start: 2026-11-20T00:00:00Z",
+		"reads emitted: yes",
+		"repaired-in-session is an upper bound",
+	} {
+		if !strings.Contains(squashSpaces(out), want) {
+			t.Errorf("human report missing %q:\n%s", want, out)
+		}
+	}
+
+	// Non-vacuity: dropping a session flips sessions observed to 1.
+	if err := os.Remove(telemetryPath(dir, "comp")); err != nil {
+		t.Fatal(err)
+	}
+	if got := telemetryReportJSON(t).SessionsObserved; got != 1 {
+		t.Errorf("non-vacuity sessions observed = %d, want 1 after removing a session", got)
+	}
+}
+
+// TestTelemetryReportReadBeforeAndFloor: removing the only constraint-read
+// flips read-before-first-write to 0 and, with no read left in scope,
+// marks the number a floor (">="). Non-vacuity: the base fixture has a
+// read, so the number is exact.
+func TestTelemetryReportReadBeforeAndFloor(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+	if rep := telemetryReportJSON(t); rep.ReadBeforeFirstWrite != 1 || rep.Limits.ReadBeforeFirstWriteIsFloor {
+		t.Fatalf("base read-before = %d floor %v; want 1 exact", rep.ReadBeforeFirstWrite, rep.Limits.ReadBeforeFirstWriteIsFloor)
+	}
+	writeTelemetryFile(t, dir, "comp", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindFirstWrite, At: "2026-11-20T00:00:01Z", SessionSource: telSourceClient},
+	})
+	rep := telemetryReportJSON(t)
+	if rep.ReadBeforeFirstWrite != 0 || !rep.Limits.ReadBeforeFirstWriteIsFloor || rep.Limits.ReadsEmitted {
+		t.Errorf("after removing the read: read-before = %d, readsEmitted = %v, floor = %v; want 0, false, true",
+			rep.ReadBeforeFirstWrite, rep.Limits.ReadsEmitted, rep.Limits.ReadBeforeFirstWriteIsFloor)
+	}
+	code, out, _ := runIn([]string{"telemetry", "report"})
+	if code != 0 || !strings.Contains(squashSpaces(out), "read a constraint before first write: >= 0") {
+		t.Errorf("human floor label missing (exit %d):\n%s", code, out)
+	}
+}
+
+// TestTelemetryReportGateFailures: the gate-refusal count flips to 0 when
+// its only input is removed. Non-vacuity: the base count of 1 is asserted
+// first.
+func TestTelemetryReportGateFailures(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+	if got := telemetryReportJSON(t).GateFailures; got != 1 {
+		t.Fatalf("base gate failures = %d, want 1", got)
+	}
+	writeTelemetryFile(t, dir, "noncomp", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindWrite, At: "2026-11-21T00:00:00Z", SessionSource: telSourceClient},
+	})
+	if got := telemetryReportJSON(t).GateFailures; got != 0 {
+		t.Errorf("gate failures = %d, want 0 after removing the refusal", got)
+	}
+}
+
+// TestTelemetryReportRepair: a gate-refusal followed (higher seq, same
+// session) by a gate-pass on the same subject counts as repaired. Non-
+// vacuity: a different subject and a pass before the refusal do not.
+func TestTelemetryReportRepair(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryFile(t, dir, "rep", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindGateRefusal, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:00Z", SessionSource: telSourceClient},
+		{Repo: "demo/app", Kind: telKindGatePass, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:01Z", SessionSource: telSourceClient},
+	})
+	if got := telemetryReportJSON(t).RepairedInSession; got != 1 {
+		t.Errorf("repaired = %d, want 1 (refusal then a later pass, same subject)", got)
+	}
+	// A pass on a different subject does not repair the refusal.
+	writeTelemetryFile(t, dir, "rep", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindGateRefusal, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:00Z", SessionSource: telSourceClient},
+		{Repo: "demo/app", Kind: telKindGatePass, Gate: telGateTransition, Subject: "demo/sto:other", At: "2026-11-22T00:00:01Z", SessionSource: telSourceClient},
+	})
+	if got := telemetryReportJSON(t).RepairedInSession; got != 0 {
+		t.Errorf("repaired = %d, want 0 (the pass is on a different subject)", got)
+	}
+	// The pass BEFORE the refusal does not repair it.
+	writeTelemetryFile(t, dir, "rep", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindGatePass, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:00Z", SessionSource: telSourceClient},
+		{Repo: "demo/app", Kind: telKindGateRefusal, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:01Z", SessionSource: telSourceClient},
+	})
+	if got := telemetryReportJSON(t).RepairedInSession; got != 0 {
+		t.Errorf("repaired = %d, want 0 (the pass precedes the refusal)", got)
+	}
+}
+
+// TestTelemetryReportUnattributed: an unattributed session file (.jsonl,
+// sessionId "") increments the unattributed limit and not sessions
+// observed. Non-vacuity: the base fixture has no unattributed session.
+func TestTelemetryReportUnattributed(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+	if rep := telemetryReportJSON(t); rep.Limits.UnattributedSessions != 0 || rep.SessionsObserved != 2 {
+		t.Fatalf("base = unattributed %d, observed %d; want 0, 2", rep.Limits.UnattributedSessions, rep.SessionsObserved)
+	}
+	writeTelemetryFile(t, dir, "", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindWrite, At: "2026-11-23T00:00:00Z", SessionSource: telSourceUnattributed},
+	})
+	rep := telemetryReportJSON(t)
+	if rep.Limits.UnattributedSessions != 1 {
+		t.Errorf("unattributed sessions = %d, want 1", rep.Limits.UnattributedSessions)
+	}
+	if rep.SessionsObserved != 2 {
+		t.Errorf("sessions observed = %d, want 2 (the unattributed session is excluded)", rep.SessionsObserved)
+	}
+}
+
+// TestTelemetryReportFilters: --repo, --since and --until narrow the scope
+// exactly like `list` (inclusive on `at`); a malformed timestamp is a
+// usage error.
+func TestTelemetryReportFilters(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+
+	if rep := telemetryReportJSON(t, "--repo", "demo/app"); rep.SessionsObserved != 2 {
+		t.Errorf("--repo demo/app observed = %d, want 2", rep.SessionsObserved)
+	}
+	if rep := telemetryReportJSON(t, "--repo", "other/x"); rep.SessionsObserved != 0 || rep.Limits.TelemetryStart != "" {
+		t.Errorf("--repo other/x = %+v, want an empty scope", rep)
+	}
+	// --since excludes the 2026-11-20 compliant session.
+	since := telemetryReportJSON(t, "--since", "2026-11-21T00:00:00Z")
+	if since.SessionsObserved != 1 || since.ReadBeforeFirstWrite != 0 || since.GateFailures != 1 ||
+		since.Limits.TelemetryStart != "2026-11-21T00:00:00Z" || since.Limits.ReadsEmitted {
+		t.Errorf("--since = %+v", since)
+	}
+	// --until keeps only the compliant session.
+	until := telemetryReportJSON(t, "--until", "2026-11-20T12:00:00Z")
+	if until.SessionsObserved != 1 || until.ReadBeforeFirstWrite != 1 || until.GateFailures != 0 ||
+		until.Limits.TelemetryStart != "2026-11-20T00:00:00Z" {
+		t.Errorf("--until = %+v", until)
+	}
+	if code, _, _ := runIn([]string{"telemetry", "report", "--since", "not-a-time"}); code != 2 {
+		t.Errorf("bad --since: exit = %d, want 2", code)
+	}
+}
+
+// TestTelemetryReportJSONStable: --json is byte-identical across two runs.
+func TestTelemetryReportJSONStable(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+	code, out1, errText := runIn([]string{"telemetry", "report", "--json"})
+	if code != 0 {
+		t.Fatalf("report --json: exit = %d\n%s", code, errText)
+	}
+	_, out2, _ := runIn([]string{"telemetry", "report", "--json"})
+	if out1 != out2 {
+		t.Errorf("report --json is not byte-stable:\n%q\n%q", out1, out2)
+	}
+}
+
+// TestTelemetryReportEmpty: with no telemetry directory the scope is empty
+// — exit 0, zero sessions and an empty telemetry start (never a bare 0).
+func TestTelemetryReportEmpty(t *testing.T) {
+	telemetryRepo(t)
+	rep := telemetryReportJSON(t)
+	if rep.SessionsObserved != 0 || rep.ReadBeforeFirstWrite != 0 || rep.GateFailures != 0 || rep.RepairedInSession != 0 {
+		t.Errorf("empty numbers = %+v, want all zero", rep)
+	}
+	if rep.Limits.TelemetryStart != "" || rep.Limits.ReadsEmitted || !rep.Limits.ReadBeforeFirstWriteIsFloor {
+		t.Errorf("empty limits = %+v", rep.Limits)
+	}
+	code, out, errText := runIn([]string{"telemetry", "report"})
+	if code != 0 || errText != "" {
+		t.Fatalf("empty human: exit = %d, stderr = %q", code, errText)
+	}
+	if strings.Contains(out, "\x1b") || !strings.Contains(squashSpaces(out), "telemetry start: (none)") {
+		t.Errorf("empty human report = %q", out)
+	}
+}
+
+// TestTelemetryReportMalformed: a malformed line is a deterministic error
+// naming the file and line (exit 1), never silently skipped.
+func TestTelemetryReportMalformed(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir)
+	path := telemetryPath(dir, "noncomp")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{ not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	code, _, errText := runIn([]string{"telemetry", "report"})
+	if code != 1 {
+		t.Fatalf("malformed report: exit = %d, want 1\n%s", code, errText)
+	}
+	if !strings.Contains(errText, path+":3") || !strings.Contains(errText, "malformed record") {
+		t.Errorf("stderr must name the file:line and the malformed record, got %q", errText)
+	}
+}
+
+// TestTelemetryReportInvalidAt: a record whose `at` is not RFC3339 is a
+// deterministic error (the report needs `at` for the telemetry start).
+func TestTelemetryReportInvalidAt(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryFile(t, dir, "s1", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindWrite, At: "not-a-time", SessionSource: telSourceClient},
+	})
+	code, _, errText := runIn([]string{"telemetry", "report"})
+	if code != 1 {
+		t.Fatalf("invalid at: exit = %d, want 1\n%s", code, errText)
+	}
+	if !strings.Contains(errText, "invalid at timestamp") {
+		t.Errorf("stderr must name the invalid at, got %q", errText)
+	}
+}
+
 // TestTelemetryListHumanAndEmpty: the human render follows the ui
 // conventions (plain when piped) and an absent telemetry directory is an
 // empty result.
