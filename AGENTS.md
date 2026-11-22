@@ -16,7 +16,7 @@ req: agent-agnostic-skill-pack agent-self-describing-surface capture-drafts-cann
 str: self-hosting
 vis: vision
 adr: 001-identity-serialization 002-state-vector-encoding 003-projection-model 004-phase-as-metadata 005-dimension-layout 006-exchange-conventions 007-extension-research-finding 008-engineering-domain-model 009-knowledge-runtime-architecture 010-synchronization-model 011-immutable-engineering-knowledge-model 012-canonical-knowledge-object-runtime 013-store-backed-projections 014-runtime-interface-architecture 015-machine-retrieval-interface 016-standard-v2-json-authoring 017-repository-identity-metadata 018-repository-context 019-work-item-transitions-notes-gates 020-repository-bootstrap-namespace-reconciliation 021-context-engine 022-ai-skill-pack 023-skill-pack-install-command 024-self-update-command 025-instance-resolution-latest 026-feedback-module 027-source-only-snapshot-transport 028-plugin-install-trust-model 029-assigned-work-membership 030-mcp-contract-relocation 031-plugin-command-registration 032-runtime-snapshot-adoption 033-llm-context-efficiency 034-code-graph-derived-cache 035-inferred-direct-task-capture 036-repo-scoped-status 037-execution-state-cko freshness-validity-horizon sharing-object-model standard-version-1-4-corpus
-dec: code-context-contract code-discovery-layer mcp-surface-refinement parallel-container-execution
-spec: provenance-capture
+dec: code-context-contract code-discover-symlink-fix code-discovery-layer m3a-verify-staging mcp-surface-refinement parallel-container-execution
+spec: add-specification-overview provenance-capture
 std: development-rules eka-standard-1.0.0
 <!-- eka:workflow:end -->
