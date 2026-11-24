@@ -497,6 +497,79 @@ func TestVerifyNonVacuity(t *testing.T) {
 	})
 }
 
+// TestVerifyScopeDeclarationsWarnsUnmatched: a declared `appliesTo`
+// pattern that matches no tracked path is a WARNING naming the pattern,
+// while a pattern that matches a tracked path produces nothing. Warnings
+// never block: the gate stays exit 0 / PASS, and the check appears in the
+// JSON document with its constraint id.
+func TestVerifyScopeDeclarationsWarnsUnmatched(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath) // git ls-files needs real git.
+	}
+	repo := seedGetRepo(t, func(repo string) {
+		writeContextForFile(t, repo, "docs/standards/std-match.json",
+			contextForDoc("std", "match", "standards", "docs/**"))
+		writeContextForFile(t, repo, "docs/standards/std-unmatched.json",
+			contextForDoc("std", "unmatched", "standards", "nope/**"))
+	})
+	gitInit(t, repo) // the tracked set the lint runs against.
+
+	code, out, errText := runIn([]string{"verify", "--json"})
+	if code != 0 {
+		t.Fatalf("verify: exit = %d, want 0 (warnings never block)\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	r := verifyJSON(t, out)
+	c := findVerifyCheck(t, r, "scope-declarations")
+	if c.Constraint != "eka/std:eka-standard-1.0.0" {
+		t.Errorf("constraint = %q, want eka/std:eka-standard-1.0.0", c.Constraint)
+	}
+	if c.Verdict != verdictPass {
+		t.Errorf("scope-declarations verdict = %q, want pass", c.Verdict)
+	}
+	if len(c.Findings) != 1 {
+		t.Fatalf("scope-declarations findings = %d, want 1 (only the unmatched pattern)\n%s", len(c.Findings), out)
+	}
+	f := c.Findings[0]
+	if f.Severity != severityWarning {
+		t.Errorf("finding severity = %q, want warning", f.Severity)
+	}
+	if f.File != "eka-view-fixture/std:unmatched:1" {
+		t.Errorf("finding file = %q, want the declaring unit's canonical form", f.File)
+	}
+	if f.Line != nil {
+		t.Errorf("finding line = %v, want nil (no line is attributed)", *f.Line)
+	}
+	if !strings.Contains(f.Message, "nope/**") || !strings.Contains(f.Message, "matches no tracked path") {
+		t.Errorf("finding must name the unmatched pattern, got %q", f.Message)
+	}
+	if r.Verdict != verdictPass {
+		t.Errorf("top-level verdict = %q, want pass", r.Verdict)
+	}
+}
+
+// TestVerifyScopeDeclarationsNoDeclarations: a repository whose units
+// declare no `appliesTo` produces no finding (and the check still passes).
+func TestVerifyScopeDeclarationsNoDeclarations(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	repo := seedGetRepo(t, nil) // the fixture declares no appliesTo.
+	gitInit(t, repo)
+
+	code, out, errText := runIn([]string{"verify", "--json"})
+	if code != 0 {
+		t.Fatalf("verify: exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	r := verifyJSON(t, out)
+	c := findVerifyCheck(t, r, "scope-declarations")
+	if c.Verdict != verdictPass {
+		t.Errorf("scope-declarations verdict = %q, want pass", c.Verdict)
+	}
+	if len(c.Findings) != 0 {
+		t.Errorf("scope-declarations findings = %d, want 0\n%s", len(c.Findings), out)
+	}
+}
+
 // TestVerifyTiming measures the wall time of `eka verify` on the eka-cli
 // repository itself and of the AGENTS.md-drift check alone. It is a
 // report-only measurement (no assertion beyond a loose ceiling).
