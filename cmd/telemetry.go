@@ -483,12 +483,17 @@ func telemetrySessionFiles(dir, session string) ([]telemetrySessionFile, error) 
 //	                          constraint-read seq strictly below the
 //	                          session's first first-write/write seq; a
 //	                          session with no write is not counted
-//	gate failures             count of gate-refusal records
-//	repaired in same session  count of (sessionId, subject) pairs with a
+//	gate failures             count of gate-refusal records (a cross-scope
+//	                          total, over all in-scope records)
+//	repaired in same session  among ATTRIBUTED sessions only, the count of
+//	                          (sessionId, subject) pairs with a
 //	                          gate-refusal followed (higher seq, same
 //	                          session) by a gate-pass on that subject —
 //	                          an UPPER BOUND: a refusal then a later pass
-//	                          is not proof of a causal repair
+//	                          is not proof of a causal repair. The
+//	                          unattributed bucket ("") is not a session and
+//	                          is excluded (surfaced instead via the
+//	                          unattributed sessions limit)
 //
 // seq is the only ordering key; `at` is never an ordering key. Files are
 // streamed one session at a time and folded in (sessionId, seq) order.
@@ -529,9 +534,11 @@ Numbers:
   read a constraint before    sessions with a constraint-read strictly
   their first write            below their first write (">=" when no read
                               was emitted in scope)
-  gate failures              gate-refusal records in scope
+  gate failures              gate-refusal records in scope (cross-scope)
   repaired in same session   gate-refusal then a later gate-pass on the
-                             same subject in the same session (upper bound)
+                             same subject in the same ATTRIBUTED session
+                             (upper bound); the unattributed bucket is not
+                             a session and is excluded
 
 Filters (mirror list; inclusive on at):
   --repo <id>   only records whose repo equals <id>
@@ -695,8 +702,12 @@ func (g *telemetryAggregate) add(rec telemetryRecord, at time.Time) {
 }
 
 // build derives the telemetryReport from the accumulated state. The four
-// numbers are counts of session/pair state; the limits are always
-// populated (spec §6).
+// numbers are counts of session/pair state; sessionsObserved,
+// readBeforeFirstWrite and repairedInSession share the attribution rule
+// (sessionId != "" and sessionSource != "unattributed"), so the
+// unattributed bucket contributes to none of them (it is surfaced by the
+// unattributedSessions limit); gateFailures is a cross-scope total over
+// all in-scope records. The limits are always populated (spec §6).
 func (g *telemetryAggregate) build(root, repo string, since, until time.Time) telemetryReport {
 	rep := telemetryReport{Root: root, Repo: repo}
 	if !since.IsZero() {
@@ -711,14 +722,20 @@ func (g *telemetryAggregate) build(root, repo string, since, until time.Time) te
 			if s.firstWriteSeq >= 0 && s.minReadSeq >= 0 && s.minReadSeq < s.firstWriteSeq {
 				rep.ReadBeforeFirstWrite++
 			}
+			// Repairs are counted ONLY within attributed sessions: the
+			// unattributed bucket ("") is not a session — it pools records
+			// from unrelated runs, so a refusal-then-pass pair there is not
+			// a per-session repair. It still surfaces via the
+			// unattributedSessions limit, and its gate-refusal records
+			// still count toward the cross-scope gateFailures total.
+			for subject, refusalSeq := range s.refusalMinSeq {
+				if passSeq, ok := s.passMaxSeq[subject]; ok && refusalSeq < passSeq {
+					rep.RepairedInSession++
+				}
+			}
 		}
 		if s.unattributed {
 			rep.Limits.UnattributedSessions++
-		}
-		for subject, refusalSeq := range s.refusalMinSeq {
-			if passSeq, ok := s.passMaxSeq[subject]; ok && refusalSeq < passSeq {
-				rep.RepairedInSession++
-			}
 		}
 	}
 	rep.GateFailures = g.gateFailures

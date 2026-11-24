@@ -973,6 +973,47 @@ func TestTelemetryReportUnattributed(t *testing.T) {
 	}
 }
 
+// TestTelemetryReportRepairExcludesUnattributed: a refusal-then-pass pair
+// in the unattributed bucket (sessionId "") is NOT a per-session repair —
+// the bucket pools unrelated runs. The identical pair inside an attributed
+// session IS repaired (non-vacuity: the assertion flips on attribution,
+// not on the pair).
+func TestTelemetryReportRepairExcludesUnattributed(t *testing.T) {
+	dir := telemetryRepo(t)
+	pair := func(src string) []telemetryRecord {
+		return []telemetryRecord{
+			{Repo: "demo/app", Kind: telKindGateRefusal, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:00Z", SessionSource: src},
+			{Repo: "demo/app", Kind: telKindGatePass, Gate: telGateTransition, Subject: "demo/sto:g", At: "2026-11-22T00:00:01Z", SessionSource: src},
+		}
+	}
+
+	// Unattributed: no session observed, no repair, the refusal still
+	// counts toward the cross-scope gate-failure total.
+	writeTelemetryFile(t, dir, "", pair(telSourceUnattributed))
+	rep := telemetryReportJSON(t)
+	if rep.RepairedInSession != 0 {
+		t.Errorf("unattributed repaired = %d, want 0 (the bucket is not a session)", rep.RepairedInSession)
+	}
+	if rep.SessionsObserved != 0 || rep.GateFailures != 1 || rep.Limits.UnattributedSessions != 1 {
+		t.Errorf("unattributed report = observed %d, gate %d, unattributed %d; want 0, 1, 1",
+			rep.SessionsObserved, rep.GateFailures, rep.Limits.UnattributedSessions)
+	}
+
+	// Non-vacuity: the identical pair in an attributed session IS repaired.
+	if err := os.Remove(telemetryPath(dir, "")); err != nil {
+		t.Fatal(err)
+	}
+	writeTelemetryFile(t, dir, "s", pair(telSourceClient))
+	rep = telemetryReportJSON(t)
+	if rep.RepairedInSession != 1 {
+		t.Errorf("attributed repaired = %d, want 1 (the same pair, attributed)", rep.RepairedInSession)
+	}
+	if rep.SessionsObserved != 1 || rep.GateFailures != 1 || rep.Limits.UnattributedSessions != 0 {
+		t.Errorf("attributed report = observed %d, gate %d, unattributed %d; want 1, 1, 0",
+			rep.SessionsObserved, rep.GateFailures, rep.Limits.UnattributedSessions)
+	}
+}
+
 // TestTelemetryReportFilters: --repo, --since and --until narrow the scope
 // exactly like `list` (inclusive on `at`); a malformed timestamp is a
 // usage error.
