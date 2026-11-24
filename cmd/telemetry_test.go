@@ -845,7 +845,8 @@ func TestTelemetryReportAggregates(t *testing.T) {
 			rep.SessionsObserved, rep.ReadBeforeFirstWrite, rep.GateFailures, rep.RepairedInSession)
 	}
 	lim := rep.Limits
-	if lim.UnattributedSessions != 0 || lim.TelemetryStart != "2026-11-20T00:00:00Z" ||
+	if lim.UnattributedSessions != 0 || lim.SessionsWithoutCapture != "not-observable" ||
+		lim.TelemetryStart != "2026-11-20T00:00:00Z" ||
 		!lim.ReadsEmitted || lim.ReadBeforeFirstWriteIsFloor || !lim.RepairedInSessionIsUpperBound {
 		t.Errorf("limits = %+v", lim)
 	}
@@ -863,6 +864,8 @@ func TestTelemetryReportAggregates(t *testing.T) {
 		"read a constraint before first write: 1",
 		"gate failures: 1",
 		"repaired in same session: 0",
+		"unattributed sessions (excluded): 0",
+		"sessions without capture: not observable (only sessions that emitted telemetry are counted)",
 		"telemetry start: 2026-11-20T00:00:00Z",
 		"reads emitted: yes",
 		"repaired-in-session is an upper bound",
@@ -902,6 +905,16 @@ func TestTelemetryReportReadBeforeAndFloor(t *testing.T) {
 	code, out, _ := runIn([]string{"telemetry", "report"})
 	if code != 0 || !strings.Contains(squashSpaces(out), "read a constraint before first write: >= 0") {
 		t.Errorf("human floor label missing (exit %d):\n%s", code, out)
+	}
+	// The limits section states the read coverage honestly (no read emitted).
+	for _, want := range []string{
+		"reads emitted: no",
+		"read-before-first-write is a floor (>=): no read was emitted in scope, so the number is an undercount",
+		"sessions without capture: not observable (only sessions that emitted telemetry are counted)",
+	} {
+		if !strings.Contains(squashSpaces(out), want) {
+			t.Errorf("no-read human report missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -1027,10 +1040,11 @@ func TestTelemetryReportFilters(t *testing.T) {
 	if rep := telemetryReportJSON(t, "--repo", "other/x"); rep.SessionsObserved != 0 || rep.Limits.TelemetryStart != "" {
 		t.Errorf("--repo other/x = %+v, want an empty scope", rep)
 	}
-	// --since excludes the 2026-11-20 compliant session.
+	// --since excludes the 2026-11-20 compliant session from the numbers,
+	// but the telemetry start stays at the period-independent global min.
 	since := telemetryReportJSON(t, "--since", "2026-11-21T00:00:00Z")
 	if since.SessionsObserved != 1 || since.ReadBeforeFirstWrite != 0 || since.GateFailures != 1 ||
-		since.Limits.TelemetryStart != "2026-11-21T00:00:00Z" || since.Limits.ReadsEmitted {
+		since.Limits.TelemetryStart != "2026-11-20T00:00:00Z" || since.Limits.ReadsEmitted {
 		t.Errorf("--since = %+v", since)
 	}
 	// --until keeps only the compliant session.
@@ -1066,15 +1080,49 @@ func TestTelemetryReportEmpty(t *testing.T) {
 	if rep.SessionsObserved != 0 || rep.ReadBeforeFirstWrite != 0 || rep.GateFailures != 0 || rep.RepairedInSession != 0 {
 		t.Errorf("empty numbers = %+v, want all zero", rep)
 	}
-	if rep.Limits.TelemetryStart != "" || rep.Limits.ReadsEmitted || !rep.Limits.ReadBeforeFirstWriteIsFloor {
+	if rep.Limits.TelemetryStart != "" || rep.Limits.ReadsEmitted || !rep.Limits.ReadBeforeFirstWriteIsFloor ||
+		rep.Limits.SessionsWithoutCapture != "not-observable" {
 		t.Errorf("empty limits = %+v", rep.Limits)
 	}
 	code, out, errText := runIn([]string{"telemetry", "report"})
 	if code != 0 || errText != "" {
 		t.Fatalf("empty human: exit = %d, stderr = %q", code, errText)
 	}
-	if strings.Contains(out, "\x1b") || !strings.Contains(squashSpaces(out), "telemetry start: (none)") {
+	if strings.Contains(out, "\x1b") ||
+		!strings.Contains(squashSpaces(out), "telemetry start: (none)") ||
+		!strings.Contains(squashSpaces(out), "sessions without capture: not observable (only sessions that emitted telemetry are counted)") {
 		t.Errorf("empty human report = %q", out)
+	}
+}
+
+// TestTelemetryReportStartPeriodIndependent: telemetry scope is the
+// repository stream start, not the period minimum — a --since later than
+// the stream's earliest record narrows the numbers but leaves the start at
+// the global minimum, and --repo still scopes it. Non-vacuity: with no
+// --since the start is the same value.
+func TestTelemetryReportStartPeriodIndependent(t *testing.T) {
+	dir := telemetryRepo(t)
+	writeTelemetryReportFixture(t, dir) // earliest record @ 2026-11-20
+
+	base := telemetryReportJSON(t)
+	if base.Limits.TelemetryStart != "2026-11-20T00:00:00Z" || base.SessionsObserved != 2 {
+		t.Fatalf("base = start %q observed %d; want 2026-11-20T00:00:00Z, 2", base.Limits.TelemetryStart, base.SessionsObserved)
+	}
+	since := telemetryReportJSON(t, "--since", "2026-11-21T00:00:00Z")
+	if since.Limits.TelemetryStart != "2026-11-20T00:00:00Z" {
+		t.Errorf("telemetry start under --since = %q, want the period-independent 2026-11-20T00:00:00Z", since.Limits.TelemetryStart)
+	}
+	if since.SessionsObserved != 1 || since.GateFailures != 1 || since.ReadBeforeFirstWrite != 0 {
+		t.Errorf("--since must still narrow the aggregates: %+v", since)
+	}
+
+	// --repo scopes the start: an earlier record in another repo does not
+	// lower the demo/app stream start.
+	writeTelemetryFile(t, dir, "other", []telemetryRecord{
+		{Repo: "other/x", Kind: telKindWrite, At: "2020-01-01T00:00:00Z", SessionSource: telSourceClient},
+	})
+	if got := telemetryReportJSON(t, "--repo", "demo/app").Limits.TelemetryStart; got != "2026-11-20T00:00:00Z" {
+		t.Errorf("--repo demo/app start = %q, want 2026-11-20T00:00:00Z (other repo ignored)", got)
 	}
 }
 
@@ -1083,6 +1131,11 @@ func TestTelemetryReportEmpty(t *testing.T) {
 func TestTelemetryReportMalformed(t *testing.T) {
 	dir := telemetryRepo(t)
 	writeTelemetryReportFixture(t, dir)
+	// Non-vacuity: the clean fixture exits 0, so the exit-1 below is not
+	// trivially always-fail.
+	if code, _, errText := runIn([]string{"telemetry", "report"}); code != 0 {
+		t.Fatalf("clean report: exit = %d, want 0\n%s", code, errText)
+	}
 	path := telemetryPath(dir, "noncomp")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -1115,6 +1168,14 @@ func TestTelemetryReportInvalidAt(t *testing.T) {
 	}
 	if !strings.Contains(errText, "invalid at timestamp") {
 		t.Errorf("stderr must name the invalid at, got %q", errText)
+	}
+
+	// Non-vacuity: the same record with a valid `at` exits 0.
+	writeTelemetryFile(t, dir, "s1", []telemetryRecord{
+		{Repo: "demo/app", Kind: telKindWrite, At: "2026-11-22T00:00:00Z", SessionSource: telSourceClient},
+	})
+	if code, _, errText := runIn([]string{"telemetry", "report"}); code != 0 {
+		t.Fatalf("valid at: exit = %d, want 0\n%s", code, errText)
 	}
 }
 

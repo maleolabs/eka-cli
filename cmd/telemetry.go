@@ -475,7 +475,9 @@ func telemetrySessionFiles(dir, session string) ([]telemetrySessionFile, error) 
 // field is invented.
 //
 // Derivations (over the records matching --repo and the --since/--until
-// period; filtering mirrors `list` exactly, on `at`, inclusive):
+// period; filtering mirrors `list` exactly, on `at`, inclusive). The four
+// numbers are period-scoped; the telemetry start limit is not (see
+// below):
 //
 //	sessions observed         distinct sessionId with a non-empty id and
 //	                          sessionSource != "unattributed"
@@ -500,15 +502,22 @@ func telemetrySessionFiles(dir, session string) ([]telemetrySessionFile, error) 
 //
 // Honesty limits (spec §6; ALWAYS emitted, never a bare number):
 //
-//	unattributed sessions   distinct sessions with sessionSource
-//	                        "unattributed" (excluded from sessions
-//	                        observed)
-//	telemetry start         the minimum `at` in scope ("" when no records),
-//	                        so a period predating the signal is visible
-//	reads emitted           whether any constraint-read is in scope; when
-//	                        it is not, read-before-first-write is an
-//	                        undercount and is labelled ">="
-//	repaired upper bound    the repaired number is labelled an upper bound
+//	sessions without capture  a session that never emitted telemetry leaves
+//	                          no record, so its count is NOT observable —
+//	                          the report states this instead of looking
+//	                          exhaustive
+//	unattributed sessions     distinct sessions with sessionSource
+//	                          "unattributed" (excluded from sessions
+//	                          observed)
+//	telemetry start           the earliest `at` for the REPOSITORY
+//	                          (period-INDEPENDENT: it honours --repo but
+//	                          ignores --since/--until, so a period
+//	                          predating the signal stays visible); "" when
+//	                          no records
+//	reads emitted             whether any constraint-read is in scope; when
+//	                          it is not, read-before-first-write is an
+//	                          undercount and is labelled ">="
+//	repaired upper bound      the repaired number is labelled an upper bound
 //
 // An empty scope (no telemetry directory or no matching records) exits 0
 // with zero sessions and an empty telemetry start — never a bare 0.
@@ -540,14 +549,22 @@ Numbers:
                              (upper bound); the unattributed bucket is not
                              a session and is excluded
 
-Filters (mirror list; inclusive on at):
-  --repo <id>   only records whose repo equals <id>
-  --since <t>   only records with at >= <t> (RFC3339)
-  --until <t>   only records with at <= <t> (RFC3339)
+Filter semantics:
+  --repo matches a record's repo; it scopes BOTH the numbers and the
+  telemetry start.
+  --since/--until fence PER RECORD (inclusive on at), so a per-session
+  read or repair pair can be split by the window boundary:
+  readBeforeFirstWrite and repairedInSession are per-window and may
+  undercount. readsEmitted (and the floor flag) is a cross-scope signal
+  over all in-scope records, including the unattributed bucket.
+  The telemetry start is period-INDEPENDENT: --repo applies, --since/
+  --until do not, so a period predating the signal stays visible.
 
-Limits (always emitted): unattributed sessions, the telemetry start (the
-minimum at in scope), whether any read was emitted, and that
-repaired-in-session is an upper bound — never a bare number.
+Limits (always emitted): sessions without capture (a session that never
+emitted leaves no record — "not-observable"), unattributed sessions, the
+telemetry start for the repository (period-independent), whether any read
+was emitted, and that repaired-in-session is an upper bound — never a
+bare number.
 
 Exit codes:
   0  report rendered (possibly an empty scope)
@@ -593,6 +610,12 @@ type telemetryReport struct {
 	Limits               telemetryLimits `json:"limits"`
 }
 
+// telemetrySessionsWithoutCapture is the honest value of the
+// sessionsWithoutCapture limit: a session that never emitted telemetry
+// leaves no record, so the count cannot be derived (spec §6 — sessions
+// without telemetry).
+const telemetrySessionsWithoutCapture = "not-observable"
+
 // telemetryLimits is the mandatory honesty section (spec:telemetry-
 // capture:1 §6): a report never presents a bare number.
 type telemetryLimits struct {
@@ -600,8 +623,13 @@ type telemetryLimits struct {
 	// records carry sessionSource "unattributed" (excluded from
 	// SessionsObserved).
 	UnattributedSessions int `json:"unattributedSessions"`
-	// TelemetryStart is the minimum `at` in scope ("" when no records), so
-	// a period predating the signal is visible.
+	// SessionsWithoutCapture is always "not-observable": a session that
+	// never emitted telemetry leaves no record, so the count cannot be
+	// derived (spec §6 — sessions without telemetry).
+	SessionsWithoutCapture string `json:"sessionsWithoutCapture"`
+	// TelemetryStart is the earliest `at` for the REPOSITORY ("") when no
+	// records: period-INDEPENDENT — it honours --repo but ignores
+	// --since/--until, so a period predating the signal stays visible.
 	TelemetryStart string `json:"telemetryStart"`
 	// ReadsEmitted reports whether any constraint-read is in scope (read
 	// emission is opt-in).
@@ -668,7 +696,7 @@ func (g *telemetryAggregate) session(sessionID string) *telemetrySessionAgg {
 // add folds one already-filtered record into the aggregate. Session
 // attribution follows spec §5: a session is attributed when its id is
 // non-empty and its source is not "unattributed".
-func (g *telemetryAggregate) add(rec telemetryRecord, at time.Time) {
+func (g *telemetryAggregate) add(rec telemetryRecord) {
 	s := g.session(rec.SessionID)
 	if rec.SessionID != "" && rec.SessionSource != telSourceUnattributed {
 		s.attributed = true
@@ -692,10 +720,15 @@ func (g *telemetryAggregate) add(rec telemetryRecord, at time.Time) {
 			s.passMaxSeq[rec.Subject] = rec.Seq
 		}
 	}
-	// The telemetry start is the minimum `at` in scope; the raw string is
-	// kept so the report echoes exactly the earliest record's `at`. On
-	// equal instants the lexicographically smaller raw value wins, so the
-	// value is deterministic.
+}
+
+// observeStart folds a record's `at` into the repository stream start.
+// It is called for every --repo-matched record REGARDLESS of the period,
+// so the start is period-INDEPENDENT (`--since`/`--until` do not shift
+// it). The raw string is kept so the report echoes exactly the earliest
+// record's `at`; on equal instants the lexicographically smaller raw value
+// wins, so the value is deterministic.
+func (g *telemetryAggregate) observeStart(rec telemetryRecord, at time.Time) {
 	if !g.startSet || at.Before(g.startAt) || (at.Equal(g.startAt) && rec.At < g.startRaw) {
 		g.startAt, g.startRaw, g.startSet = at, rec.At, true
 	}
@@ -707,7 +740,9 @@ func (g *telemetryAggregate) add(rec telemetryRecord, at time.Time) {
 // (sessionId != "" and sessionSource != "unattributed"), so the
 // unattributed bucket contributes to none of them (it is surfaced by the
 // unattributedSessions limit); gateFailures is a cross-scope total over
-// all in-scope records. The limits are always populated (spec §6).
+// all in-scope records. The telemetry start is the repository stream
+// start (period-independent, set by observeStart). The limits are always
+// populated (spec §6).
 func (g *telemetryAggregate) build(root, repo string, since, until time.Time) telemetryReport {
 	rep := telemetryReport{Root: root, Repo: repo}
 	if !since.IsZero() {
@@ -739,6 +774,7 @@ func (g *telemetryAggregate) build(root, repo string, since, until time.Time) te
 		}
 	}
 	rep.GateFailures = g.gateFailures
+	rep.Limits.SessionsWithoutCapture = telemetrySessionsWithoutCapture
 	rep.Limits.ReadsEmitted = g.readsEmitted
 	rep.Limits.ReadBeforeFirstWriteIsFloor = !g.readsEmitted
 	rep.Limits.RepairedInSessionIsUpperBound = true
@@ -791,13 +827,18 @@ func runTelemetryReport(cmd *cobra.Command, repo string, since, until time.Time,
 			if perr != nil {
 				return fmt.Errorf("telemetry: %s: record seq %d carries an invalid at timestamp %q", f.path, rec.Seq, rec.At)
 			}
+			// The repository stream start is period-INDEPENDENT: it is
+			// observed for every --repo-matched record, before the
+			// --since/--until fence, so the start is not shifted forward
+			// by a window.
+			agg.observeStart(rec, at)
 			if !since.IsZero() && at.Before(since) {
 				return nil
 			}
 			if !until.IsZero() && at.After(until) {
 				return nil
 			}
-			agg.add(rec, at)
+			agg.add(rec)
 			return nil
 		})
 		if err != nil {
@@ -859,6 +900,7 @@ func renderTelemetryReport(s *ui.Style, report telemetryReport) {
 	}
 	fmt.Fprintf(s.W, "\nLimits:\n")
 	fmt.Fprintf(s.W, "  unattributed sessions (excluded):      %d\n", report.Limits.UnattributedSessions)
+	fmt.Fprintf(s.W, "  sessions without capture:              not observable (only sessions that emitted telemetry are counted)\n")
 	fmt.Fprintf(s.W, "  telemetry start:                       %s\n", start)
 	fmt.Fprintf(s.W, "  reads emitted:                         %s\n", yesNo(report.Limits.ReadsEmitted))
 	if report.Limits.ReadBeforeFirstWriteIsFloor {
