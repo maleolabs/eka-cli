@@ -143,6 +143,27 @@ func renderContext(s *ui.Style, obj *contexts.Object, projectID string) {
 		Render()
 }
 
+// renderConstraints renders the Constraints Object of `eka context --for`
+// as the human projection: the path header, then one bullet line per
+// constraint (canonical form, domain, stratum) in the engine's
+// deterministic order. The empty set prints a clear "no constraints bind
+// <path>" line — a calm result, exit 0, never an error.
+func renderConstraints(s *ui.Style, obj constraintsObject) {
+	path := obj.Path
+	if path == "" {
+		path = "."
+	}
+	if len(obj.Constraints) == 0 {
+		fmt.Fprintf(s.W, "%s\n", s.Dim(fmt.Sprintf("no constraints bind %s", path)))
+		return
+	}
+	fmt.Fprintf(s.W, "%s\n", s.Accent("Constraints for "+path))
+	for _, e := range obj.Constraints {
+		fmt.Fprintf(s.W, "%s %s  %s\n", ui.IconBullet, e.CanonicalForm,
+			s.Dim(fmt.Sprintf("(%s, stratum %d)", e.Domain, e.Stratum)))
+	}
+}
+
 // contextSection renders one section heading of the context
 // projection. The heading is separated from the block above it by a
 // blank line.
