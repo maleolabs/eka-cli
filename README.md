@@ -7,7 +7,7 @@ domain logic of its own; every command delegates to an eka-core engine. It is
 the official interface for bootstrapping, validating, exchanging, and running
 the EKA Knowledge Runtime.
 
-Module path: `github.com/maleolabs/eka-cli` · CLI `v1.23.0` · EKA Standard `1.5` · `eka-core v1.12.0`
+Module path: `github.com/maleolabs/eka-cli` · CLI `v1.24.0` · EKA Standard `1.5` · `eka-core v1.12.0`
 
 ## Highlights (v1.7 — v1.10)
 
