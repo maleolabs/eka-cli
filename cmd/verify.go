@@ -27,10 +27,11 @@ import (
 // id and its failing output prints the exact `eka get <constraint-id>`
 // command plus the fix, so an agent can act without further retrieval.
 //
-// This is stage A of sto:verify-changed-gate (dec:m3a-verify-staging): a
-// built-in set, NOT declared checks (that mechanism is
-// sto:standard-check-declarations, stage B). The registry is a plain
-// table (see verifyChecks) — no interface, no factory.
+// This gate runs a fixed BUILT-IN check set over the repository (stage A of
+// sto:verify-changed-gate) and then the checks the repository's standards
+// declare for themselves (stage B, sto:standard-check-declarations: the
+// Standard 1.7 `checks` field, executed in verify_declared.go). The built-in
+// registry is a plain table (see verifyChecks) — no interface, no factory.
 //
 // Flags:
 //
@@ -75,6 +76,19 @@ Checks (each mapped to a constraint id; a failing check prints the exact
                       rules with no blocking errors (eka/std:eka-standard-1.0.0)
   scope-declarations  a declared 'appliesTo' pattern that matches no tracked
                       path is a warning (eka/std:eka-standard-1.0.0)
+  standard-checks     each constraint artifact is reported as enforced (it
+                      declares checks) or checklist-only; informational only
+                      (eka/std:eka-standard-1.0.0)
+
+Declared checks (EKA Standard 1.7): a constraint artifact may declare its own
+checks through the optional 'checks' content field, an array of
+{command, scope} objects. Each check runs the command at the repository root
+(a non-zero exit is a blocking violation) and resolves to the constraint id of
+the artifact that declared it, so a violation names its standard. With
+--changed, a check whose 'scope' does not intersect the changed set is
+skipped; an empty scope matches nothing, so it runs only without --changed.
+An artifact that declares no checks is checklist-only, never silently treated
+as enforced.
 
 A missing snapshot directory and a missing docs/ tree are SKIPPED, not
 violations; a missing AGENTS.md is a warning. Warnings never block.
@@ -140,6 +154,12 @@ type verifyCheckResult struct {
 	Constraint string          `json:"constraint"`
 	Verdict    string          `json:"verdict"`
 	Findings   []verifyFinding `json:"findings"`
+
+	// requirement and fix carry the human actionable text the renderer prints
+	// for a failing check. Unexported (never serialized): built-in checks take
+	// them from the registry, declared checks from the declaration.
+	requirement string
+	fix         string
 }
 
 // verifyReport is the `eka verify --json` document. Field order is fixed
@@ -169,14 +189,9 @@ type verifyCheck struct {
 	run         func(root string, changedPaths []string) (findings []verifyFinding, skipped bool)
 }
 
-// verifyChecks is the fixed built-in registry (stage A of M3a). Order is
-// presentation order; the JSON document sorts by id.
-//
-// ponytail: this built-in set is a stage-A construct — a declared-checks
-// mechanism (sto:standard-check-declarations, M3b) will generalize it.
-// Ceiling: checks are compiled in, so a repository cannot declare its
-// own. Upgrade path: load declared checks from the standard when M3b
-// lands and append them here.
+// verifyChecks is the fixed built-in registry. Order is presentation order;
+// the JSON document sorts by id. Declared checks (the Standard 1.7 `checks`
+// field) are appended after these by runVerify — see verify_declared.go.
 var verifyChecks = []verifyCheck{
 	{
 		id:          "agents-md-drift",
@@ -242,7 +257,13 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 
 	report := verifyReport{Root: root, Changed: changed}
 	for _, chk := range verifyChecks {
-		res := verifyCheckResult{ID: chk.id, Constraint: chk.constraint, Findings: []verifyFinding{}}
+		res := verifyCheckResult{
+			ID:          chk.id,
+			Constraint:  chk.constraint,
+			Findings:    []verifyFinding{},
+			requirement: chk.requirement,
+			fix:         chk.fix,
+		}
 		if changed && !pathsChanged(chk.paths, changedPaths) {
 			// Unchanged paths never run: a skipped check is never a
 			// violation.
@@ -253,6 +274,40 @@ func runVerify(cmd *cobra.Command, changed bool, base string, asJSON, force bool
 			res.Verdict = checkVerdict(res.Findings, skipped)
 		}
 		report.Checks = append(report.Checks, res)
+	}
+
+	// Stage B: the checks the repository's standards declare for themselves
+	// (sto:standard-check-declarations), plus the checklist-only report
+	// (AC3). The checklist-only report is relevant to the artifact tree, so
+	// it follows the --changed gate like every other check; a malformed
+	// declaration is a shape defect of that tree and blocks on its own.
+	info, derr := loadDeclaredChecks(root)
+	var standardChecks verifyCheckResult
+	switch {
+	case derr != nil:
+		standardChecks = verifyCheckResult{
+			ID:          standardChecksID,
+			Constraint:  "eka/std:eka-standard-1.0.0",
+			Verdict:     verdictFail,
+			Findings:    []verifyFinding{{File: "docs", Severity: severityError, Message: derr.Error()}},
+			requirement: "a declared `checks` field must be well-formed",
+			fix:         "eka validate",
+		}
+	case changed && !pathsChanged(standardChecksPaths, changedPaths):
+		standardChecks = verifyCheckResult{
+			ID:          standardChecksID,
+			Constraint:  "eka/std:eka-standard-1.0.0",
+			Verdict:     verdictSkipped,
+			Findings:    []verifyFinding{},
+			requirement: standardChecksRequirement,
+			fix:         standardChecksFix,
+		}
+	default:
+		standardChecks = standardChecksResult(info)
+	}
+	report.Checks = append(report.Checks, standardChecks)
+	for _, dc := range info.declared {
+		report.Checks = append(report.Checks, runDeclaredCheck(dc, root, changed, changedPaths))
 	}
 	sort.SliceStable(report.Checks, func(i, j int) bool { return report.Checks[i].ID < report.Checks[j].ID })
 	report.Verdict = reportVerdict(report.Checks)
@@ -623,14 +678,10 @@ func renderVerify(s *ui.Style, report verifyReport) {
 		if c.Verdict != verdictFail {
 			continue
 		}
-		chk, ok := verifyCheckByID(c.ID)
-		if !ok {
-			continue
-		}
 		// Actionable block: an agent can fix without further retrieval.
-		fmt.Fprintf(s.W, "    required: %s\n", chk.requirement)
-		fmt.Fprintf(s.W, "    read:     eka get %s\n", chk.constraint)
-		fmt.Fprintf(s.W, "    fix:      %s\n", chk.fix)
+		fmt.Fprintf(s.W, "    required: %s\n", c.requirement)
+		fmt.Fprintf(s.W, "    read:     eka get %s\n", c.Constraint)
+		fmt.Fprintf(s.W, "    fix:      %s\n", c.fix)
 	}
 
 	verdict := strings.ToUpper(report.Verdict)
@@ -640,14 +691,4 @@ func renderVerify(s *ui.Style, report verifyReport) {
 		verdict = s.Success(verdict)
 	}
 	fmt.Fprintf(s.W, "\nVerdict: %s\n", verdict)
-}
-
-// verifyCheckByID looks up a registry entry by id.
-func verifyCheckByID(id string) (verifyCheck, bool) {
-	for _, c := range verifyChecks {
-		if c.id == id {
-			return c, true
-		}
-	}
-	return verifyCheck{}, false
 }

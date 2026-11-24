@@ -7,7 +7,7 @@ domain logic of its own; every command delegates to an eka-core engine. It is
 the official interface for bootstrapping, validating, exchanging, and running
 the EKA Knowledge Runtime.
 
-Module path: `github.com/maleolabs/eka-cli` · CLI `v1.25.0` · EKA Standard `1.6` · `eka-core v1.12.1`
+Module path: `github.com/maleolabs/eka-cli` · CLI `v1.26.0` · EKA Standard `1.7` · `eka-core v1.13.0`
 
 ## Highlights (v1.7 — v1.10)
 
@@ -220,7 +220,7 @@ CLI's internal packages.
   ```
 
 - `eka version` prints the CLI build version and the **EKA standard version**
-  this CLI implements — **EKA Standard 1.6** (RSF 2, Exchange 1, `eka-cko-v2`). The standard's two-component
+  this CLI implements — **EKA Standard 1.7** (RSF 2, Exchange 1, `eka-cko-v2`). The standard's two-component
   version axis is independent of the CLI's semver.
 
 - **Release pipeline** — tag `vMAJOR.MINOR.PATCH` (RC suffix allowed, e.g.
