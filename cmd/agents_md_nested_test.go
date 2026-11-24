@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/maleolabs/eka-cli/bootstrap"
 	"github.com/maleolabs/eka-core/exchange"
 )
 
@@ -244,5 +245,60 @@ func TestAgentsMDHostRequiresNested(t *testing.T) {
 	}
 	if !strings.Contains(errText, "--host requires --nested") {
 		t.Errorf("usage error must explain the requirement: %q", errText)
+	}
+}
+
+// TestAgentsMDNestedSealedSnapshot guards the SEALED-TREE invariant: the
+// committed snapshot (exchange/snapshots) is a source-only transport tree
+// that exchange.LoadSnapshot strictly validates — it rejects any unknown
+// entry. A projection file written inside it corrupts the snapshot and
+// breaks agents-md-drift + snapshot-integrity. The nested projection must
+// never descend into it, even when a constraint's appliesTo scopes the tree.
+// (Without the exclusion the fixture below writes a file into every snapshot
+// unit directory that holds tracked files; on the real repo that was 1071.)
+func TestAgentsMDNestedSealedSnapshot(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	sealed := nestedFixtureUnit(t, "adr", "sealed", "Architecture", "exchange/snapshots/**")
+	real := nestedFixtureUnit(t, "adr", "real", "Architecture", "src/**")
+	repo := agentsMDRepo(t, []*exchange.Unit{sealed, real})
+	writeTracked(t, repo, "src/main.go")
+	gitInit(t, repo)
+
+	if code, _, errText := runIn([]string{"agents-md", "--nested", "--write"}); code != 0 {
+		t.Fatalf("--nested --write: exit = %d, want 0\n%s", code, errText)
+	}
+
+	// 1. No generated file at or under the sealed tree.
+	var sealedFiles []string
+	sealedRoot := filepath.Join(repo, filepath.FromSlash(bootstrap.SnapshotDir))
+	if err := filepath.WalkDir(sealedRoot, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && d.Name() == bootstrap.AgentsMDName {
+			rel, _ := filepath.Rel(repo, p)
+			sealedFiles = append(sealedFiles, filepath.ToSlash(rel))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sealedFiles) != 0 {
+		t.Errorf("nested projection wrote %d file(s) inside the sealed snapshot tree: %v", len(sealedFiles), sealedFiles)
+	}
+
+	// 2. The normal source dir still emits its file, naming only its own
+	//    constraint (the sealed-tree scope never leaks into it).
+	block := managedBlock(t, filepath.Join(repo, "src", "AGENTS.md"))
+	if !strings.Contains(block, "adr: real") || strings.Contains(block, "adr: sealed") {
+		t.Errorf("src/AGENTS.md must name only adr: real:\n%s", block)
+	}
+
+	// 3. Idempotent, and the fixture snapshot stays LoadSnapshot-readable
+	//    (--check loads it; a corrupted tree would exit 2 here).
+	if code, _, errText := runIn([]string{"agents-md", "--nested", "--check"}); code != 0 {
+		t.Fatalf("--nested --check after --write: exit = %d, want 0\n%s", code, errText)
 	}
 }

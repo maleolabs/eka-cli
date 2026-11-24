@@ -14,6 +14,13 @@ import (
 // workspace store, so init, `eka agents-md` and CI all derive the same
 // index from the same repository state (no environment divergence).
 
+// SnapshotDir is the repository-relative committed-snapshot directory — the
+// SEALED source-only transport tree that exchange.LoadSnapshot strictly
+// validates (it rejects any unknown entry). Writing a projection file inside
+// it corrupts the snapshot and breaks agents-md-drift and snapshot-integrity,
+// so the nested projection never descends into it.
+const SnapshotDir = "exchange/snapshots"
+
 // ConstraintsFromSnapshot builds the bounded constraint index from the
 // COMMITTED snapshot at snapshotDir. It selects the active (existence
 // state "active") units of the Discovery and Architecture domains

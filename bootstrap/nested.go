@@ -30,6 +30,11 @@ import (
 //   - A directory D is a candidate when it directly contains a tracked
 //     file (D == path.Dir(file)). Pure-ancestor directories are never
 //     candidates, so a tree is not littered with stubs.
+//   - The sealed transport tree (SnapshotDir, "exchange/snapshots") is
+//     never a candidate: exchange.LoadSnapshot rejects unknown entries, so a
+//     projection file written there corrupts the snapshot and breaks
+//     agents-md-drift + snapshot-integrity. Its constraints still count for
+//     the root block, which is untouched here.
 //   - D/AGENTS.md is emitted iff bindings(D) is non-empty (AC4: an empty
 //     projection writes no file). The root AGENTS.md is NOT touched here.
 //   - The file carries the SAME marker-delimited managed block as the root
@@ -81,7 +86,7 @@ func NestedEntriesFromSnapshot(snapshotDir, project, namespace string, tracked [
 		return nil, false, err
 	}
 	src := sourceFiles(tracked)
-	dirs := nestedCandidateDirs(src)
+	dirs := nestedCandidateDirs(src, SnapshotDir)
 	entries = make([]NestedEntry, 0, len(dirs))
 	for _, dir := range dirs {
 		index := boundIndex(constraints, src, dir)
@@ -184,14 +189,18 @@ func unitAppliesTo(u *exchange.Unit) (patterns []pathglob.Pattern, declared bool
 }
 
 // nestedCandidateDirs returns the sorted directories that directly contain
-// a tracked file (D == path.Dir(file)), excluding the repository root. A
-// directory that only holds deeper directories is never a candidate.
-func nestedCandidateDirs(tracked []string) []string {
+// a tracked file (D == path.Dir(file)), excluding the repository root and
+// the sealed transport tree. A directory that only holds deeper directories
+// is never a candidate.
+func nestedCandidateDirs(tracked []string, sealed string) []string {
 	seen := map[string]bool{}
 	for _, f := range tracked {
 		dir := path.Dir(f)
 		if dir == "." || dir == "/" {
 			continue
+		}
+		if dir == sealed || strings.HasPrefix(dir, sealed+"/") {
+			continue // Sealed tree: never project into it (see SnapshotDir).
 		}
 		seen[dir] = true
 	}

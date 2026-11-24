@@ -348,7 +348,7 @@ func runAgentsMDNested(cmd *cobra.Command, write, check, asJSON bool, hosts []st
 		return fmt.Errorf("agents-md: %w", err) // Exit 2: no tracked set.
 	}
 	entries, missingSnapshot, err := bootstrap.NestedEntriesFromSnapshot(
-		filepath.Join(root, "exchange", "snapshots"), meta.Project, meta.Namespace, tracked)
+		filepath.Join(root, filepath.FromSlash(bootstrap.SnapshotDir)), meta.Project, meta.Namespace, tracked)
 	if err != nil {
 		return fmt.Errorf("agents-md: %w", err) // Exit 2: unreadable/corrupt snapshot.
 	}
