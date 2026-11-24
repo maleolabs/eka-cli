@@ -595,3 +595,180 @@ func TestVerifyTiming(t *testing.T) {
 		t.Errorf("eka verify took %s, want < 30s", full)
 	}
 }
+
+// declaredCheckDoc builds a minimal conformant std- artifact declaring one
+// `checks` entry (the given command and scope patterns) for the fixture's repo
+// namespace. Modeled on contextForDoc (context_for_test.go).
+func declaredCheckDoc(t *testing.T, id, command string, scope ...string) string {
+	t.Helper()
+	scopeItems := make([]any, len(scope))
+	for i, s := range scope {
+		scopeItems[i] = s
+	}
+	doc := map[string]any{
+		"namespace":       "eka-view-fixture",
+		"type":            "std",
+		"id":              id,
+		"instanceVersion": 1,
+		"revision":        1,
+		"author":          "Engineering Architecture",
+		"created":         "2026-08-05",
+		"updated":         "2026-08-05",
+		"dimension":       "standards",
+		"state":           map[string]any{"contentState": "draft", "existenceState": "active"},
+		"changeLog": []any{
+			map[string]any{"date": "2026-08-05", "domain": "contentState", "from": "-", "to": "draft", "by": "Engineering Architecture"},
+			map[string]any{"date": "2026-08-05", "domain": "existenceState", "from": "-", "to": "active", "by": "Engineering Architecture"},
+		},
+		"content": map[string]any{
+			"purpose": "p",
+			"content": "c",
+			"checks": []any{
+				map[string]any{"command": command, "scope": scopeItems},
+			},
+		},
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestVerifyDeclaredCheckNonVacuity proves the Standard 1.7 declared check in
+// both directions (AC4): a declared check catches a change it is scoped to, and
+// removing the declaration makes the same change pass. A temp git repository is
+// the fixture (seedGetRepo + gitInit); no real repository content is used.
+func TestVerifyDeclaredCheckNonVacuity(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath) // git and sh need the real PATH.
+	}
+	const command = "test ! -f src/bad.flag"
+	seed := func(t *testing.T, withCheck bool) string {
+		return seedGetRepo(t, func(repo string) {
+			if withCheck {
+				writeContextForFile(t, repo, "docs/standards/std-gate.json",
+					declaredCheckDoc(t, "gate", command, "src/**"))
+			} else {
+				// Same standard, but no `checks` declaration (checklist-only).
+				writeContextForFile(t, repo, "docs/standards/std-gate.json",
+					contextForDoc("std", "gate", "standards"))
+			}
+		})
+	}
+	// introduce writes the in-scope, untracked change the check is meant to
+	// catch.
+	introduce := func(t *testing.T, repo string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, "src", "bad.flag"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("declaration catches the change", func(t *testing.T) {
+		repo := seed(t, true)
+		gitInit(t, repo)
+		// Baseline: the change is absent, the declared check passes.
+		if code, out, _ := runIn([]string{"verify"}); code != 0 {
+			t.Fatalf("baseline verify: exit = %d, want 0\n%s", code, out)
+		}
+		introduce(t, repo)
+		code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+		if code != 1 {
+			t.Fatalf("verify --changed with the violation: exit = %d, want 1\n%s", code, out)
+		}
+		r := verifyJSON(t, out)
+		const id = "declared:eka-view-fixture/std:gate:1"
+		c := findVerifyCheck(t, r, id)
+		if c.Constraint != "eka-view-fixture/std:gate:1" {
+			t.Errorf("declared check constraint = %q, want the declaring artifact's canonical form", c.Constraint)
+		}
+		if c.Verdict != verdictFail {
+			t.Errorf("declared check verdict = %q, want fail", c.Verdict)
+		}
+		if len(c.Findings) != 1 || c.Findings[0].Severity != severityError {
+			t.Fatalf("declared check must carry one blocking finding:\n%s", out)
+		}
+		if !strings.Contains(c.Findings[0].Message, command) {
+			t.Errorf("finding must name the command %q, got %q", command, c.Findings[0].Message)
+		}
+
+		// A full (non --changed) run reports the declaring standard as
+		// enforced in the checklist-only report (AC3). The declaration is
+		// unchanged by the run, so the report still names it; the declared
+		// check itself still fails on the present violation (exit 1).
+		_, full, _ := runIn([]string{"verify", "--json"})
+		sc := findVerifyCheck(t, verifyJSON(t, full), standardChecksID)
+		var enforced bool
+		for _, f := range sc.Findings {
+			if f.File == "eka-view-fixture/std:gate:1" && f.Message == "enforced: 1 check(s)" {
+				enforced = true
+			}
+		}
+		if !enforced {
+			t.Errorf("standard-checks must report the declaring standard as enforced:\n%s", full)
+		}
+	})
+
+	t.Run("removing the declaration makes the change pass", func(t *testing.T) {
+		repo := seed(t, false)
+		gitInit(t, repo)
+		introduce(t, repo)
+		code, out, _ := runIn([]string{"verify", "--changed", "--json"})
+		if code != 0 {
+			t.Fatalf("verify --changed without the declaration: exit = %d, want 0\n%s", code, out)
+		}
+		r := verifyJSON(t, out)
+		for _, c := range r.Checks {
+			if strings.HasPrefix(c.ID, declaredCheckIDPrefix) {
+				t.Errorf("removed declaration must produce no declared check, got %s", c.ID)
+			}
+		}
+		if r.Verdict != verdictPass {
+			t.Errorf("top-level verdict = %q, want pass", r.Verdict)
+		}
+	})
+}
+
+// TestVerifyStandardChecksChecklistOnly: a constraint artifact that declares no
+// `checks` is reported as checklist-only and never blocks (AC3).
+func TestVerifyStandardChecksChecklistOnly(t *testing.T) {
+	if testOrigPath != "" {
+		t.Setenv("PATH", testOrigPath)
+	}
+	seedGetRepo(t, func(repo string) {
+		writeContextForFile(t, repo, "docs/standards/std-plain.json",
+			contextForDoc("std", "plain", "standards"))
+	})
+	code, out, _ := runIn([]string{"verify", "--json"})
+	if code != 0 {
+		t.Fatalf("verify: exit = %d, want 0 (checklist-only never blocks)\n%s", code, out)
+	}
+	r := verifyJSON(t, out)
+	c := findVerifyCheck(t, r, standardChecksID)
+	if c.Verdict != verdictPass {
+		t.Errorf("standard-checks verdict = %q, want pass", c.Verdict)
+	}
+	var found bool
+	for _, f := range c.Findings {
+		if f.File != "eka-view-fixture/std:plain:1" {
+			continue
+		}
+		found = true
+		if f.Severity != severityWarning {
+			t.Errorf("checklist-only severity = %q, want warning", f.Severity)
+		}
+		if f.Message != "checklist-only" {
+			t.Errorf("checklist-only message = %q, want \"checklist-only\"", f.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("standard-checks must report std:plain:1 as checklist-only:\n%s", out)
+	}
+	if r.Verdict != verdictPass {
+		t.Errorf("top-level verdict = %q, want pass", r.Verdict)
+	}
+}
