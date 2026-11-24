@@ -13,6 +13,7 @@ import (
 	"github.com/maleolabs/eka-cli/bootstrap"
 	"github.com/maleolabs/eka-cli/cmd/ui"
 	"github.com/maleolabs/eka-core/conformance"
+	"github.com/maleolabs/eka-core/contexts"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/runtime"
 	"github.com/spf13/cobra"
@@ -72,6 +73,8 @@ Checks (each mapped to a constraint id; a failing check prints the exact
                       load and verify (eka/adr:027-source-only-snapshot-transport)
   conformance         the docs/ knowledge tree must pass the conformance
                       rules with no blocking errors (eka/std:eka-standard-1.0.0)
+  scope-declarations  a declared 'appliesTo' pattern that matches no tracked
+                      path is a warning (eka/std:eka-standard-1.0.0)
 
 A missing snapshot directory and a missing docs/ tree are SKIPPED, not
 violations; a missing AGENTS.md is a warning. Warnings never block.
@@ -198,6 +201,14 @@ var verifyChecks = []verifyCheck{
 		requirement: "the docs/ knowledge tree must pass the conformance rules with no blocking errors",
 		fix:         "eka validate",
 		run:         runConformanceCheck,
+	},
+	{
+		id:          "scope-declarations",
+		constraint:  "eka/std:eka-standard-1.0.0",
+		paths:       []string{"exchange/snapshots"},
+		requirement: "a declared `appliesTo` pattern that matches no tracked path is a warning (a scope may be declared ahead of the code)",
+		fix:         "eka context --for <path>",
+		run:         runScopeDeclarationsCheck,
 	},
 }
 
@@ -399,6 +410,70 @@ func runConformanceCheck(root string, changedPaths []string) ([]verifyFinding, b
 		})
 	}
 	return findings, false
+}
+
+// runScopeDeclarationsCheck is the Standard 1.5 applicability lint: a
+// well-formed `appliesTo` pattern that matches no tracked path in the
+// repository is a WARNING (a scope may be declared ahead of the code, so
+// it never blocks). It reads the declarations of this repository through
+// the Context Engine (contexts.UnmatchedScopes) against the tracked set
+// from `git ls-files` — the engine owns globbing, scoping and ordering.
+//
+// Non-EKA degradation mirrors the other runtime-backed commands: no
+// workspace, an unregistered repository, or an unreadable tracked set
+// leaves the check SKIPPED, never an error on a non-EKA tree. A malformed
+// declaration (UnmatchedScopes returns an error) is a blocking finding so
+// it surfaces. The changed set is ignored: the warning is
+// whole-repository by nature (a declaration is what triggers it).
+func runScopeDeclarationsCheck(root string, _ []string) ([]verifyFinding, bool) {
+	r, err := runtime.Open()
+	if err != nil {
+		return nil, true // No workspace: skipped.
+	}
+	defer r.Close()
+	if !r.Exists() {
+		return nil, true
+	}
+	repo, found, err := r.Workspace.FindRepo(root)
+	if err != nil || !found {
+		return nil, true // Not a registered EKA repository: skipped.
+	}
+	files, err := gitTrackedFiles(root)
+	if err != nil {
+		return nil, true // No tracked set to lint against: skipped.
+	}
+	warnings, err := contexts.New(r).UnmatchedScopes(repo.ProjectID, repo.Name, files)
+	if err != nil {
+		return []verifyFinding{{File: "exchange/snapshots", Severity: severityError, Message: err.Error()}}, false
+	}
+	var findings []verifyFinding
+	for _, w := range warnings {
+		findings = append(findings, verifyFinding{
+			File:     w.CanonicalForm,
+			Severity: severityWarning,
+			Message:  "`appliesTo` pattern " + strconv.Quote(w.Pattern) + " matches no tracked path",
+		})
+	}
+	return findings, false
+}
+
+// gitTrackedFiles returns the repository's tracked files (repo-relative,
+// slash form) from `git ls-files` — the set a declaration is linted
+// against. It is NOT gitChangedFiles: that is a diff set, this is the
+// whole tracked set.
+func gitTrackedFiles(root string) ([]string, error) {
+	out, err := gitOutput(root, "ls-files")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		files = append(files, filepath.ToSlash(line))
+	}
+	return files, nil
 }
 
 // severityError and severityWarning mirror conformance's severity tokens
