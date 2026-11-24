@@ -18,11 +18,11 @@
 # eka-standard — the copy and the re-pin must be one operation:
 #
 #   go run ./scripts/pin-vendored -write
-standardRelease: "1.5"
+standardRelease: "1.6"
 
 # sha256 of each vendored artifact, keyed by its path relative to this module
 # root (forward slashes on every platform).
 standard:
-  EKA: 024d158135c5fd63aee007c9c66620790c5860fe02fa10fc601f1ab49d5c7e42
-  templates/hooks/pre-commit: 750428c0f7aa6663a760de0a27fc30ef378a988281bd6ae51a0be00c70c5d653
-  templates/hooks/pre-push: 27998c3e3efeec8f1d8f138a07aa3ee3988a6171b55159f2e85f4ad3d8335896
+  EKA: 663bde196a2e827942002a0c7a0d42fba4afab8e874d4ca625d46a32a9eb6d0a
+  templates/hooks/pre-commit: edc49a3e0bd07a05d631c732f730f53a84ac783f8d9ae062bb8501b1e21b7b97
+  templates/hooks/pre-push: 2c02d46e88621404403d4529d32907598188141ca408ea667ff20cd2c6cf4d99
