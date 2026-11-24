@@ -251,6 +251,14 @@ func IndexEntryCount(index []IndexEntry) int {
 	return n
 }
 
+// HasManagedRegion reports whether content carries the marker-delimited
+// managed region. Callers use it to tell a generated file (safe to
+// reconcile or remove) from hand-written user content (never touched).
+func HasManagedRegion(content []byte) bool {
+	return bytes.Contains(content, []byte(agentsMDMarkerStart)) &&
+		bytes.Contains(content, []byte(agentsMDMarkerEnd))
+}
+
 // MergeAgentsMD reconciles existing file bytes with the managed block:
 // missing content yields the block plus one trailing newline; a marked
 // region is replaced verbatim (surrounding bytes untouched); unmarked

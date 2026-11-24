@@ -40,11 +40,7 @@ func ConstraintsFromSnapshot(snapshotDir string) (index []IndexEntry, missing bo
 	type lineKey struct{ typ, id string }
 	latest := map[lineKey]int{}
 	for _, u := range res.Package.Units {
-		domain, ok := conformance.DomainForToken(u.Identity.Type)
-		if !ok {
-			continue
-		}
-		if s := conformance.Stratum(domain); s != 1 && s != 2 {
+		if _, ok := constraintStratumOf(u.Identity.Type); !ok {
 			continue
 		}
 		if u.StateVector.ExistenceState != "active" {
@@ -59,6 +55,13 @@ func ConstraintsFromSnapshot(snapshotDir string) (index []IndexEntry, missing bo
 	for k := range latest {
 		byType[k.typ] = append(byType[k.typ], k.id)
 	}
+	return groupConstraintIndex(byType), false, nil
+}
+
+// groupConstraintIndex turns a type→ids map into the render-ordered index:
+// types by (stratum, token), ids sorted within a type. It is the ONE
+// grouping the root index and every nested subtree index share.
+func groupConstraintIndex(byType map[string][]string) []IndexEntry {
 	types := make([]string, 0, len(byType))
 	for t := range byType {
 		types = append(types, t)
@@ -70,13 +73,28 @@ func ConstraintsFromSnapshot(snapshotDir string) (index []IndexEntry, missing bo
 		}
 		return types[i] < types[j]
 	})
-	index = make([]IndexEntry, 0, len(types))
+	index := make([]IndexEntry, 0, len(types))
 	for _, t := range types {
 		ids := byType[t]
 		sort.Strings(ids)
 		index = append(index, IndexEntry{Type: t, IDs: ids})
 	}
-	return index, false, nil
+	return index
+}
+
+// constraintStratumOf resolves the authority stratum of an artifact type
+// token and reports whether it is in the projected range (strata 1-2,
+// Discovery + Architecture). Unknown tokens are not constraints.
+func constraintStratumOf(token string) (int, bool) {
+	d, ok := conformance.DomainForToken(token)
+	if !ok {
+		return 0, false
+	}
+	s := conformance.Stratum(d)
+	if s != 1 && s != 2 {
+		return 0, false
+	}
+	return s, true
 }
 
 // constraintStratum resolves the authority stratum of an artifact type
