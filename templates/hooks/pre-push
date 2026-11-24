@@ -1,5 +1,8 @@
 #!/bin/sh
 # EKA Universal Capture — Layer 2 Git Hook Distributed (ADR-035 v3 + spec provenance-capture:1)
+# Standard check gate (sto:verify-changed-gate, M3a stage B): also runs the
+# repository-scope checks the standards declare for the pushed range,
+# non-blocking by default.
 # Template: eka-standard/templates/hooks/pre-push
 # Installed via anvil lifecycle platform_sync (symlink to .git/hooks/pre-push)
 # Contract: pre-push reconciles last 24h commits + staged diff into provenance=reconciled
@@ -21,6 +24,22 @@ else
   # Hint mode
   if git log --since="24 hours ago" --oneline 2>/dev/null | grep -q .; then
     echo "[eka-capture] Layer-2 pre-push: recent commits found — run 'eka capture --reconcile --from-git' to reconcile" >&2 || true
+  fi
+fi
+
+# Standard check gate (sto:verify-changed-gate, M3a stage B): the repository-scope
+# checks the standards declare for the pushed range. Non-blocking by default —
+# the capture contract above is preserved; set EKA_VERIFY_STRICT=1 to block.
+if [ "${EKA_VERIFY:-1}" = "1" ]; then
+  VERIFY_BASE="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo HEAD~1)"
+  VERIFY_OUT="$(eka verify --changed --base "$VERIFY_BASE" 2>&1)" || VERIFY_RC=$?
+  if [ "${VERIFY_RC:-0}" -eq 1 ]; then
+    printf '%s\n' "$VERIFY_OUT" >&2
+    if [ "${EKA_VERIFY_STRICT:-0}" = "1" ]; then
+      echo "[eka-verify] standard violation — push blocked (EKA_VERIFY_STRICT=1)" >&2
+      exit 1
+    fi
+    echo "[eka-verify] standard violation in the pushed range — non-blocking (set EKA_VERIFY_STRICT=1 to block)" >&2
   fi
 fi
 

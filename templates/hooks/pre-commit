@@ -1,5 +1,8 @@
 #!/bin/sh
 # EKA Universal Capture — Layer 2 Git Hook Distributed (ADR-035 v3 + spec provenance-capture:1)
+# Standard check gate (sto:verify-changed-gate, M3a stage B): also runs the
+# repository-scope checks the standards declare for the staged change set,
+# non-blocking by default.
 # Template: eka-standard/templates/hooks/pre-commit
 # Installed via anvil lifecycle platform_sync (symlink to .git/hooks/pre-commit)
 # Contract: non-blocking by default; strict mode when EKA_CAPTURE_STRICT=1
@@ -39,6 +42,21 @@ if [ "${EKA_CAPTURE_STRICT:-0}" = "1" ]; then
   if eka capture --reconcile --from-git --dry-run 2>/dev/null | grep -q "would create"; then
     echo "[eka-capture] STRICT: reconciled draft would be created — commit blocked. Run 'eka capture --reconcile --from-git' then re-commit." >&2
     exit 1
+  fi
+fi
+
+# Standard check gate (sto:verify-changed-gate, M3a stage B): the repository-scope
+# checks the standards declare for the staged change set. Non-blocking by default
+# — the capture contract above is preserved; set EKA_VERIFY_STRICT=1 to block.
+if [ "${EKA_VERIFY:-1}" = "1" ]; then
+  VERIFY_OUT="$(eka verify --changed --base HEAD 2>&1)" || VERIFY_RC=$?
+  if [ "${VERIFY_RC:-0}" -eq 1 ]; then
+    printf '%s\n' "$VERIFY_OUT" >&2
+    if [ "${EKA_VERIFY_STRICT:-0}" = "1" ]; then
+      echo "[eka-verify] standard violation — commit blocked (EKA_VERIFY_STRICT=1)" >&2
+      exit 1
+    fi
+    echo "[eka-verify] standard violation in the changed set — non-blocking (set EKA_VERIFY_STRICT=1 to block)" >&2
   fi
 fi
 
