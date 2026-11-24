@@ -51,29 +51,32 @@ func (o constraintsObject) marshal(compact bool) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// contextPathFor normalizes a --for argument to a repository-relative,
-// forward-slash path — the grammar the `appliesTo` patterns are anchored
-// to. A relative path is used as-is (filepath.Clean collapses '.'/'..' and
-// strips a leading './'); an absolute path is relativized against the
-// repository root and refused (error → usage, exit 2) when it escapes the
+// contextPathFor normalizes a --for argument to a repository-root-relative,
+// forward-slash path — the space the `appliesTo` patterns are anchored to.
+// The matching space is the repository root, which may sit ABOVE the
+// current directory (the command is often run from a subdirectory), so a
+// relative path is first made absolute against cwd, then relativized
+// against the repository root; an absolute path is relativized directly.
+// Either form is refused (error → usage, exit 2) when it escapes the
 // repository. The empty path and "." are allowed: they bind only what the
 // declarations would match (normally nothing).
-func contextPathFor(root, raw string) (string, error) {
+func contextPathFor(root, cwd, raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	if filepath.IsAbs(raw) {
-		rel, err := filepath.Rel(root, filepath.Clean(raw))
-		if err != nil {
-			return "", fmt.Errorf("context: --for %q: %w", raw, err)
-		}
-		sep := string(filepath.Separator)
-		if rel == ".." || strings.HasPrefix(rel, ".."+sep) {
-			return "", fmt.Errorf("context: --for %q is outside the repository %s", raw, root)
-		}
-		return filepath.ToSlash(rel), nil
+	absPath := raw
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(cwd, raw)
 	}
-	return filepath.ToSlash(filepath.Clean(raw)), nil
+	rel, err := filepath.Rel(root, filepath.Clean(absPath))
+	if err != nil {
+		return "", fmt.Errorf("context: --for %q: %w", raw, err)
+	}
+	sep := string(filepath.Separator)
+	if rel == ".." || strings.HasPrefix(rel, ".."+sep) {
+		return "", fmt.Errorf("context: --for %q is outside the repository %s", raw, root)
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 // newContextCommand builds the `eka context` command: the Context
@@ -218,15 +221,18 @@ Flags:
                  repository whose declared 'appliesTo' scope binds
                  <path> — the higher-authority constraints that apply
                  to it (schema "eka-constraints-v1"). The path is
-                 repository-relative and forward-slashed: a relative
-                 path is used as-is ('.'/'..' cleaned, a leading './'
-                 stripped); an absolute path is relativized against
-                 the repository root and refused when it escapes it
-                 (usage, exit 2). An empty path or "." is allowed and
-                 normally binds nothing. With --for the positional
-                 subject must be ABSENT (subject + --for is a usage
-                 error, exit 2); the empty result set is exit 0, never
-                 an error. --depth does not apply to this mode.
+                 expressed in the repository-root-relative,
+                 forward-slashed matching space: a relative path is
+                 resolved against the current directory and then
+                 against the repository root (so the command works
+                 from a subdirectory); an absolute path is relativized
+                 against the repository root. Either form is refused
+                 (usage, exit 2) when it escapes the repository. An
+                 empty path or "." is allowed and normally binds
+                 nothing. With --for the positional subject must be
+                 ABSENT (subject + --for is a usage error, exit 2); the
+                 empty result set is exit 0, never an error. --depth
+                 does not apply to this mode.
 
 The Constraints Object (--for, schema "eka-constraints-v1") is the
 machine document {"schema","path","constraints"} — 'path' is the
@@ -364,7 +370,7 @@ Exit codes:
 			// declarations through the engine (repository-scoped: project
 			// id + repository name). Empty set is exit 0.
 			if forMode {
-				rel, perr := contextPathFor(repo.Path, forPath)
+				rel, perr := contextPathFor(repo.Path, abs, forPath)
 				if perr != nil {
 					return perr // Exit 2: path outside the repository (usage).
 				}

@@ -49,10 +49,11 @@ func contextForDoc(typeToken, id, dimension string, patterns ...string) string {
 	return string(b)
 }
 
-// seedContextForRepo seeds the get/view repo with three applying units
+// seedContextForRepo seeds the get/view repo with four applying units
 // across two authority strata: req-aaa (Discovery, stratum 1) and std-aaa /
 // std-zzz (Architecture, stratum 2), all binding src/**. std-zzz also binds
-// docs/*.md.
+// docs/*.md; std-pkg (Architecture, stratum 2) binds pkg/**, for the
+// subdirectory-resolution test.
 func seedContextForRepo(t *testing.T) string {
 	t.Helper()
 	return seedGetRepo(t, func(repo string) {
@@ -62,6 +63,8 @@ func seedContextForRepo(t *testing.T) string {
 			contextForDoc("std", "aaa", "standards", "src/**"))
 		writeContextForFile(t, repo, "docs/standards/std-zzz.json",
 			contextForDoc("std", "zzz", "standards", "src/**", "docs/*.md"))
+		writeContextForFile(t, repo, "docs/standards/std-pkg.json",
+			contextForDoc("std", "pkg", "standards", "pkg/**"))
 	})
 }
 
@@ -284,6 +287,37 @@ func TestContextForPathNormalization(t *testing.T) {
 	}
 	if out != "" {
 		t.Errorf("absolute outside: stdout must be empty, got %q", out)
+	}
+}
+
+// TestContextForResolvesAgainstRepoRootFromSubdir: run from a subdirectory,
+// a relative --for path is resolved against the repository ROOT (the
+// `appliesTo` matching space), never cwd-as-is: 'file.go' from <repo>/pkg
+// resolves to 'pkg/file.go' and binds the pkg/**-scoped std-pkg unit.
+func TestContextForResolvesAgainstRepoRootFromSubdir(t *testing.T) {
+	repo := seedContextForRepo(t)
+	sub := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdirInto(t, sub)
+	code, out, errText := runIn([]string{"context", "--for", "file.go", "--json"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errText)
+	}
+	if errText != "" {
+		t.Errorf("stderr must be empty, got %q", errText)
+	}
+	doc := parseConstraints(t, out)
+	if doc.Path != "pkg/file.go" {
+		t.Errorf("path = %q, want pkg/file.go (resolved against the repo root, not cwd)", doc.Path)
+	}
+	var forms []string
+	for _, c := range doc.Constraints {
+		forms = append(forms, c.CanonicalForm)
+	}
+	if len(forms) != 1 || forms[0] != "eka-view-fixture/std:pkg:1" {
+		t.Errorf("constraints = %v, want [eka-view-fixture/std:pkg:1]", forms)
 	}
 }
 
