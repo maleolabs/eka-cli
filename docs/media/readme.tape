@@ -1,10 +1,15 @@
-# readme.tape — the README's demo GIF, recorded reproducibly by scripts/media.sh.
+# readme.tape — the README's demo GIF, recorded from this committed tape by
+# scripts/media.sh.
 #
 # The scrollback is a fixture repository (testdata/view/valid, 40 files, six work
 # items) that has already been synced, so the recording shows the projections and
 # not the setup. scripts/media.sh prepares that fixture, builds the binary and
 # launches vhs with HOME/EKA_HOME pointed at a throwaway workspace, which is why
 # this tape needs no hidden setup block beyond a prompt and a clear.
+#
+# The screens are deterministic, the file is not: vhs encodes from a live session,
+# so two recordings of this tape differ in pixels without differing in content.
+# Do not expect a re-record to reproduce docs/media/demo.gif.sha256.
 #
 # Size is not decoration. GitHub renders README images at roughly 880px, so a
 # 1200px recording is shown at ~0.73x and the text goes soft; 1060px keeps it

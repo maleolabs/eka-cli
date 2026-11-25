@@ -34,14 +34,14 @@ beside it is [`docs/bench/benchmarks.svg`](docs/bench/benchmarks.svg).
 
 | Scenario | Command | ms |
 | --- | --- | ---: |
-| `startup-version` | `eka version` | 19 |
-| `validate` | `eka validate .` | 30 |
-| `sync` | `eka sync` | 52 |
-| `view-execution` | `eka view execution` | 29 |
-| `status` | `eka status` | 37 |
-| `code-context-cold` | `eka code-context "context engine" --limit 8` | 253 |
-| `code-context-warm` | `eka code-context "context engine" --limit 8` | 48 |
-| `code-discover` | `eka code-discover "context engine" --limit 8` | 47 |
+| `startup-version` | `eka version` | 18 |
+| `validate` | `eka validate .` | 26 |
+| `sync` | `eka sync` | 45 |
+| `view-execution` | `eka view execution` | 25 |
+| `status` | `eka status` | 34 |
+| `code-context-cold` | `eka code-context "context engine" --limit 8` | 222 |
+| `code-context-warm` | `eka code-context "context engine" --limit 8` | 39 |
+| `code-discover` | `eka code-discover "context engine" --limit 8` | 43 |
 
 The two `code-context` rows are the same query. The cold row wipes the
 derived cache before every sample, so it pays for walking and parsing this

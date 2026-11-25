@@ -4,36 +4,36 @@
   <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13">
     <text x="0" y="70" fill="#8a8a8a">startup-version</text>
     <rect x="210" y="56" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="56" width="28" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="70" fill="#8a8a8a">19</text>
+    <rect x="210" y="56" width="30" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="70" fill="#8a8a8a">18</text>
     <text x="0" y="110" fill="#8a8a8a">validate</text>
     <rect x="210" y="96" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
     <rect x="210" y="96" width="43" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="110" fill="#8a8a8a">30</text>
+    <text x="582" y="110" fill="#8a8a8a">26</text>
     <text x="0" y="150" fill="#8a8a8a">sync</text>
     <rect x="210" y="136" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="136" width="74" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="150" fill="#8a8a8a">52</text>
+    <rect x="210" y="136" width="73" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="150" fill="#8a8a8a">45</text>
     <text x="0" y="190" fill="#8a8a8a">view-execution</text>
     <rect x="210" y="176" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="176" width="42" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="190" fill="#8a8a8a">29</text>
+    <rect x="210" y="176" width="41" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="190" fill="#8a8a8a">25</text>
     <text x="0" y="230" fill="#8a8a8a">status</text>
     <rect x="210" y="216" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="216" width="53" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="230" fill="#8a8a8a">37</text>
+    <rect x="210" y="216" width="56" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="230" fill="#8a8a8a">34</text>
     <text x="0" y="270" fill="#8a8a8a">code-context-cold</text>
     <rect x="210" y="256" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
     <rect x="210" y="256" width="360" height="20" rx="3" fill="#ffaf5f"/>
-    <text x="582" y="270" fill="#8a8a8a">253</text>
+    <text x="582" y="270" fill="#8a8a8a">222</text>
     <text x="0" y="310" fill="#8a8a8a">code-context-warm</text>
     <rect x="210" y="296" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="296" width="69" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="310" fill="#8a8a8a">48</text>
+    <rect x="210" y="296" width="64" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="310" fill="#8a8a8a">39</text>
     <text x="0" y="350" fill="#8a8a8a">code-discover</text>
     <rect x="210" y="336" width="360" height="20" rx="3" fill="#8a8a8a" opacity="0.14"/>
-    <rect x="210" y="336" width="67" height="20" rx="3" fill="#5fafff"/>
-    <text x="582" y="350" fill="#8a8a8a">47</text>
+    <rect x="210" y="336" width="70" height="20" rx="3" fill="#5fafff"/>
+    <text x="582" y="350" fill="#8a8a8a">43</text>
     <text x="0" y="396" fill="#8a8a8a" opacity="0.8">cold code index (amber) vs everything else</text>
   </g>
 </svg>

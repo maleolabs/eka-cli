@@ -125,13 +125,22 @@ fi
 # this axis cheap enough to stand in front of every tag.
 for GENERATED in media bench; do
   GEN_SCRIPT="$ROOT/scripts/$GENERATED.sh"
+  # Each script owns what its own --check proves, and the two prove different
+  # things: bench re-derives the table, the chart and the README block from the
+  # record, while media only compares the GIF against its recorded digest — which
+  # detects a replaced file, not a stale screenshot, because a recording is not
+  # byte-reproducible. Naming that here keeps the gate from overclaiming.
+  case "$GENERATED" in
+    bench) GEN_CLAIM="record, table, chart and README block agree" ;;
+    media) GEN_CLAIM="GIF matches its recorded digest (detects replacement, not staleness)" ;;
+  esac
   if [ ! -f "$GEN_SCRIPT" ]; then
     skip "$GENERATED: scripts/$GENERATED.sh is absent"
     continue
   fi
   OUT=$(cd "$ROOT" && sh "$GEN_SCRIPT" --check 2>&1)
   if [ $? -eq 0 ]; then
-    pass "$GENERATED: committed artifacts match what scripts/$GENERATED.sh derives"
+    pass "$GENERATED: $GEN_CLAIM"
   else
     REASON=$(printf '%s\n' "$OUT" | grep '^FAIL' | head -2 | tr '\n' ' ')
     fail "$GENERATED: ${REASON:-scripts/$GENERATED.sh --check failed}"

@@ -33,8 +33,9 @@ BLOCK_END='<!-- eka:bench:end -->'
 RUNS=${EKA_BENCH_RUNS:-5}
 
 # Scenarios, one line each: id|workdir|command. workdir "fix" is a private copy
-# of testdata/view/valid (a conformant 40-file repository); "repo" is this
-# checkout, which is what the code index costs something to walk.
+# of testdata/view/valid (a conformant 40-file repository); "repo" is a clean
+# export of this checkout's HEAD, which is what the code index costs something to
+# walk.
 #
 # An id ending in "-cold" wipes the derived cache before every sample, so every
 # sample pays the index build rather than reading it back. The source tree is
@@ -67,8 +68,18 @@ build() {
   HOME="$TMP/home"
   EKA_HOME="$TMP/home/.eka"
   export HOME EKA_HOME
-  mkdir -p "$HOME" "$TMP/fixture"
+  mkdir -p "$HOME" "$TMP/fixture" "$TMP/repo"
   cp -r "$ROOT/testdata/view/valid/." "$TMP/fixture/"
+  # The "repo" scenarios run against a clean export of HEAD, not against the
+  # working tree. The code index walks the filesystem, so an untracked file left
+  # in the checkout moves the number: a stray 23 MB eka.exe in this repository's
+  # own working directory costs the index ~135 ms, which is more than the index
+  # itself. Exporting makes the figure describe the committed sources and nothing
+  # else — the same thing a fresh clone would measure.
+  if ! (cd "$ROOT" && git archive HEAD) | tar -x -C "$TMP/repo"; then
+    printf 'FAIL  bench: exporting HEAD for the repo scenarios failed\n' >&2
+    exit 1
+  fi
   : > "$TMP/results.tsv"
 }
 
@@ -100,8 +111,10 @@ measure() {
   printf '%s\n' "$SCENARIOS" > "$TMP/scenarios.txt"
   while IFS='|' read -r id where cmd; do
     [ -z "$id" ] && continue
-    dir=$ROOT
-    [ "$where" = fix ] && dir=$TMP/fixture
+    case "$where" in
+      fix) dir=$TMP/fixture ;;
+      *)   dir=$TMP/repo ;;
+    esac
     cold=0; runs=$RUNS
     case "$id" in *-cold) cold=1 ;; esac
     ms=$(one "$dir" "$cmd" "$runs" "$cold") || exit 1

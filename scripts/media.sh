@@ -2,15 +2,23 @@
 # media.sh — record the README's demo GIF from docs/media/readme.tape.
 #
 # Why: the README's demo is a binary artifact, so it cannot be reviewed like
-# text and it silently rots the moment a projection changes. Recording it from a
+# text, and it silently rots the moment a projection changes. Recording it from a
 # committed tape makes the GIF regenerable and the tape reviewable; the recorded
-# digest makes a hand-edited or stale GIF a --check failure rather than a thing
-# nobody notices.
+# digest makes a replaced or hand-edited GIF a --check failure rather than a
+# thing nobody notices.
 #
-# Both the tape and the recording are deterministic on purpose: the fixture, the
-# binary and $HOME are prepared fresh in a fixed directory, so the same tape
-# produces the same screens. The digest is not reproducible across vhs versions —
-# a re-record with different tooling is expected to update it.
+# What the digest does not do, and this is measured rather than assumed: prove
+# the GIF is current. VHS encodes from a live session, so two recordings of
+# identical screens already differ — re-recording this tape twice moves ~450 of
+# 678k pixels, spread across the whole frame, with no change in content. The
+# digest therefore detects a swapped file, never a stale screenshot. Judging
+# staleness stays a human act, which is why the tape pins the terminal geometry
+# the projections were rendered at: a projection that outgrows it is the failure
+# a reader would actually notice.
+#
+# The tape is deterministic in the sense that matters for review — the fixture,
+# the binary and $HOME are prepared fresh in a fixed directory, so the same tape
+# always shows the same screens — but never byte for byte.
 #
 # Usage:
 #   sh scripts/media.sh --write   render docs/media/demo.gif and its digest
