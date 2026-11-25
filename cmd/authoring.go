@@ -48,30 +48,60 @@ import (
 // repository an unqualified target resolves to repos.namespace;
 // outside one it is refused with the spec's hint.
 //
+// Workspace-native authoring (sto:workspace-native-authoring): `eka
+// new` also targets a project/namespace EXPLICITLY with --project and
+// --namespace — the drafts of the workspace live under
+// EKA_HOME/drafts/<project>/, so a draft can be scaffolded against any
+// project REGISTERED in the workspace (run 'eka project list') from
+// ANY directory, inside or outside a repository. The explicit path is
+// a deliberate step outside the repository identity: it never borrows
+// project/namespace from eka.yaml (ADR-017 D6 rejected --project as a
+// REPO OVERRIDE because an override that can differ from the immutable
+// identity is ambiguous; the explicit pair --project + --namespace is
+// the cross-project integration that D6's internal query slot kept the
+// door open for — deterministic, no ambiguity, and only for registered
+// projects). Publishing workspace-native drafts still requires a
+// repository context (the ADR-018 gate of publish/edit/discard
+// unchanged; the cross-project draft fallback resolves the draft from
+// any project).
+//
 // Repository context (ADR-018): an EKA repository is a directory tree
 // carrying eka.yaml. All four mutating commands (new, publish, edit,
 // discard) refuse deterministically when the walk-up finds no eka.yaml
-// — run 'eka init' first; there is no legacy mode.
+// — run 'eka init' first; there is no legacy mode. The ADR-018 gate
+// applies to the repository-context path only: an explicit
+// --project/--namespace target needs no repository at all.
 
 // Flag names of the authoring commands (declared once, shared by the
 // help text and the flag lookups).
 const (
-	flagProject          = "project"
-	flagNewDimension     = "dimension"
-	flagNewPhase         = "phase"
-	flagNewDependsOn     = "depends-on"
-	flagNewDerivesFrom   = "derives-from"
-	flagNewValidates     = "validates"
-	flagNewSupersedes    = "supersedes"
-	flagNewAmends        = "amends"
-	flagNewContentFile   = "content-file"
-	flagNewEdit          = "edit"
-	flagPublishVersion   = "instance-version"
-	flagDiscardForce     = "force"
-	flagDraftListProject = "project"
+	flagProject             = "project"
+	flagNewNamespace        = "namespace"
+	flagNewDimension        = "dimension"
+	flagNewPhase            = "phase"
+	flagNewDependsOn        = "depends-on"
+	flagNewDerivesFrom      = "derives-from"
+	flagNewValidates        = "validates"
+	flagNewSupersedes       = "supersedes"
+	flagNewAmends           = "amends"
+	flagNewContentFile      = "content-file"
+	flagNewBatchFile        = "file"
+	flagNewEdit             = "edit"
+	flagNewBy               = "by"
+	flagNewByKind           = "by-kind"
+	flagPublishVersion      = "instance-version"
+	flagPublishAll          = "all"
+	flagPublishPending      = "pending"
+	flagPublishOnly         = "only"
+	flagPublishDryRun       = "dry-run"
+	flagDiscardForce        = "force"
+	flagDraftListProject    = "project"
+	flagDraftListProvenance = "provenance"
 )
 
-// newAuthoringCommands builds the five draft-publish commands.
+// newAuthoringCommands builds the seven authoring commands (new, edit,
+// draft, publish, discard and relate; relate is an authoring command —
+// a relationship-only edge-add — not a draft-publish command).
 func newAuthoringCommands() []*cobra.Command {
 	return []*cobra.Command{
 		newNewCommand(),
@@ -79,6 +109,7 @@ func newAuthoringCommands() []*cobra.Command {
 		newDraftCommand(),
 		newPublishCommand(),
 		newDiscardCommand(),
+		newRelateCommand(),
 	}
 }
 
@@ -136,8 +167,8 @@ func openAuthoringRuntime(cmd *cobra.Command) (*runtime.Runtime, error) {
 // "<type>:<id>".
 func newNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "new <target>",
-		Short: "Scaffold a draft",
+		Use:   "new <target> | --file <batch.json>",
+		Short: "Scaffold a draft (or a batch of drafts)",
 		Long: `Scaffold a draft: the deterministic JSON authoring template written to
 <workspace>/drafts/<project>/<type>-<id>.json (spec-standard-v2 §8).
 
@@ -151,12 +182,25 @@ target is refused with a hint).
 
 The command requires an EKA repository: a directory tree carrying
 eka.yaml (run 'eka init' to create one — there is no legacy mode, so
-outside an EKA repository the command is refused).
+outside an EKA repository the command is refused), unless the scope is
+given explicitly: --project + --namespace target a project REGISTERED
+in the workspace (run 'eka project list') from any directory —
+workspace-native authoring, no repository needed. An explicit --project
+requires --namespace (or a qualified target) and must name a registered
+project; an explicit --namespace alone resolves the project from the
+repository context. The explicit path never reads eka.yaml: the draft's
+project/namespace come from the flags or the qualified target, and the
+cross-platform (D6) refusal does not apply to a deliberate explicit
+target. The draft lands under EKA_HOME/drafts/<project>/ and is
+published like any other draft: 'eka publish' (and edit/discard) still
+require a repository context, resolving the draft through the
+cross-project fallback.
 
 The template carries the full §3.2 schema (namespace, type, id,
 revision 1, the type's owned state fields with their initial values,
 dimension/phase when given, the relationship fields when given, the
-change-log covering every owned domain) plus the type's required
+change-log covering every owned domain and the phase context when
+given) plus the type's required
 content keys as empty placeholders. instanceVersion is deliberately
 absent — it is assigned at publish time.
 
@@ -166,30 +210,130 @@ reference: activating the container locks its depends-on plan
 (protocol §4), so a container without a plan can never publish or
 activate.
 
+Batch authoring (--file <batch.json>): scaffold a SET of related
+drafts in one invocation — the batch form of the same scaffold. The
+file is a JSON object:
+
+  {
+    "drafts": [
+      {"type": "plan", "id": "roadmap-v2", "dimension": "planning",
+       "phase": "mvp",
+       "relationships": {"derivesFrom": ["scp:product-v1"],
+                         "dependsOn": ["scp:product-v1"]},
+       "content": {"objective": "...", "scope": "...", "outOfScope": "..."}},
+      {"type": "ctr", "id": "wave-7",
+       "relationships": {"dependsOn": ["plan:roadmap-v2"]}},
+      {"type": "sto", "id": "item-1",
+       "relationships": {"dependsOn": ["ctr:wave-7"]}},
+      {"type": "tkt", "id": "ticket-1",
+       "relationships": {"derivesFrom": ["ctr:wave-7", "sto:item-1"]}}
+    ]
+  }
+
+Per target: "type" and "id" are required; "dimension" and "phase"
+are optional (phase is scp-/plan- only, the same rule as --phase);
+"relationships" maps the five relationship keys — dependsOn,
+derivesFrom, validates, supersedes, amends — each to an array of
+target references (the same targets the single-target flags accept;
+a tkt- target must derive from a ctr-, a ctr- target must depend on
+a plan-); "content" is an object merged over the type's required-
+section placeholders (the per-target form of --content-file).
+contentState is not a batch field: every draft scaffolds at its
+type's default state.
+
+All targets are scaffolded in the resolved project and namespace (the
+repository's, or the explicit --project/--namespace). The batch is
+all-or-nothing: when any target cannot be scaffolded (a collision, an
+unknown type, a guard violation), the run refuses and removes the
+drafts it created — no partial set.
+
+--file is mutually exclusive with the single-target flags: combining
+it with --dimension, --phase, any relationship flag
+(--depends-on/--derives-from/--validates/--supersedes/--amends),
+--content-file or --edit is a usage error — per-target values belong
+in the batch file (--by/--by-kind stay legal: the batch-wide
+change-log authority).
+
 Flags:
+  --file <path>         scaffold the batch in <path> instead of a
+                        single target
+  --project <name>      explicit project for workspace-native authoring:
+                        a project REGISTERED in the workspace (run 'eka
+                        project list'), targeted from any directory;
+                        requires --namespace or a qualified target
+  --namespace <ns>      explicit namespace for workspace-native
+                        authoring: overrides the repository/target
+                        namespace (--project, when given, must be
+                        registered)
   --dimension <token>    primary knowledge dimension (knowledge types)
   --phase <value>        phase context (scp-/plan- only)
   --depends-on <ref>[,<ref>...]   relationship targets (also
-  --derives-from, --validates, --supersedes, --amends); ctr- drafts
-                         require a plan- depends-on reference
+  --derives-from, --validates, --supersedes, --amends); comma-joined
+                         values and repeated flags accumulate; ctr-
+                         drafts require a plan- depends-on reference
   --content-file <path>  prepopulate the draft content from a JSON
                          object file (agents); the object is merged
                          into the draft's content (raw text is
                          rejected for JSON drafts)
+  --by <name>            change-log authority name (default: ` + "`git config user.name`" + `)
+  --by-kind <kind>       author identity kind: user, agent, or worker
+                         (default: user)
   --edit                 TTY only: open $EDITOR (fallback vi) on the
                          draft after scaffolding, then re-validate
 
 Exit codes:
-  0  draft created
+  0  draft(s) created
   1  refused (collision, unresolvable namespace, invalid target,
-     --edit without a terminal, not an EKA repository)
+     malformed batch file, --edit without a terminal, not an EKA
+     repository)
   2  usage or internal error`,
 		Example: `  eka new feather/sto:my-item
   eka new tkt:wave-7-item-1 --derives-from ctr:wave-7,sto:my-item
   eka new adr:001 --content-file proposal.json
-  eka new plan:roadmap-v2 --phase milestone`,
-		Args: cobra.ExactArgs(1),
+  eka new plan:roadmap-v2 --phase milestone
+  eka new sto:my-item --project atrium --namespace atrium-api
+  eka new atrium-api/sto:my-item --project atrium
+  eka new --file batch.json
+  eka new --file batch.json --project atrium --namespace atrium-api`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			file, _ := cmd.Flags().GetString(flagNewBatchFile)
+			if file != "" {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Batch authoring: --file scaffolds a set of drafts in one
+			// invocation (no positional target). --edit is TTY-bound
+			// and single-draft only — a batch is authored through its
+			// content and edited individually afterwards. The
+			// single-target flags (--dimension, --phase, the
+			// relationship flags, --content-file) are meaningless on
+			// the batch path and are refused instead of silently
+			// dropped: per-target values belong in the batch file.
+			if file, _ := cmd.Flags().GetString(flagNewBatchFile); file != "" {
+				if edit, _ := cmd.Flags().GetBool(flagNewEdit); edit {
+					return newUsage(cmd, "new: --edit is not available with --file; author batch drafts through the batch content, then edit individually")
+				}
+				if conflict := batchFlagConflict(cmd); conflict != "" {
+					return newUsage(cmd, fmt.Sprintf("new: --%s is a single-target flag and is not available with --file; per-target values belong in the batch file", conflict))
+				}
+				byFlag, _ := cmd.Flags().GetString(flagNewBy)
+				byKindFlag, _ := cmd.Flags().GetString(flagNewByKind)
+				by, err := runtime.BySource(byFlag, byKindFlag, ".")
+				if err != nil {
+					return newUsage(cmd, err.Error())
+				}
+				r, err := openAuthoringRuntime(cmd)
+				if err != nil {
+					return err
+				}
+				defer r.Close()
+				projectFlag, _ := cmd.Flags().GetString(flagProject)
+				nsFlag, _ := cmd.Flags().GetString(flagNewNamespace)
+				return runNewBatch(cmd, r, by, file, projectFlag, nsFlag)
+			}
+
 			ref, err := parseDraftTarget(args[0])
 			if err != nil {
 				return refuse(cmd, "new: %v", err)
@@ -208,7 +352,21 @@ Exit codes:
 				return refuse(cmd, "new: --edit requires a terminal; use --content-file for non-interactive authoring")
 			}
 
-			project, ns, err := resolveNewScope(r, ref)
+			// The change-log authority (by): --by, else `git config
+			// user.name` — the same BySource resolution `eka note` and
+			// `eka transition` use, so every authoring command defaults
+			// to the same identity (an unresolved source is a usage
+			// error, never a silent fallback).
+			byFlag, _ := cmd.Flags().GetString(flagNewBy)
+			byKindFlag, _ := cmd.Flags().GetString(flagNewByKind)
+			by, err := runtime.BySource(byFlag, byKindFlag, ".")
+			if err != nil {
+				return newUsage(cmd, err.Error())
+			}
+
+			projectFlag, _ := cmd.Flags().GetString(flagProject)
+			nsFlag, _ := cmd.Flags().GetString(flagNewNamespace)
+			project, ns, err := resolveNewScope(r, ref, projectFlag, nsFlag)
 			if err != nil {
 				return refuse(cmd, "new: %v", err)
 			}
@@ -222,6 +380,7 @@ Exit codes:
 				ID:            ref.ID,
 				Dimension:     dimension,
 				Phase:         phase,
+				By:            by,
 				Relationships: collectRelationships(cmd),
 				ContentFile:   contentFile,
 			})
@@ -263,32 +422,60 @@ Exit codes:
 	}
 	cmd.Flags().String(flagNewDimension, "", "primary knowledge dimension (knowledge types)")
 	cmd.Flags().String(flagNewPhase, "", "phase context (scp-/plan- only)")
-	cmd.Flags().String(flagNewDependsOn, "", "depends-on relationship targets, comma-separated (containers require a plan- reference)")
-	cmd.Flags().String(flagNewDerivesFrom, "", "derives-from relationship targets, comma-separated")
-	cmd.Flags().String(flagNewValidates, "", "validates relationship targets, comma-separated")
-	cmd.Flags().String(flagNewSupersedes, "", "supersedes relationship targets, comma-separated")
-	cmd.Flags().String(flagNewAmends, "", "amends relationship targets, comma-separated")
+	// Relationship targets: StringSlice — repeated occurrences and
+	// comma-joined values accumulate (never silently override).
+	cmd.Flags().StringSlice(flagNewDependsOn, nil, "depends-on relationship targets; comma-separated values and repeated flags accumulate (containers require a plan- reference)")
+	cmd.Flags().StringSlice(flagNewDerivesFrom, nil, "derives-from relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewValidates, nil, "validates relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewSupersedes, nil, "supersedes relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().StringSlice(flagNewAmends, nil, "amends relationship targets; comma-separated values and repeated flags accumulate")
+	cmd.Flags().String(flagNewBatchFile, "", "scaffold a batch of drafts from a JSON file instead of a single target (batch schema documented above; exclusive with the single-target flags)")
+	cmd.Flags().String(flagProject, "", "explicit project for workspace-native authoring: a project registered in the workspace (run 'eka project list'), targeted from any directory; requires --namespace or a qualified target")
+	cmd.Flags().String(flagNewNamespace, "", "explicit namespace for workspace-native authoring: overrides the repository/target namespace (--project, when given, must be registered)")
 	cmd.Flags().String(flagNewContentFile, "", "prepopulate the draft content from a JSON object file (agents); merged into the draft's content, raw text rejected")
+	cmd.Flags().String(flagNewBy, "", "change-log authority name (default: `git config user.name`)")
+	cmd.Flags().String(flagNewByKind, "", "author identity kind: user, agent, or worker (default: user)")
 	cmd.Flags().Bool(flagNewEdit, false, "TTY only: open $EDITOR (fallback vi) on the draft, then re-validate")
 	return cmd
 }
 
+// newUsage renders a usage-class failure (exit 2) of `eka new`: the
+// deterministic "eka: <message>" line on stderr (the same class the
+// note/transition commands use for an unresolved --by source).
+func newUsage(cmd *cobra.Command, message string) error {
+	fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", message)
+	return &exitError{code: exitUsage}
+}
+
 // resolveNewScope resolves the project and namespace of `eka new` per
-// spec §3.2 + D6, from the repository alone (no flags): the project is
-// the repository's project, the namespace is the target's namespace or
-// (unqualified) the repository's default namespace. A qualified target
-// whose namespace differs from the repository's namespace is refused —
-// cross-platform access is read-only, so writing into another
-// platform's namespace is never allowed.
+// spec §3.2 + D6. Two paths:
+//
+//   - Repo context (no --project/--namespace): the project is the
+//     repository's project, the namespace is the target's namespace or
+//     (unqualified) the repository's default namespace. A qualified
+//     target whose namespace differs from the repository's namespace
+//     is refused — cross-platform access is read-only, so writing into
+//     another platform's namespace is never allowed.
+//   - Workspace-native (--project and/or --namespace given,
+//     sto:workspace-native-authoring): the draft targets a project of
+//     the workspace registry DIRECTLY from any directory. The explicit
+//     path never borrows from the repository: an explicit --project
+//     must be a REGISTERED project (the projects table of the
+//     workspace; see projectRegistered) and an explicit --namespace
+//     (or a qualified target) must supply the namespace — a bare
+//     --project has no default namespace and is refused (ADR-017 D6
+//     rejected --project as a repo override; the explicit pair is the
+//     cross-project slot D6 kept open). --namespace alone resolves the
+//     project from the repository context.
 //
 // The repository context gate (ADR-018): an EKA repository is a
 // directory tree carrying eka.yaml — when the walk-up from the current
 // directory finds no eka.yaml the tree is not an EKA repository and
-// the command is refused deterministically (run 'eka init' first). A
-// metadata repository that is not registered yet (or whose namespace
-// was never resolved) keeps the spec's hints.
-func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns string, err error) {
-	ns = ref.Namespace
+// the repo-context path refuses deterministically (run 'eka init'
+// first). The explicit path needs no repository at all. A metadata
+// repository that is not registered yet (or whose namespace was never
+// resolved) keeps the spec's hints.
+func resolveNewScope(r *runtime.Runtime, ref conformance.Reference, projectFlag, nsFlag string) (project, ns string, err error) {
 	abs, aerr := filepath.Abs(".")
 	if aerr != nil {
 		return "", "", fmt.Errorf("cannot resolve the current directory: %w", aerr)
@@ -298,6 +485,16 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns
 	if ferr != nil {
 		return "", "", ferr
 	}
+
+	// Workspace-native authoring: the explicit pair targets a
+	// registered project from any directory (the ADR-018 gate and the
+	// D6 cross-namespace refusal are repo-context rules and do not
+	// apply to a deliberate explicit target).
+	if projectFlag != "" || nsFlag != "" {
+		return resolveExplicitScope(r, projectFlag, nsFlag, ref.Namespace, repo, found)
+	}
+
+	ns = ref.Namespace
 	if !found {
 		// The repository context gate (ADR-018): without eka.yaml the
 		// tree is not an EKA repository — deterministic refusal, never
@@ -332,9 +529,79 @@ func resolveNewScope(r *runtime.Runtime, ref conformance.Reference) (project, ns
 	return project, ns, nil
 }
 
+// resolveExplicitScope resolves the project and namespace of the
+// workspace-native authoring path (--project/--namespace given), shared
+// by the single-target and the batch forms of `eka new`:
+//
+//   - --project P: P must be a project REGISTERED in the workspace (the
+//     projects table — the authoritative project list; authoring
+//     against an unknown project would scaffold drafts that cannot
+//     publish coherently), and the namespace must come from --namespace
+//     or the target's qualified namespace (refNS) — an explicit project
+//     has no default namespace outside its repository context, so a
+//     bare --project is a deterministic refusal, never a silent borrow
+//     from eka.yaml.
+//   - --namespace alone: the project resolves from the repository
+//     registered at the current directory (the same context the default
+//     path uses); outside a repository it is refused. --namespace alone
+//     also overrides the repository namespace deliberately — D6 guards
+//     only the implicit path.
+//   - the resolved namespace must be a valid EKA identifier (the
+//     eka.yaml identifier rule) — the explicit path validates it at
+//     scaffold time so the draft is publishable.
+func resolveExplicitScope(r *runtime.Runtime, projectFlag, nsFlag, refNS string, repo runtime.Repo, repoFound bool) (project, ns string, err error) {
+	if projectFlag != "" {
+		project = projectFlag
+		registered, rerr := projectRegistered(r, project)
+		if rerr != nil {
+			return "", "", rerr
+		}
+		if !registered {
+			return "", "", fmt.Errorf("refused: project %s is not registered in the workspace; run 'eka project list' to see registered projects, or register it with 'eka sync' / 'eka project register'", project)
+		}
+		if nsFlag == "" && refNS == "" {
+			return "", "", fmt.Errorf("refused: --project %s requires --namespace (an explicit project has no default namespace); pass --namespace <ns> to author workspace-natively", project)
+		}
+	} else {
+		// --namespace alone: the project still comes from the repository
+		// context (there is no registry lookup by namespace).
+		if !repoFound {
+			return "", "", fmt.Errorf("cannot resolve a project here; run inside a registered repository or pass --project <name>")
+		}
+		project = repo.ProjectID
+	}
+	ns = nsFlag
+	if ns == "" {
+		ns = refNS
+	}
+	if !metadata.ValidIdent(ns) {
+		return "", "", fmt.Errorf("refused: namespace %q is not a valid EKA identifier (lowercase letters, digits and single hyphens)", ns)
+	}
+	return project, ns, nil
+}
+
+// projectRegistered reports whether the project is registered in the
+// workspace registry (the projects table — the authoritative project
+// list of the workspace, populated by RegisterRepo/RegisterRepoMetadata
+// and auto-registration at sync).
+func projectRegistered(r *runtime.Runtime, project string) (bool, error) {
+	projects, err := r.Workspace.Projects()
+	if err != nil {
+		return false, fmt.Errorf("cannot read the workspace project registry: %w", err)
+	}
+	for _, p := range projects {
+		if p.ID == project {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // collectRelationships gathers the relationship targets of the five
 // --<field> flags into exchange.Relationships, in canonical field
 // order, each target stored verbatim (publish-time validation applies).
+// The flags are StringSlice: repeated occurrences and comma-joined
+// values both accumulate, so no target is silently dropped.
 func collectRelationships(cmd *cobra.Command) []exchange.Relationship {
 	var out []exchange.Relationship
 	for _, f := range []struct{ flag, rel string }{
@@ -344,8 +611,8 @@ func collectRelationships(cmd *cobra.Command) []exchange.Relationship {
 		{flagNewSupersedes, "supersedes"},
 		{flagNewAmends, "amends"},
 	} {
-		raw, _ := cmd.Flags().GetString(f.flag)
-		for _, part := range strings.Split(raw, ",") {
+		values, _ := cmd.Flags().GetStringSlice(f.flag)
+		for _, part := range values {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
@@ -526,16 +793,39 @@ the draft fails the single-file structural classification, an
 "invalid — N errors" marker (a draft is only truly validated at
 publish time).
 
+Filtering:
+  --provenance human|inferred|reconciled|all  filter by provenance (default all;
+     provenance is a top-level draft field, human default). In board/status
+     projections inferred/reconciled drafts are tagged [inferred]/[reconciled].
+
 Ordering is deterministic: project (by name), then type, then id.
 
 Exit codes:
   0  informational (also when the backlog is empty)
   2  internal error`,
 		Example: `  eka draft list
-  eka draft list --project atrium`,
+  eka draft list --project atrium
+  eka draft list --provenance inferred`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString(flagDraftListProject)
+			prov, _ := cmd.Flags().GetString(flagDraftListProvenance)
+			if prov != "" && prov != "all" && prov != "human" && prov != "inferred" && prov != "reconciled" {
+				return fmt.Errorf("draft list: --provenance must be human|inferred|reconciled|all, got %q", prov)
+			}
+			// provenanceFilterDefault is applied when flag absent: read from eka.yaml effective capture
+			if prov == "" {
+				if m, _, hasMeta, _ := metadata.Find("."); hasMeta {
+					_, _, _, defFilter := m.EffectiveCapture()
+					if defFilter != "" && defFilter != "all" {
+						prov = defFilter
+					} else {
+						prov = "all"
+					}
+				} else {
+					prov = "all"
+				}
+			}
 			s := styleFor(cmd)
 			// Informational command: never initializes the workspace.
 			// A missing workspace is simply an empty backlog.
@@ -546,7 +836,11 @@ Exit codes:
 			defer r.Close()
 			var drafts []runtime.Draft
 			if r.Exists() {
-				drafts, err = runtime.Authoring.Drafts(r, project)
+				if prov != "" && prov != "all" {
+					drafts, err = runtime.Authoring.DraftsByProvenance(r, project, prov)
+				} else {
+					drafts, err = runtime.Authoring.Drafts(r, project)
+				}
 				if err != nil {
 					return err
 				}
@@ -556,12 +850,14 @@ Exit codes:
 		},
 	}
 	cmd.Flags().String(flagDraftListProject, "", "project scope (default: all projects)")
+	cmd.Flags().String(flagDraftListProvenance, "all", "filter by provenance: human|inferred|reconciled|all (default all; eka.yaml capture.provenanceFilterDefault applies when explicit)")
 	return cmd
 }
 
 // renderDraftList renders the draft backlog deterministically: project
 // group headers (•), then per-draft rows (• type:id (namespace)
-// updated <mtime> [invalid marker]), then the summary counts.
+// updated <mtime> [provenance tag] [invalid marker]), then the summary counts.
+// Provenance tags: [inferred] and [reconciled] for non-human drafts; human is untagged (default).
 func renderDraftList(s *ui.Style, r *runtime.Runtime, drafts []runtime.Draft, project string) {
 	fmt.Fprintln(s.W, s.Accent("Drafts"))
 	scope := project
@@ -581,9 +877,16 @@ func renderDraftList(s *ui.Style, r *runtime.Runtime, drafts []runtime.Draft, pr
 		if ns == "" {
 			ns = "?"
 		}
+		provTag := ""
+		switch d.Provenance {
+		case "inferred":
+			provTag = " " + s.Warning("[inferred]")
+		case "reconciled":
+			provTag = " " + s.Info("[reconciled]")
+		}
 		marker := draftValidationMarker(r, s, d)
-		fmt.Fprintf(s.W, "  %s %s:%s     (%s)     updated %s%s\n",
-			ui.IconBullet, d.Type, d.ID, ns, d.Updated, marker)
+		fmt.Fprintf(s.W, "  %s %s:%s     (%s)     updated %s%s%s\n",
+			ui.IconBullet, d.Type, d.ID, ns, d.Updated, provTag, marker)
 	}
 	ui.NewSummary(s).
 		Add("Drafts", fmt.Sprintf("%d (%d projects)", len(drafts), projects)).
@@ -697,8 +1000,8 @@ Exit codes:
 // knowledge.
 func newPublishCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "publish <target>",
-		Short: "Publish a draft as an immutable knowledge object",
+		Use:   "publish <target> | --all | --pending",
+		Short: "Publish a draft (or all pending drafts) as immutable knowledge objects",
 		Long: `Validate one draft at CKO level and persist it as an immutable
 Canonical Knowledge Object in the workspace database, then remove the
 draft file (all-or-nothing: a failed validation or insert keeps the
@@ -710,6 +1013,38 @@ project is the repository registered at the current directory; a
 target namespace, when present, must equal the draft's frontmatter
 namespace.
 
+Batch publishing (--all | --pending — the two flags are synonyms):
+publish EVERY pending draft of the repository's project in topological
+order: a draft is published only after every draft it references
+(depends-on/derives-from/validates/supersedes/amends/discusses/
+replies-to targets that are pending drafts) is published, so the
+published set satisfies the resolution rules (rule 8's tkt -> ctr
+chain among them). Ties are broken by identity, so the order is
+deterministic for a given backlog.
+
+The batch run refuses BEFORE publishing anything when:
+  - the pending draft graph contains a cycle (the refusal names the
+    drafts that cannot be ordered; a self-reference is a cycle);
+  - a draft references a target that is neither a pending draft nor an
+    object already in the canonical store (the refusal names the draft
+    and the target) — stricter than rule 5's draft tolerance, because
+    the published set must be coherent.
+
+The publish loop is per-draft atomic: a draft failing CKO-level
+validation stops the run — the objects already published stay
+(immutability), the failing draft and everything ordered after it stay
+pending, and the failure report names them. An empty backlog is
+informational: nothing to publish, exit 0.
+
+Scoped publishing: --only <type:id,...> (repeatable, comma-separated;
+"<ns>/<type>:<id>" or "<type>:<id>") restricts the batch to the listed
+drafts. The preflight is atomic over the selection: unknown entries,
+cycles within the selection, references to nothing, and references to
+pending-but-unselected drafts all refuse BEFORE anything publishes
+(the last names the missing dependency with the hint to include it).
+--dry-run runs the same preflight and prints the topological order
+without publishing anything. --only/--dry-run require --all/--pending.
+
 The command requires an EKA repository: a directory tree carrying
 eka.yaml (run 'eka init' to create one — outside an EKA repository
 the command is refused).
@@ -717,21 +1052,60 @@ the command is refused).
 The instance version is auto-assigned as the line's highest + 1
 (1 for a new line), honoring an instance-version in the draft
 frontmatter when present; --instance-version overrides both and must
-exceed the line's highest (forward-only).
+exceed the line's highest (forward-only). --instance-version is a
+single-target flag: with --all/--pending versions are auto-assigned
+per draft, and the combination is a usage error instead of a silent
+drop.
 
 Publish never auto-syncs: published objects are workspace-native and
 have no repository to push. 'eka sync' remains the explicit transport
 step for repository-attributed knowledge.
 
 Exit codes:
-  0  published (form + instance version + object hash)
-  1  validation failure, malformed draft, draft not found, or not an
-     EKA repository
+  0  published (form + instance version + object hash); --all with an
+     empty backlog (informational); --dry-run (order printed, nothing
+     published)
+  1  validation failure, malformed draft, draft not found, batch cycle,
+     unresolved-reference, --only unknown-entry or
+     pending-but-unselected-dependency refusal, or not an EKA repository
   2  usage or internal error`,
 		Example: `  eka publish feather/sto:my-item
-  eka publish feather/sto:my-item --instance-version 2`,
-		Args: cobra.ExactArgs(1),
+  eka publish feather/sto:my-item --instance-version 2
+  eka publish --all
+  eka publish --pending
+  eka publish --all --only sto:a,sto:b
+  eka publish --all --dry-run`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool(flagPublishAll)
+			pending, _ := cmd.Flags().GetBool(flagPublishPending)
+			if all || pending {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Batch publishing: --all / --pending (synonyms) publish
+			// every pending draft of the project in topological order.
+			// --instance-version is single-target only (versions are
+			// auto-assigned per draft in the batch) and is refused
+			// instead of silently dropped.
+			if all, _ := cmd.Flags().GetBool(flagPublishAll); all {
+				if cmd.Flags().Changed(flagPublishVersion) {
+					return fmt.Errorf("publish: --instance-version is a single-target flag and is not available with --all/--pending; versions are auto-assigned per draft")
+				}
+				return runPublishBatch(cmd)
+			}
+			if pending, _ := cmd.Flags().GetBool(flagPublishPending); pending {
+				if cmd.Flags().Changed(flagPublishVersion) {
+					return fmt.Errorf("publish: --instance-version is a single-target flag and is not available with --all/--pending; versions are auto-assigned per draft")
+				}
+				return runPublishBatch(cmd)
+			}
+			// --only / --dry-run are batch scopers: without
+			// --all/--pending there is no batch to scope.
+			if cmd.Flags().Changed(flagPublishOnly) || cmd.Flags().Changed(flagPublishDryRun) {
+				return fmt.Errorf("publish: --only and --dry-run require --all/--pending (there is no batch to scope for a single target)")
+			}
 			target := args[0]
 			if _, err := parseDraftTarget(target); err != nil {
 				return fmt.Errorf("publish: %w", err) // Exit 2: usage.
@@ -775,12 +1149,14 @@ Exit codes:
 				if errors.As(err, &pe) {
 					printCKOReport(styleFor(cmd), target, pe.Report)
 					fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", err)
+					telemetryAutoEmit(telKindGateRefusal, target, "", telGateConformance, err.Error())
 					return &exitError{code: exitFail}
 				}
 				var se *conformance.ScanError
 				if errors.As(err, &se) {
 					printScanReport(styleFor(cmd), target, se)
 					fmt.Fprintf(cmd.ErrOrStderr(), "eka: %s\n", err)
+					telemetryAutoEmit(telKindGateRefusal, target, "", telGateConformance, err.Error())
 					return &exitError{code: exitFail}
 				}
 				var dne *runtime.DraftNotFoundError
@@ -808,10 +1184,18 @@ Exit codes:
 			if res.Note != "" {
 				fmt.Fprintf(s.W, "  %s %s\n", ui.IconBullet, s.Info(res.Note))
 			}
+			// Opt-in telemetry: a successful publish is a write (the
+			// session's first-write when it has none yet). Best-effort,
+			// it never changes the exit code or the output.
+			telemetryAutoEmit(telKindWrite, res.Form, "", "", "")
 			return nil
 		},
 	}
-	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign)")
+	cmd.Flags().Int(flagPublishVersion, 0, "explicit instance version (must exceed the line's highest; default: auto-assign; not available with --all/--pending)")
+	cmd.Flags().Bool(flagPublishAll, false, "publish every pending draft of the project in topological order (referenced drafts first)")
+	cmd.Flags().Bool(flagPublishPending, false, "synonym of --all: publish every pending draft of the project in topological order")
+	cmd.Flags().StringSlice(flagPublishOnly, nil, "restrict the batch to the listed drafts (repeatable, comma-separated: <type>:<id> or <ns>/<type>:<id>); requires --all/--pending")
+	cmd.Flags().Bool(flagPublishDryRun, false, "run the batch preflight and print the topological order without publishing; requires --all/--pending")
 	return cmd
 }
 

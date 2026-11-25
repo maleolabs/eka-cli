@@ -1,0 +1,1 @@
+{"description":"Skill/command shr untuk agen: EKA-to-EKA builder skill + spike audited non-EKA (audit codebase biasa jadi shr L0-L2).","acceptanceCriteria":"Skill shr-builder terinstall, eka shr build jalan untuk EKA dan non-EKA (via --provenance audited spike), docs/skill pack, agen bisa scan title/description via MCP tanpa repo sumber."}

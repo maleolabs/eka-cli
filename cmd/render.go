@@ -12,6 +12,12 @@ import (
 // on the root command.
 const flagVerbose = "verbose"
 
+// flagVersion is the persistent top-level --version flag added on the
+// root command: prints the CLI version (the same single source `eka
+// version` uses — the ldflags-injected `version` variable) and exits.
+// It is handled in the root RunE before the landing.
+const flagVersion = "version"
+
 // styleFor builds the presentation Style for one command execution
 // from the writer and the --verbose flag. All command renderers take
 // the Style explicitly; there is no ambient state.

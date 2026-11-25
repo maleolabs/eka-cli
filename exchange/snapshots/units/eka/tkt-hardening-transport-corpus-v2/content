@@ -1,0 +1,10 @@
+{
+  "commands": "\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n",
+  "projectedStatus": "",
+  "retirement": {
+    "by": "Marij Mokoginta",
+    "byKind": "user",
+    "date": "2026-11-19",
+    "reason": "Ticket shell with no referenced work item: a tkt projects the state of the work it names, and this one named nothing, so it carried no knowledge. The work it was meant to point at is recorded as a work item (td- or ts-) under the same container."
+  }
+}

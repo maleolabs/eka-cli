@@ -1,0 +1,1 @@
+{"description":"Add scoped publish to `eka publish --all` with dry-run and atomic preflight","acceptanceCriteria":"- `--only` filter by namespace/ID list.","impact":"Prevents accidental mixed-depth publishing."}

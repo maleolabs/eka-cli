@@ -1,0 +1,1 @@
+{"notes":["[role: code-review] self-review (mode: solo): Go AST parsing deterministic, bounded, cache atomic write, no RAG primary, provenance present"],"role":"review","verdict":"approve"}

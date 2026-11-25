@@ -1,0 +1,1 @@
+{"notes":["QA approve with observations (non-blocking): view Operations 3 groups code OK, domain/get via core v1.9.1 verified; snapshot view 0 due to no docs file expected. MCP fetch by ID+versi via get/domain parity OK."],"role":"review","verdict":"approve"}

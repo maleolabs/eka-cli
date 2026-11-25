@@ -1,0 +1,1 @@
+{"description":"Add contentState lifecycle to `eka transition` (draft -\u003e review -\u003e approved/accepted) for knowledge artifacts, so authors need not hand-edit draft JSON.","acceptanceCriteria":"`eka transition adr:X accepted` works; no manual JSON editing for contentState."}

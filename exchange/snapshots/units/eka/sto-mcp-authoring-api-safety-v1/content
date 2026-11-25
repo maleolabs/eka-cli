@@ -1,0 +1,1 @@
+{"description":"Align MCP authoring with shared runtime API and safe approval boundaries.","acceptanceCriteria":"draft_update uses runtime-owned API or is removed; optimistic concurrency; no arbitrary authority impersonation; high-impact writes gated; external publish isolated or disabled by default."}

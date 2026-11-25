@@ -1,0 +1,1 @@
+{"changes":["eka-mcp/internal/mcp/server.go, eka-mcp/internal/eka/capability.go"],"role":"implementation","summary":"[role: backend] Registered direct MCP code_context tool with parity request fields, protocol stdout purity, deterministic errors, no CLI proxy, cache derived in user cache","tests":["internal/mcp/server_test.go, internal/eka/capability_test"]}

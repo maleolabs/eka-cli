@@ -1,0 +1,1 @@
+{"notes":["Code-review observations: hardcoded domainTokens in CLI vs core registry, records alias, view grouping — out-of-scope for MCP item (generic MCP via core already handles shr), deferred to tech-debt. MCP bump verified, no server code change needed."],"role":"review","verdict":"approve"}

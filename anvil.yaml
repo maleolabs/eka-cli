@@ -8,7 +8,13 @@ artifact:
         - install.ps1
         - eka
     include: []
+lifecycle:
+    platform_sync:
+        args:
+            - scripts/platform-sync.sh
+        command: sh
+        description: Symlink Layer-2 capture hooks (pre-commit, pre-push) from eka-standard/templates/hooks to .git/hooks
 project:
     description: EKA CLI — the official command-line interface for the EKA engineering knowledge standard
     name: eka-cli
-    version: 1.0.0
+    version: 1.27.2

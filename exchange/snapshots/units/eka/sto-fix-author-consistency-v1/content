@@ -1,0 +1,1 @@
+{"description":"Unify author identity: `eka new` scaffolds `by: Engineering` (placeholder) while `eka note`/`eka transition` use `git config user.name`. Default `eka new` to git config with `--by` override.","acceptanceCriteria":"`eka new` change-log `by` == `git config user.name`, overridable with --by."}

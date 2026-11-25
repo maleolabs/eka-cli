@@ -24,16 +24,30 @@ import (
 // (the ui.Style handles color automatically); on a TTY the same
 // structure carries colors.
 func renderContext(s *ui.Style, obj *contexts.Object, projectID string) {
-	ui.NewHeader(s, "Context").
+	h := ui.NewHeader(s, "Context").
 		Add("Subject", obj.Focus.CanonicalForm).
 		Add("Project", projectID).
 		Add("Depth", obj.Depth).
 		Add("Domain", obj.Focus.EngineeringDomain).
 		Add("Stratum", fmt.Sprintf("%d", obj.Focus.Stratum)).
 		Add("State", contextFocusState(&obj.Focus.StateVector)).
-		Add("Object Hash", obj.Focus.ObjectHash).
-		Pipeline("Context").
-		Render()
+		Add("Object Hash", obj.Focus.ObjectHash)
+	if obj.Focus.Provenance != "" {
+		h.Add("Provenance", obj.Focus.Provenance)
+	}
+	if obj.Focus.Confidence != nil {
+		h.Add("Confidence", fmt.Sprintf("%.2f", *obj.Focus.Confidence))
+	}
+	if obj.Focus.SourcePromptHash != "" {
+		h.Add("SourcePromptHash", shortHash(obj.Focus.SourcePromptHash))
+	}
+	if obj.Focus.SourceCommitSha != "" {
+		h.Add("SourceCommitSha", obj.Focus.SourceCommitSha)
+	}
+	if obj.Focus.CaptureMeta != nil && obj.Focus.CaptureMeta.Classifier != "" {
+		h.Add("Classifier", obj.Focus.CaptureMeta.Classifier)
+	}
+	h.Pipeline("Context").Render()
 
 	if obj.Summary.Sections == 0 {
 		// No relationship sections at all (local depth): the calm
@@ -127,6 +141,27 @@ func renderContext(s *ui.Style, obj *contexts.Object, projectID string) {
 		Add("Depth", obj.Depth).
 		Add("Next", "eka get "+obj.Focus.CanonicalForm).
 		Render()
+}
+
+// renderConstraints renders the Constraints Object of `eka context --for`
+// as the human projection: the path header, then one bullet line per
+// constraint (canonical form, domain, stratum) in the engine's
+// deterministic order. The empty set prints a clear "no constraints bind
+// <path>" line — a calm result, exit 0, never an error.
+func renderConstraints(s *ui.Style, obj constraintsObject) {
+	path := obj.Path
+	if path == "" {
+		path = "."
+	}
+	if len(obj.Constraints) == 0 {
+		fmt.Fprintf(s.W, "%s\n", s.Dim(fmt.Sprintf("no constraints bind %s", path)))
+		return
+	}
+	fmt.Fprintf(s.W, "%s\n", s.Accent("Constraints for "+path))
+	for _, e := range obj.Constraints {
+		fmt.Fprintf(s.W, "%s %s  %s\n", ui.IconBullet, e.CanonicalForm,
+			s.Dim(fmt.Sprintf("(%s, stratum %d)", e.Domain, e.Stratum)))
+	}
 }
 
 // contextSection renders one section heading of the context

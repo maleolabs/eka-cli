@@ -1,0 +1,1 @@
+{"objective":"Execution container for the plugin install + trust feature.","workItems":"sto:plugin-registry-install, sto:plugin-lifecycle, sto:plugin-trust-model, sto:mcp-manifest-capabilities, sto:mcp-release-ci","changeLog":""}

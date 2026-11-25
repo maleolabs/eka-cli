@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // This file implements Stage 3 of the bootstrap model: the Interactive
@@ -35,6 +38,10 @@ const (
 	// QGit asks whether to run `git init`. Asked only when the target is
 	// not already a git repository and a git executable is available.
 	QGit QuestionKind = "git"
+	// QAgentsMD asks whether to manage the AGENTS.md workflow-context
+	// block. Always asked last (opt-in confirm, default yes); skipped
+	// when fixed by flag.
+	QAgentsMD QuestionKind = "agents-md"
 )
 
 // Question is one wizard prompt: what to ask, how to word it, and the
@@ -53,6 +60,9 @@ type Answers struct {
 	Namespace string
 	// InitGit requests `git init` in the target.
 	InitGit bool
+	// AgentsMD requests AGENTS.md workflow-context management
+	// (create/merge the marked block, never touching user content).
+	AgentsMD bool
 	// Interactive reports whether the answers came from an interactive
 	// session (affects plan wording for skipped git init).
 	Interactive bool
@@ -60,10 +70,12 @@ type Answers struct {
 
 // PreAnswers are answers fixed before the wizard runs (flag values in
 // bootstrap.Options). A non-empty Project or Namespace fixes that answer:
-// the wizard skips the corresponding question entirely.
+// the wizard skips the corresponding question entirely. A non-nil
+// AgentsMD fixes the agent-context answer the same way.
 type PreAnswers struct {
 	Project   string
 	Namespace string
+	AgentsMD  *bool
 }
 
 // fallbackName is used when no usable name can be derived from the target
@@ -147,13 +159,14 @@ func DefaultAnswers(d *Discovery) Answers {
 }
 
 // NeededQuestions returns the wizard questions in fixed order: the
-// project id, then the namespace, then git init. Project and namespace
-// are always asked — the project id is the repository identity in
-// eka.yaml and the namespace question's default is the answered project
-// id (sequential adaptivity applied by Ask). The git question is asked
-// only when the target is not already a git repository and a git
-// executable is available. The function is pure (no I/O) so adaptivity
-// is unit testable.
+// project id, then the namespace, then git init, then the AGENTS.md
+// workflow-context confirm. Project and namespace are always asked —
+// the project id is the repository identity in eka.yaml and the
+// namespace question's default is the answered project id (sequential
+// adaptivity applied by Ask). The git question is asked only when the
+// target is not already a git repository and a git executable is
+// available. The agent-context question is always asked last. The
+// function is pure (no I/O) so adaptivity is unit testable.
 func NeededQuestions(d *Discovery) []Question {
 	qs := []Question{
 		{Kind: QProject, Prompt: "Project id", Default: defaultProject(d)},
@@ -162,6 +175,7 @@ func NeededQuestions(d *Discovery) []Question {
 	if !d.IsGitRepo && d.GitAvailable {
 		qs = append(qs, Question{Kind: QGit, Prompt: "Initialize git repository?", Default: "y"})
 	}
+	qs = append(qs, Question{Kind: QAgentsMD, Prompt: "Manage AGENTS.md workflow context?", Default: "y"})
 	return qs
 }
 
@@ -195,6 +209,12 @@ func Ask(d *Discovery, r io.Reader, w io.Writer, pre PreAnswers) (Answers, error
 			a.Namespace = askNamespace(sc, w, a.Project)
 		case QGit:
 			a.InitGit = askYesNo(sc, w, q, true)
+		case QAgentsMD:
+			if pre.AgentsMD != nil {
+				a.AgentsMD = *pre.AgentsMD
+				continue
+			}
+			a.AgentsMD = askYesNo(sc, w, q, true)
 		}
 	}
 	return a, nil
@@ -212,7 +232,7 @@ func askProject(sc *bufio.Scanner, w io.Writer, def string) string {
 		if IsValidIdent(answer) {
 			return answer
 		}
-		fmt.Fprintf(w, "invalid project id %q — use lowercase letters, digits and hyphens only\n", answer)
+		wizInvalid(w, "invalid project id %q — use lowercase letters, digits and hyphens only", answer)
 	}
 }
 
@@ -228,18 +248,60 @@ func askNamespace(sc *bufio.Scanner, w io.Writer, def string) string {
 		if isValidNamespace(answer) {
 			return answer
 		}
-		fmt.Fprintf(w, "invalid namespace %q — use lowercase letters, digits and hyphens only\n", answer)
+		wizInvalid(w, "invalid namespace %q — use lowercase letters, digits and hyphens only", answer)
 	}
+}
+
+// Wizard prompt styling follows the eka-cli visual language with zero
+// new dependencies: blank line between questions (section spacing), a
+// `>` marker, the label dimmed and the default bright white. Colors render only when w
+// is a real terminal — piped output stays byte-deterministic. The input
+// echo itself is terminal-controlled and keeps the terminal default.
+const (
+	wizDim    = "38;5;245"
+	wizWhite  = "97"
+	wizAccent = "38;5;75"
+	wizError  = "38;5;167"
+)
+
+// wizColor reports whether prompt colors may be emitted on w.
+func wizColor(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// wizPaint wraps text in the SGR code when colors are enabled.
+func wizPaint(w io.Writer, code, text string) string {
+	if !wizColor(w) {
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+
+// wizPrompt renders one prompt line: "> label [default]: " with the
+// marker accented, the label dimmed and the default bright white.
+func wizPrompt(w io.Writer, label, def string) {
+	mark := wizPaint(w, wizAccent, ">")
+	name := wizPaint(w, wizDim, label)
+	suffix := ""
+	if def != "" {
+		suffix = " " + wizPaint(w, wizWhite, "["+def+"]")
+	}
+	fmt.Fprintf(w, "\n%s %s%s: ", mark, name, suffix)
+}
+
+// wizInvalid renders a validation failure in error red on TTY.
+func wizInvalid(w io.Writer, format string, args ...any) {
+	fmt.Fprintf(w, wizPaint(w, wizError, format+"\n"), args...)
 }
 
 // askLine prints the prompt and reads one line. Empty input or a closed
 // stream yields the default.
 func askLine(sc *bufio.Scanner, w io.Writer, q Question, def string) string {
-	prompt := q.Prompt
-	if def != "" {
-		prompt += " [" + def + "]"
-	}
-	fmt.Fprintf(w, "%s: ", prompt)
+	wizPrompt(w, q.Prompt, def)
 	if !sc.Scan() {
 		fmt.Fprintln(w)
 		return def
@@ -254,11 +316,11 @@ func askLine(sc *bufio.Scanner, w io.Writer, q Question, def string) string {
 // askYesNo prints a y/n prompt and reads the answer. Empty input or a
 // closed stream yields the default.
 func askYesNo(sc *bufio.Scanner, w io.Writer, q Question, def bool) bool {
-	suffix := " [y/N]"
+	suffix := "y/N"
 	if def {
-		suffix = " [Y/n]"
+		suffix = "Y/n"
 	}
-	fmt.Fprintf(w, "%s%s: ", q.Prompt, suffix)
+	wizPrompt(w, q.Prompt, suffix)
 	if !sc.Scan() {
 		fmt.Fprintln(w)
 		return def

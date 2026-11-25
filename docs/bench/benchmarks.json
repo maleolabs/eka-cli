@@ -1,0 +1,22 @@
+{
+  "schema": "eka/benchmarks/1",
+  "statistic": "min",
+  "runs": 5,
+  "os": "Linux",
+  "kernel": "7.3.3-200.fc44.x86_64",
+  "cpu": "Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz",
+  "cores": 8,
+  "goVersion": "go1.26.10-X:nodwarf5",
+  "binaryBytes": 22817565,
+  "codegraphCacheKiB": 420,
+  "scenarios": [
+    {"id": "startup-version", "command": "eka version", "ms": 18},
+    {"id": "validate", "command": "eka validate .", "ms": 26},
+    {"id": "sync", "command": "eka sync", "ms": 45},
+    {"id": "view-execution", "command": "eka view execution", "ms": 25},
+    {"id": "status", "command": "eka status", "ms": 34},
+    {"id": "code-context-cold", "command": "eka code-context \"context engine\" --limit 8", "ms": 222},
+    {"id": "code-context-warm", "command": "eka code-context \"context engine\" --limit 8", "ms": 39},
+    {"id": "code-discover", "command": "eka code-discover \"context engine\" --limit 8", "ms": 43}
+  ]
+}

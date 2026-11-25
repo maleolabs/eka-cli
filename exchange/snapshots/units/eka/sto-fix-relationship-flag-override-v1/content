@@ -1,0 +1,1 @@
+{"description":"Fix the relationship flag override: repeated `--derives-from`/`--depends-on` flags silently override (only the last kept) instead of accumulating or erroring. Accept comma-joined and repeated flags consistently.","acceptanceCriteria":"`eka new x --depends-on a --depends-on b` records BOTH a and b; no silent drop."}

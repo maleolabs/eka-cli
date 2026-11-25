@@ -1,0 +1,1 @@
+{"description":"Register direct MCP code_context tool backed by shared implementation.","acceptanceCriteria":"MCP exposes parity request fields and output with CLI, preserves protocol stdout purity, deterministic errors, and no CLI proxy dependency."}

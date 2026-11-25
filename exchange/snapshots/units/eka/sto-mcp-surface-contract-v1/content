@@ -1,0 +1,1 @@
+{"description":"Refine MCP tool catalog, schemas, descriptors, risk classes, and read/write policy.","acceptanceCriteria":"Single authoritative descriptors; strict schemas; read/local-write/canonical-write/external-side-effect classes; split publish modes; deprecated view not advertised; logical paths; approval policy tests."}

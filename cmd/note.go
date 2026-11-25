@@ -90,6 +90,13 @@ Without it the empty per-role template is scaffolded.
 The change-log authority (by) comes from --by, or defaults to
 ` + "`git config user.name`" + `.
 
+Review convention (phase 2, per-reviewer trail): one cmt- note per reviewer,
+grouped by author. Verdict is advisory (approve / changes-requested), rendered
+as a badge with the note-state mark (open / resolved / dismissed). Agent identity
+uses --by with --by-kind agent|worker (never impersonate a user). Only
+` + "`note-state: resolved`" + ` releases the done gate — ` + "`dismissed`" + ` does not (no dismiss command).
+
+
 Exit codes:
   0  note draft created
   1  refused (subject unresolvable, repository or workspace state)

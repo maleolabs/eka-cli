@@ -1,0 +1,1 @@
+{"description":"Deliver EKA skills and command guidance through MCP resources without mandatory per-agent installation.","acceptanceCriteria":"Compact manifest/index and bootstrap resource; lazy versioned skill/template/command reads; annotations; resource loading/fallback documented and tested; guidance remains resource content and operations remain tools."}

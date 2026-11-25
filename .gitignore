@@ -7,8 +7,9 @@
 *.test
 *.out
 
-# Local EKA workspace registration identity (dev-time, machine-specific)
-/eka.yaml
+# Local EKA execution-state notes (dev-time, machine-specific; canonical
+# state lives in the workspace store)
+/.eka/
 
 # EKA runtime transient state (sync staging, never committed)
 **/exchange/.snapshots-tmp/

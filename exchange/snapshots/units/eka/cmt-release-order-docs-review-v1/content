@@ -1,0 +1,1 @@
+{"notes":["review: approve — CONTRIBUTING.md operationalizes one-way order with validation checklist (gh release view, go list -m/asset, no pseudo-version), explicit go get bump steps, Go module rules (tag immutability, -rc, /v2); no R0 violation, go vet PASS, eka validate PASS; style consistent with prior Release process section"],"role":"review","verdict":"approve"}

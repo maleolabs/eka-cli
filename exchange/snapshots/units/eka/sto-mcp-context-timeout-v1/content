@@ -1,0 +1,1 @@
+{"description":"Implement timeout handling and pagination for MCP context/domain tools on large workspaces","acceptanceCriteria":"- Bounded response for large workspaces (500+ objects).","impact":"MCP agents can complete orientation without transport timeouts."}

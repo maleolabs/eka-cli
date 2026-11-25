@@ -1,0 +1,1 @@
+{"description":"CLI polish: add `eka --version` flag; investigate `eka get --compact` empty output on some types; make hidden constraints (ticket projection header, relationship comma-join) discoverable via help/errors.","acceptanceCriteria":"`eka --version` works; --compact behaves or is documented; hidden constraints are discoverable."}

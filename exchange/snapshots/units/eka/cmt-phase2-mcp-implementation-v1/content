@@ -1,0 +1,1 @@
+{"changes":["No code change in eka-cli — eka-mcp tool and skill pack updates are in eka-mcp repo"],"role":"implementation","summary":"Deferred: phase2-mcp is eka-mcp read-only review-trail tool + skill pack docs — belongs to eka-mcp repo, server stays read-only via runtime.Open, not executable from eka-cli","tests":["Not applicable — deferred to eka-mcp"]}

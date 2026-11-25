@@ -1,0 +1,1 @@
+{"description":"Verify code-context contract, fallback boundary, and RAG exclusion.","acceptanceCriteria":"Tests cover L0-L3, depth orthogonality, invalid/conflicting inputs, unsupported language or symbol miss, low-confidence fallback, and prove RAG is not canonical or primary."}

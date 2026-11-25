@@ -6,12 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"unsafe"
 
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/metadata"
 )
 
@@ -47,7 +49,7 @@ func TestLanding(t *testing.T) {
 		"Commands",
 		"Help",
 		"Version",
-		"dev (EKA standard 1.0)",
+		"dev (EKA standard " + exchange.SpecificationVersion + ")",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("landing missing %q, got:\n%s", want, out)
@@ -65,14 +67,14 @@ func TestVersionCommand(t *testing.T) {
 	if code != 0 {
 		t.Errorf("version: exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "eka dev") || !strings.Contains(out, "EKA standard 1.0") {
+	if !strings.Contains(out, "eka dev") || !strings.Contains(out, "EKA standard "+exchange.SpecificationVersion) {
 		t.Errorf("version output incomplete: %q", out)
 	}
 	code, out, _ = runIn([]string{"version", "--help"})
 	if code != 0 {
 		t.Errorf("version --help: exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "Print the CLI build version and the EKA standard version") {
+	if !strings.Contains(out, "Print the EKA version axes this CLI reports") {
 		t.Errorf("version --help missing description: %q", out)
 	}
 }
@@ -88,9 +90,20 @@ func TestExitCodeUsage(t *testing.T) {
 	if !strings.Contains(errText, "init") {
 		t.Errorf("unknown command message must mention the init command, got %q", errText)
 	}
-	// Cobra sorts command lists alphabetically (EnableCommandSorting);
-	// the message must list exactly the registered commands.
-	if !strings.Contains(errText, "available commands: context, discard, draft, edit, export, feedback, get, import, init, integrity, new, note, project, publish, snapshot, status, sync, transition, update, validate, version, view, watch") {
+	// Cobra sorts command lists alphabetically (EnableCommandSorting); the
+	// message must list every registered command. Comparing against a
+	// hand-maintained string made this test break on every new command,
+	// which taught nothing and cost an edit each time — derive the expected
+	// set from the command tree instead.
+	var want []string
+	for _, c := range newRootCommand().Commands() {
+		if c.Name() == "help" || c.Name() == "completion" || c.Hidden {
+			continue
+		}
+		want = append(want, c.Name())
+	}
+	sort.Strings(want)
+	if !strings.Contains(errText, "available commands: "+strings.Join(want, ", ")) {
 		t.Errorf("unknown command message must list the available commands, got %q", errText)
 	}
 	code, _, _ = runIn([]string{"validate", "a", "b"})
@@ -162,7 +175,7 @@ func TestValidateValidRepoExitsZero(t *testing.T) {
 	if !strings.Contains(text, "↓ Validate") {
 		t.Errorf("output must contain the validate pipeline header:\n%s", text)
 	}
-	if !strings.Contains(text, "Knowledge   EKA v1.0") {
+	if !strings.Contains(text, "Knowledge   EKA v"+exchange.SpecificationVersion) {
 		t.Errorf("output must identify the knowledge standard:\n%s", text)
 	}
 }
@@ -429,6 +442,11 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	if !strings.Contains(text, "generate file: eka.yaml (repository identity)") {
 		t.Errorf("output must contain the identity plan line:\n%s", text)
 	}
+	// The standard declaration is planned right after the identity file
+	// (order: dir → eka.yaml → EKA → git → validate).
+	if !strings.Contains(text, "generate file: EKA (standard declaration)") {
+		t.Errorf("output must contain the standard declaration plan line:\n%s", text)
+	}
 	if !strings.Contains(text, "Dry-run: no changes were written.") {
 		t.Errorf("output must state that nothing was written:\n%s", text)
 	}
@@ -470,16 +488,27 @@ func TestInitCurrentDirectory(t *testing.T) {
 	if !strings.Contains(text, "Validation: PASS") {
 		t.Errorf("output must report PASS:\n%s", text)
 	}
-	// Identity-only: exactly eka.yaml is generated.
+	// Identity-only: eka.yaml + the EKA standard declaration are
+	// generated, nothing else.
 	if _, err := os.Stat(filepath.Join(dir, "eka.yaml")); err != nil {
 		t.Errorf("expected the generated identity file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "EKA")); err != nil {
+		t.Errorf("expected the generated EKA standard declaration: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "eka.yaml" {
-		t.Errorf("generated tree must be eka.yaml only, found: %v", entries)
+	if len(entries) != 2 {
+		t.Errorf("generated tree must be eka.yaml + EKA only, found: %v", entries)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	if !names["eka.yaml"] || !names["EKA"] {
+		t.Errorf("generated tree must contain eka.yaml and EKA, found: %v", entries)
 	}
 	// The generated repository must pass `eka validate`.
 	code, text, _ = runIn([]string{"validate", dir})
@@ -554,6 +583,83 @@ func TestInitWritesEkaYAML(t *testing.T) {
 	}
 }
 
+// TestInitWritesStandardDeclaration verifies `eka init` writes the root
+// EKA standard declaration file (sto:init-standard-declaration): the
+// compact consumer summary starting with "EKA STANDARD", carrying the
+// correct `Version X.Y` line equal to the CLI's reported standard
+// version, byte-identical across runs (deterministic).
+func TestInitWritesStandardDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	chdirInto(t, dir)
+	code, text, errText := runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "EKA"))
+	if err != nil {
+		t.Fatalf("generated EKA declaration missing: %v", err)
+	}
+	if !strings.HasPrefix(string(data), "EKA STANDARD\nVersion "+standardVersion+"\n") {
+		t.Errorf("EKA declaration must start with the EKA STANDARD header and the Version %s line:\n%s",
+			standardVersion, data[:80])
+	}
+	// The dry-run reports the same file deterministically and writes
+	// nothing.
+	fresh := t.TempDir()
+	chdirInto(t, fresh)
+	_, dryRunOut, _ := runIn([]string{"init", "--dry-run"})
+	if !strings.Contains(dryRunOut, "generate file: EKA (standard declaration)") {
+		t.Errorf("dry-run output must plan the EKA generation:\n%s", dryRunOut)
+	}
+	if _, err := os.Stat(filepath.Join(fresh, "EKA")); !os.IsNotExist(err) {
+		t.Error("dry-run must not write the EKA declaration")
+	}
+	// Deterministic: two real runs produce identical EKA bytes.
+	_, _, _ = runIn([]string{"init", "--dry-run"})
+	_, _, _ = runIn([]string{"init", "--dry-run"})
+	if data2, _ := os.ReadFile(filepath.Join(dir, "EKA")); !bytes.Equal(data, data2) {
+		t.Error("EKA declaration must be deterministic across runs")
+	}
+}
+
+// TestInitBackfillsMissingDeclaration verifies the re-run contract on an
+// already-initialized repository (sto:init-standard-declaration): a
+// missing EKA declaration is backfilled; an identical one is reused (the
+// tree stays byte-identical); a differing one is never replaced
+// silently in non-interactive mode.
+func TestInitBackfillsMissingDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	chdirInto(t, dir)
+	if code, _, errText := runIn([]string{"init"}); code != 0 {
+		t.Fatalf("first init: exit = %d, stderr: %s", code, errText)
+	}
+	// Remove the declaration, then re-run: it must be backfilled.
+	if err := os.Remove(filepath.Join(dir, "EKA")); err != nil {
+		t.Fatal(err)
+	}
+	code, text, _ := runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("backfill init: exit = %d, want 0", code)
+	}
+	if !strings.Contains(text, "already initialized") {
+		t.Errorf("backfill run must report already initialized:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "EKA")); err != nil {
+		t.Errorf("missing declaration must be backfilled: %v", err)
+	}
+	// A differing declaration is preserved (never replaced silently).
+	if err := os.WriteFile(filepath.Join(dir, "EKA"), []byte("EKA STANDARD\nVersion 9.9\ncustom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ = runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("differing-declaration init: exit = %d, want 0", code)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "EKA")); string(data) != "EKA STANDARD\nVersion 9.9\ncustom\n" {
+		t.Error("differing declaration must be preserved in non-interactive mode")
+	}
+}
+
 // TestInitNonConformantExitsOne pre-places a malformed artifact and
 // verifies the init exits 1 with a clear message.
 func TestInitNonConformantExitsOne(t *testing.T) {
@@ -587,8 +693,10 @@ func TestInitNonConformantExitsOne(t *testing.T) {
 	}
 }
 
-// TestInitTwiceIsIdempotent verifies the second run is a no-op and the
-// repository still validates.
+// TestInitTwiceIsIdempotent verifies the re-run contract: the second
+// run backfills the AGENTS.md block the fresh non-interactive first
+// run never created, and the third run is a true no-op. The repository
+// still validates.
 func TestInitTwiceIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	chdirInto(t, dir)
@@ -599,6 +707,9 @@ func TestInitTwiceIsIdempotent(t *testing.T) {
 	before, err := snapshot(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := before["AGENTS.md"]; ok {
+		t.Fatalf("fresh non-interactive init must not create AGENTS.md without opt-in")
 	}
 	code, text, _ := runIn([]string{"init"})
 	if code != 0 {
@@ -611,17 +722,33 @@ func TestInitTwiceIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before) {
-		t.Errorf("second init changed the tree: %d files before, %d after", len(before), len(after))
+	if len(after) != len(before)+1 {
+		t.Fatalf("second init must add exactly AGENTS.md: %d files before, %d after", len(before), len(after))
 	}
 	for path, data := range before {
 		if got, ok := after[path]; !ok || !bytes.Equal(got, data) {
 			t.Errorf("second init modified %s", path)
 		}
 	}
+	code, _, _ = runIn([]string{"init"})
+	if code != 0 {
+		t.Fatalf("third init: exit = %d, want 0", code)
+	}
+	third, err := snapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third) != len(after) {
+		t.Errorf("third init changed the tree: %d files before, %d after", len(after), len(third))
+	}
+	for path, data := range after {
+		if got, ok := third[path]; !ok || !bytes.Equal(got, data) {
+			t.Errorf("third init modified %s", path)
+		}
+	}
 	code, _, _ = runIn([]string{"validate", dir})
 	if code != 0 {
-		t.Errorf("repository must still validate after second init")
+		t.Errorf("repository must still validate after repeated init")
 	}
 }
 
@@ -1250,6 +1377,12 @@ func TestNoANSIEscapesInNonTTYOutput(t *testing.T) {
 	scenarios := []scenario{
 		{"validate-pass", []string{"validate", valid}, 0},
 		{"validate-fail", []string{"validate", filepath.Join("..", "testdata", "conformance", "invalid-dimension")}, 1},
+		// Help paths (root help, the help command and subcommand help)
+		// carry the same no-ANSI contract; they need no repository.
+		{"root-help", []string{"--help"}, 0},
+		{"help-command", []string{"help"}, 0},
+		{"subcommand-help", []string{"validate", "--help"}, 0},
+		{"nested-help", []string{"get", "ticket", "--help"}, 0},
 	}
 	// The validate paths are relative to the package directory: run them
 	// before any chdir in this test.

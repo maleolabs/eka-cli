@@ -18,10 +18,12 @@
 //  5. Validation           — validate.go: run conformance.Validate over the
 //     generated repository.
 //
-// `eka init` is identity-only (ADR-020 Phase B1): the generated repository
-// contains eka.yaml only (+ optional git init). The legacy docs-in-repo
-// skeleton is never scaffolded — knowledge lives in the EKA workspace and
-// docs-in-repo remains legacy backward-compat, never generated.
+// `eka init` is identity-only (ADR-020 Phase B1, amended for the
+// standard declaration): the generated repository contains eka.yaml and
+// the root EKA standard declaration file (+ optional git init). The
+// legacy docs-in-repo skeleton is never scaffolded — knowledge lives in
+// the EKA workspace and docs-in-repo remains legacy backward-compat,
+// never generated.
 //
 // Behavioral contracts:
 //
@@ -56,6 +58,13 @@ type Options struct {
 	// `namespace`): when non-empty the wizard skips it. Must be a valid
 	// EKA identifier.
 	Namespace string
+	// AgentsMD opts into AGENTS.md workflow-context management
+	// (--agents-md): the wizard question is skipped as answered yes.
+	AgentsMD bool
+	// NoAgentsMD opts out (--no-agents-md): the wizard question is
+	// skipped as answered no. It wins over AgentsMD when both are set
+	// (the command refuses that combination before Run).
+	NoAgentsMD bool
 	// DryRun prints the plan and writes nothing.
 	DryRun bool
 	// Stdin feeds the wizard in interactive mode and overwrite
@@ -163,12 +172,29 @@ func Run(opts Options) (*Outcome, error) {
 	// fixes the identity on every path (fresh, adopted, already-eka).
 	interactive := !opts.DryRun && isInteractive(opts.Stdin)
 	already := d.Exists && d.IsEkaRepo
+	// The agent-context answer is tri-state: --agents-md fixes yes,
+	// --no-agents-md fixes no, unset asks (interactive) or defaults to
+	// no (non-interactive, already-initialized).
+	var presetAgentsMD *bool
+	if opts.AgentsMD {
+		presetAgentsMD = &opts.AgentsMD
+	}
+	if opts.NoAgentsMD {
+		no := false
+		presetAgentsMD = &no
+	}
 	var answers Answers
 	switch {
 	case already:
 		answers = DefaultAnswers(d)
+		// Re-runs reconcile the managed block (missing files are
+		// backfilled, drift is merged) — the same backfill precedent
+		// as the EKA declaration. Only an explicit --no-agents-md
+		// opts out; the merge never touches user content outside
+		// the markers, so managing by default is safe.
+		answers.AgentsMD = true
 	case interactive:
-		answers, err = Ask(d, opts.Stdin, opts.Stdout, PreAnswers{Project: opts.Project, Namespace: opts.Namespace})
+		answers, err = Ask(d, opts.Stdin, opts.Stdout, PreAnswers{Project: opts.Project, Namespace: opts.Namespace, AgentsMD: presetAgentsMD})
 		if err != nil {
 			return nil, fmt.Errorf("wizard failed: %w", err)
 		}
@@ -180,6 +206,9 @@ func Run(opts Options) (*Outcome, error) {
 	}
 	if opts.Namespace != "" {
 		answers.Namespace = opts.Namespace
+	}
+	if presetAgentsMD != nil {
+		answers.AgentsMD = *presetAgentsMD
 	}
 
 	// Stage 2: deterministic plan derived from discovery + answers.
@@ -205,7 +234,7 @@ func Run(opts Options) (*Outcome, error) {
 	for _, a := range plan {
 		if a.Kind == ActionGenerateEkaYAML {
 			out.Identity = &metadata.Metadata{
-				Version:   1,
+				Version:   metadata.SchemaVersion,
 				Project:   answers.Project,
 				Name:      ekaYAMLName(d),
 				Namespace: answers.Namespace,

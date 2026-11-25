@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/metadata"
 	"github.com/maleolabs/eka-core/runtime"
 	"github.com/maleolabs/eka-core/view"
@@ -77,7 +79,9 @@ Projections (domain-first):
                (planned/todo/in-progress/in-review/done)
   board        every work item in the project across all execution
                containers, grouped by execution state, each item tagged
-               with its container (unassigned when none)
+               with its container (unassigned when none) and its
+               assignee (when assigned); --member filters to one
+               member's scope plus the "No assignee" bucket
   containers   every execution container (ctr-) line: name, plan,
                items/tickets, started/ended and status — an aligned
                table
@@ -86,7 +90,11 @@ Projections (domain-first):
   ticket       one execution item's projected status: for a ticket
                (tkt-) derived from its referenced work item, for a
                direct work item (sto-/ts-/bug-/td-/ch-/spk-) its own
-               execution state (ticket body content is never read)
+               execution state (ticket body content is never read).
+               tkt- units are GENERATED state projections (their files
+               carry "Generated — State Projection. Do NOT edit state
+               here; refresh on read.") — never edit a projection's
+               state; transition the referenced work item instead
   document     ONE canonical document's detail of any type (the
                bare-argument resolution): identity, states,
                relationships, and the content sections
@@ -118,6 +126,49 @@ Retrieval flags (board and containers projections only):
   The board renders the window of every column (with a "+N more"
   card when a column overflows) and a "Paged: ..." footer; the
   containers table renders its window with a "Page X/Y" footer.
+
+Member filter (board projection only):
+
+  --member <me|<mbr-id>>
+                the advisory member-scoped board (ADR-029): the six
+                state columns hold only the member's assigned work
+                items, and every work item WITHOUT an assigned-to
+                edge surfaces in a separate visible "No Assignee"
+                bucket below the columns — never hidden, never
+                interleaved (Decision 3). "me" resolves the operator
+                identity from ` + "`git config user.name`" + ` (the same
+                authority as --by) to exactly one mbr- line of the
+                repository; zero or multiple matches refuse listing
+                the available members. Any other value resolves like
+                an assign target: <mbr-id>, mbr:<id>, mbr-<id>, or
+                <ns>/mbr:<id> (the qualified form must stay inside the
+                repository's namespace); an unresolvable id refuses
+                listing the available members. The container-axis
+                "Unassigned" insight is suppressed in member views —
+                the "No assignee" bucket replaces it there.
+                Terminology: "No assignee" is the MEMBER axis (a work
+                item without an assigned-to edge); "unassigned" is the
+                CONTAINER axis (a work item not referenced by any
+                ticket container). The two never merge: an item can be
+                container-unassigned AND member-assigned, or both.
+                --member composes with pagination (filter first, then
+                window).
+
+Machine output (board projection only):
+
+  --json      emit the deterministic machine document on stdout (one
+              line, one trailing newline) instead of the human render.
+              The repository-wide board emits schema "eka-board-v1":
+              every column with its items, each item carrying the
+              pinned "assignee" key (the canonical member line, absent
+              without an assigned-to edge). The member-scoped board
+              (--member) emits schema "eka-board-member-v1" with the
+              pinned machine keys of the slice: "assignee" (the
+              member's assigned items) and "no-assignee" (the 'No
+              assignee' bucket) — the member-axis counterpart of the
+              container-axis "unassigned". --json does not compose
+              with pagination: the machine document always carries the
+              full projection.
 
 Containers filters (containers projection only):
 
@@ -186,19 +237,49 @@ Exit codes:
 			}
 			// Applicability rules (deterministic usage errors, exit 2):
 			// pagination applies to the board and containers
-			// projections, the container filters to containers only.
+			// projections, the container filters to containers only,
+			// the member filter and --json to the board only. --json
+			// never composes with pagination: the machine document
+			// always carries the full projection.
+			memberFlag, _ := cmd.Flags().GetString(flagViewMember)
+			memberGiven := memberFlag != ""
+			jsonGiven, _ := cmd.Flags().GetBool(flagViewJSON)
+			viewType, _ := cmd.Flags().GetString(flagViewType)
+			viewLevel, _ := cmd.Flags().GetString(flagViewLevel)
+			viewProject, _ := cmd.Flags().GetString(flagViewProject)
+			viewVersion, _ := cmd.Flags().GetString(flagViewVersion)
+			opsFiltered := viewType != "" || viewLevel != "" || viewProject != "" || viewVersion != ""
+			if viewLevel != "" {
+				lv := strings.ToUpper(strings.TrimSpace(viewLevel))
+				if lv != "L0" && lv != "L1" && lv != "L2" {
+					return fmt.Errorf("view: --level must be L0, L1 or L2, got %q", viewLevel)
+				}
+			}
 			paginated := pagination.offsetGiven || pagination.limitGiven || pagination.pageGiven
 			filtered := active || current || container != ""
 			switch name {
 			case "board":
-				if filtered {
-					return fmt.Errorf("the board projection supports --offset/--limit/--page only")
+				if filtered || opsFiltered {
+					return fmt.Errorf("the board projection supports --offset/--limit/--page/--member/--json only")
+				}
+				if jsonGiven && paginated {
+					return fmt.Errorf("view: board --json does not compose with pagination; the machine document carries the full projection")
 				}
 			case "containers":
 				// Pagination and container filters both apply.
+				if jsonGiven || opsFiltered {
+					return fmt.Errorf("view: --json is a board-projection flag")
+				}
+				if opsFiltered {
+					return fmt.Errorf("view: --type/--level/--project/--version require the operations projection")
+				}
+			case "operations":
+				if paginated || filtered || memberGiven || jsonGiven {
+					return fmt.Errorf("the operations projection supports --type/--level/--project/--version only (plus no pagination)")
+				}
 			default:
-				if paginated || filtered {
-					return fmt.Errorf("the %s projection does not support these flags (board: pagination; containers: pagination and filters)", name)
+				if paginated || filtered || memberGiven || jsonGiven || opsFiltered {
+					return fmt.Errorf("the %s projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)", name)
 				}
 			}
 			// The Runtime is the projection source: the repository must
@@ -219,7 +300,7 @@ Exit codes:
 			// tree is not an EKA repository and the refusal replaces
 			// the not-registered branch (exit 1, the same refusal
 			// class).
-			_, _, hasMeta, err := metadata.Find(abs)
+			meta, _, hasMeta, err := metadata.Find(abs)
 			if err != nil {
 				return fmt.Errorf("view failed: %w", err) // Exit 2: metadata read failure.
 			}
@@ -243,6 +324,9 @@ Exit codes:
 			units, err := r.Knowledge.UnitsByProject(repo.ProjectID)
 			if err != nil {
 				return fmt.Errorf("view failed: %w", err) // Exit 2: store failure.
+			}
+			if name == "operations" && opsFiltered {
+				units = filterOperationsUnits(units, viewType, viewLevel, viewProject, viewVersion)
 			}
 			if len(units) == 0 {
 				// Empty projection: still rendered (exit 0), but the
@@ -273,13 +357,38 @@ Exit codes:
 			if numbers, nerr := r.Knowledge.NumbersByProject(repo.ProjectID); nerr == nil {
 				g.AttachNumbers(numbers)
 			}
-			proj, err := view.Build(name, g, target)
-			if err != nil {
-				if errors.Is(err, view.ErrUnknownProjection) {
-					return fmt.Errorf("unknown projection %q — available projections: %s",
-						name, view.HelpList())
+			var proj view.Projection
+			if memberGiven {
+				// The member-scoped board (--member me|<mbr-id>): the
+				// advisory member filter of ADR-029 Decision 3. The
+				// member resolves within the repository's namespace
+				// (the eka.yaml declaration wins, else the registered
+				// default — the same resolution the authoring
+				// commands use); BoardForMember builds the scoped
+				// columns plus the dedicated 'No assignee' bucket.
+				repoNS := meta.Namespace
+				if repoNS == "" {
+					repoNS = repo.Namespace
 				}
-				return err // TargetNotFoundError etc. map to exit 2.
+				memberForm, rerr := resolveBoardMember(repoNS, units, memberFlag)
+				if rerr != nil {
+					return rerr // Exit 2: usage.
+				}
+				board, berr := view.BoardForMember(g, memberForm)
+				if berr != nil {
+					return fmt.Errorf("view failed: %w", berr) // Exit 2: internal.
+				}
+				proj = board
+			} else {
+				built, berr := view.Build(name, g, target)
+				if berr != nil {
+					if errors.Is(berr, view.ErrUnknownProjection) {
+						return fmt.Errorf("unknown projection %q — available projections: %s",
+							name, view.HelpList())
+					}
+					return berr // TargetNotFoundError etc. map to exit 2.
+				}
+				proj = built
 			}
 			// The document projection carries its issue number for the
 			// "#<n>" display (the ticket projection reads the number
@@ -342,6 +451,9 @@ Exit codes:
 					footer = fmt.Sprintf("Paged: %d per column · page %d (offset %d)",
 						limit, pageNumberOf(offset, limit), offset)
 				}
+				if jsonGiven {
+					return emitBoardMachine(cmd, p)
+				}
 				renderBoardProjection(s, g, p, page, footer)
 				return nil
 			}
@@ -362,6 +474,12 @@ Exit codes:
 	cmd.Flags().Bool(flagViewActive, false, "containers: keep only the containers with container-state active")
 	cmd.Flags().Bool(flagViewCurrent, false, "containers: keep only the current (active) container")
 	cmd.Flags().String(flagViewContainer, "", "containers: keep only the container whose id matches (bare id, ctr-<id>, ctr:<id> or <ns>/ctr:<id>)")
+	cmd.Flags().String(flagViewMember, "", "board: filter to one member's assigned items plus the 'No assignee' bucket (me = `git config user.name`, or the mbr- line form)")
+	cmd.Flags().Bool(flagViewJSON, false, "board: emit the deterministic machine document (schema eka-board-v1 / eka-board-member-v1) instead of the human render")
+	cmd.Flags().String(flagViewType, "", "operations: filter by artifact type token (e.g. shr)")
+	cmd.Flags().String(flagViewLevel, "", "operations: filter by shr level L0|L1|L2 — server-side")
+	cmd.Flags().String(flagViewProject, "", "operations: filter by shr sourceProject per-project")
+	cmd.Flags().String(flagViewVersion, "", "operations: filter by shr sourceVersion semver")
 	// The ticket notes flags: --with-note and --with-comments are
 	// synonyms — both surface the cmt- notes discussing the ticket and
 	// its related work item in the ticket projection.
@@ -379,7 +497,184 @@ const (
 	flagViewActive    = "active"
 	flagViewCurrent   = "current"
 	flagViewContainer = "container"
+	flagViewMember    = "member"
+	flagViewJSON      = "json"
+	flagViewType      = "type"
+	flagViewLevel     = "level"
+	flagViewProject   = "project"
+	flagViewVersion   = "version"
 )
+
+// resolveBoardMember resolves the --member target of the board
+// projection (ADR-029 Decision 3 — the advisory member filter):
+//
+//	"me"        the operator identity from `git config user.name`
+//	            (the same authority as --by) matched against the
+//	            repository's member lines — a member matches when its
+//	            author name or its bare id equals the identity.
+//	            Zero or multiple matches are a deterministic refusal
+//	            listing the available members.
+//	<mbr-id>    <mbr-id>, mbr:<id>, mbr-<id>, or <ns>/mbr:<id> —
+//	            resolved within the repository's namespace; a
+//	            cross-namespace qualified target is rejected, and an
+//	            unresolvable id is a deterministic refusal listing
+//	            the available members (precedence: the unknown
+//	            --container usage error).
+//
+// Errors are usage-class (exit 2). "me" is a reserved keyword; a
+// member id must not be named "me" (req:team-collaboration §6).
+func resolveBoardMember(ns string, units []*exchange.Unit, raw string) (string, error) {
+	if raw == "me" {
+		return resolveMeMember(ns, units)
+	}
+	form, err := parseMemberTarget(raw, ns)
+	if err != nil {
+		return "", fmt.Errorf("view: --member: %v", err)
+	}
+	if !memberLineExists(units, form) {
+		return "", fmt.Errorf("view: member %q not found — available members: %s",
+			raw, strings.Join(memberLinesInNS(units, ns), ", "))
+	}
+	return form, nil
+}
+
+// resolveMeMember resolves the "me" member target: the operator
+// identity from `git config user.name` (the same authority as --by)
+// matched against the member lines of the repository's namespace — a
+// member matches when its author name or its bare id equals the
+// identity. Exactly one match resolves; zero or multiple matches are a
+// deterministic refusal listing the available members.
+func resolveMeMember(ns string, units []*exchange.Unit) (string, error) {
+	by, err := runtime.BySource("", "", ".")
+	if err != nil {
+		return "", fmt.Errorf("view: --member me: cannot resolve the operator identity: %v; pass --member <mbr-id>", err)
+	}
+	var matches []string
+	for _, u := range units {
+		if u.Identity.Type != "mbr" || u.Identity.Namespace != ns {
+			continue
+		}
+		if u.Author.Name == by.Name || u.Identity.ID == by.Name {
+			matches = append(matches, view.LineForm(u.Identity.Namespace, u.Identity.Type, u.Identity.ID))
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) != 1 {
+		return "", fmt.Errorf("view: --member me: the operator identity %q matches %d member line(s); pass --member <mbr-id> — available members: %s",
+			by.Name, len(matches), strings.Join(memberLinesInNS(units, ns), ", "))
+	}
+	return matches[0], nil
+}
+
+// Board machine output (board --json; the pinned machine keys of the
+// slice — req:team-collaboration §6). The repository-wide board emits
+// schema "eka-board-v1" with every column and its items, each item
+// carrying the pinned "assignee" key (the canonical member line the
+// item's assigned-to edge resolves to, absent without one). The
+// member-scoped board emits schema "eka-board-member-v1" with the
+// pinned member-axis keys: "assignee" (the member's assigned items)
+// and "no-assignee" (the dedicated 'No assignee' bucket — never
+// "unassigned", which belongs to the container axis). Both documents
+// are deterministic (fixed field order, sorted lists, no timestamps).
+
+// boardSchema is the schema id of the repository-wide board machine
+// report.
+const boardSchema = "eka-board-v1"
+
+// boardMemberSchema is the schema id of the member-scoped board machine
+// report.
+const boardMemberSchema = "eka-board-member-v1"
+
+// boardJSON is the deterministic machine report of the repository-wide
+// board (schema "eka-board-v1"; pinned field order).
+type boardJSON struct {
+	Schema         string            `json:"schema"`
+	Total          int               `json:"total"`
+	Unassigned     int               `json:"unassigned"`
+	ContainerCount int               `json:"containerCount"`
+	Columns        []boardColumnJSON `json:"columns"`
+}
+
+// boardColumnJSON is one execution-state column of the machine report.
+type boardColumnJSON struct {
+	State string          `json:"state"`
+	Items []boardItemJSON `json:"items"`
+}
+
+// boardItemJSON is one board item of the machine report. Assignee is
+// the pinned key: the canonical member line the item is assigned to,
+// absent when the item carries no assigned-to edge (the item then
+// belongs to the 'No assignee' bucket of a member-scoped view).
+type boardItemJSON struct {
+	Identity   string   `json:"identity"`
+	State      string   `json:"state"`
+	Assignee   string   `json:"assignee,omitempty"`
+	Containers []string `json:"containers,omitempty"`
+}
+
+// boardMemberJSON is the deterministic machine report of the
+// member-scoped board (schema "eka-board-member-v1"; pinned field
+// order): the member line, its assigned items ("assignee") and the
+// dedicated 'No assignee' bucket ("no-assignee") — both as canonical
+// line identity forms in the board's display order.
+type boardMemberJSON struct {
+	Schema     string   `json:"schema"`
+	Member     string   `json:"member"`
+	Assignee   []string `json:"assignee"`
+	NoAssignee []string `json:"no-assignee"`
+}
+
+// emitBoardMachine emits the deterministic board machine document of
+// one board projection (--json): the member-scoped report when the
+// projection carries a member, the repository-wide report otherwise.
+// stdout carries ONLY the JSON document plus its single trailing
+// newline.
+func emitBoardMachine(cmd *cobra.Command, p *view.BoardProjection) error {
+	if p.Member != "" {
+		// The member-scoped document: the pinned assignee / no-assignee
+		// keys (the member axis). "assignee" flattens the member's
+		// scoped columns in the fixed execution-state order (the
+		// board's display order); "no-assignee" is the dedicated bucket.
+		var assignee []string
+		for _, col := range p.Columns {
+			for _, bi := range col.WorkItems {
+				assignee = append(assignee, bi.Identity)
+			}
+		}
+		noAssignee := make([]string, 0, len(p.NoAssignee))
+		for _, bi := range p.NoAssignee {
+			noAssignee = append(noAssignee, bi.Identity)
+		}
+		return emitJSON(cmd, boardMemberJSON{
+			Schema:     boardMemberSchema,
+			Member:     p.Member,
+			Assignee:   assignee,
+			NoAssignee: noAssignee,
+		})
+	}
+	// The repository-wide document: every column with its items, each
+	// item carrying the pinned per-item "assignee" key.
+	cols := make([]boardColumnJSON, 0, len(p.Columns))
+	for _, col := range p.Columns {
+		items := make([]boardItemJSON, 0, len(col.WorkItems))
+		for _, bi := range col.WorkItems {
+			items = append(items, boardItemJSON{
+				Identity:   bi.Identity,
+				State:      bi.State,
+				Assignee:   bi.Assignee,
+				Containers: bi.Containers,
+			})
+		}
+		cols = append(cols, boardColumnJSON{State: col.State, Items: items})
+	}
+	return emitJSON(cmd, boardJSON{
+		Schema:         boardSchema,
+		Total:          p.Total,
+		Unassigned:     p.Unassigned,
+		ContainerCount: p.ContainerCount,
+		Columns:        cols,
+	})
+}
 
 // parseProjectionArgs validates the projection+target argument pair
 // shared by view and watch: the projection must be registered
@@ -627,4 +922,48 @@ func stateIcon(state string) string {
 // stateMark renders the colored state icon.
 func stateMark(s *ui.Style, state string) string {
 	return stateColor(s, state)(stateIcon(state))
+}
+
+// filterOperationsUnits filters operations domain units by type/level/project/version for clean list.
+// Default is clean id+level only (no content dump) — use with verbose flag for detail.
+func filterOperationsUnits(units []*exchange.Unit, typ, lvl, proj, ver string) []*exchange.Unit {
+	out := units
+	if typ != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if u.Identity.Type == typ {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if lvl != "" {
+		lv := strings.ToUpper(strings.TrimSpace(lvl))
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrLevelOf(u) == lv {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if proj != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrProjectOf(u) == proj {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	if ver != "" {
+		filtered := make([]*exchange.Unit, 0, len(out))
+		for _, u := range out {
+			if shrVersionOf(u) == ver {
+				filtered = append(filtered, u)
+			}
+		}
+		out = filtered
+	}
+	return out
 }

@@ -83,3 +83,29 @@ func TestStatusInitializedNoProjects(t *testing.T) {
 		t.Errorf("status must show zero counts, got:\n%s", text)
 	}
 }
+
+// TestStatusPerRepoActive: status shows the ACTIVE container per
+// repository (one-active-per-source_repo, dec:parallel-container-
+// execution) — a multi-active fixture renders one "active:" line per
+// active container of the repo.
+func TestStatusPerRepoActive(t *testing.T) {
+	repo := seedViewRepo(t, "multi-active")
+	code, text, errText := runIn([]string{"status"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if errText != "" {
+		t.Errorf("stderr must be empty, got %q", errText)
+	}
+	// The repo line lists its active container lines (wave-1 and
+	// wave-2 in canonical order).
+	if !strings.Contains(text, "active: ") {
+		t.Errorf("status must show the per-repo active container:\n%s", text)
+	}
+	for _, want := range []string{"wave-1", "wave-2"} {
+		if !strings.Contains(text, "active: eka-view-fixture/ctr:"+want) {
+			t.Errorf("status must show the active container line for %s:\n%s", want, text)
+		}
+	}
+	_ = repo
+}

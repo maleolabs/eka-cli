@@ -1,0 +1,1 @@
+{"changes":["eka-cli/cmd/code_context.go, eka-cli/cmd/root.go"],"role":"implementation","summary":"[role: backend] Wired eka code-context CLI: flags depth/level/no-content/compact/limit, deterministic JSON, cache path, repo root detection","tests":["cmd/code_context_test.go validation"]}

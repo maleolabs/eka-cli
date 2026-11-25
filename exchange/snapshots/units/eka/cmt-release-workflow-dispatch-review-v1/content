@@ -1,0 +1,1 @@
+{"notes":["APPROVE after fix loop: local tag before build + --target SHA, anvil.yaml validation, env-passed input, anchored semver regex, v-prefix normalize, early exists-check","2 minor non-blocking: grep/pipefail dead-code error path; stale-tag-without-release edge","static-verified only (no runner); QA RELEASE-READY"],"role":"review","verdict":"approve"}

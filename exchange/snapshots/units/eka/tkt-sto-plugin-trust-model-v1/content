@@ -1,0 +1,1 @@
+{"commands":"\u003e Generated — State Projection. Do NOT edit state here; refresh on read.\n\nImplement the two-tier trust model: registry-listed (maleolabs) plugins full-trust (no prompt); third-party require explicit consent + surface source/capabilities.","projectedStatus":"Projected from sto:plugin-trust-model (owner state, read on refresh)."}

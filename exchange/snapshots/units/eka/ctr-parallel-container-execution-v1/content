@@ -1,0 +1,1 @@
+{"objective":"Execute plan:parallel-container-execution (four work items) under /eka-execute Phase 0; activation itself belongs to the executor, never to planning.","workItems":"sto:parallel-activation-gate, sto:parallel-projections, sto:parallel-retirement-confirmation, sto:parallel-e2e-verify (membership via tickets, prose here is not membership).","changeLog":""}

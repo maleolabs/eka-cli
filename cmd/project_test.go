@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/maleolabs/eka-core/metadata"
 )
 
 func TestProjectHelpExitsZero(t *testing.T) {
@@ -196,6 +198,272 @@ func TestProjectRegisterSubdirectoryRegistersRoot(t *testing.T) {
 	}
 	if repos[0].Path != repo {
 		t.Errorf("registered path = %q, want the repository root %q (never the subdir %q)", repos[0].Path, repo, subdir)
+	}
+}
+
+// TestProjectRemoveHappyPath: removing a registered repository exits 0,
+// reports the removed repository (name + path) with the store note, and
+// the registry row is gone.
+func TestProjectRemoveHappyPath(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	code, text, errText := runIn([]string{"project", "remove", "eka-sync-fixture/eka-sync-fixture"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{
+		"Projects",
+		"removed eka-sync-fixture",
+		displayPath(repo),
+		"Canonical knowledge objects remain in the workspace store; re-registering restores provenance access.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output must contain %q:\n%s", want, text)
+		}
+	}
+	// The registry row is gone.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 0 {
+		t.Errorf("repos after removal = %+v, want none", repos)
+	}
+}
+
+// TestProjectRemoveLastRepoRemovesProject: removing a project's LAST
+// repository deletes the emptied project too — the list is empty again.
+func TestProjectRemoveLastRepoRemovesProject(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	if code, _, errText := runIn([]string{"project", "remove", "eka-sync-fixture/eka-sync-fixture"}); code != 0 {
+		t.Fatalf("remove: exit %d\n%s", code, errText)
+	}
+	code, text, errText := runIn([]string{"project", "list"})
+	if code != 0 {
+		t.Fatalf("list: exit = %d\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	if !strings.Contains(text, "No projects registered yet") {
+		t.Errorf("the emptied project must be gone:\n%s", text)
+	}
+}
+
+// TestProjectRemoveUnknownTarget: an unknown project or repository is
+// refused (exit 2) with the deterministic candidate listing.
+func TestProjectRemoveUnknownTarget(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	// Unknown project lists the registered projects.
+	code, _, errText := runIn([]string{"project", "remove", "ghost/repo"})
+	if code != 2 {
+		t.Errorf("unknown project: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, `unknown project "ghost"`) ||
+		!strings.Contains(errText, "available projects: eka-sync-fixture") {
+		t.Errorf("unknown project must list candidates, got %q", errText)
+	}
+	// Unknown repository lists the project's repositories.
+	code, _, errText = runIn([]string{"project", "remove", "eka-sync-fixture/ghost"})
+	if code != 2 {
+		t.Errorf("unknown repository: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, `unknown repository "ghost" in project "eka-sync-fixture"`) ||
+		!strings.Contains(errText, "available repositories: eka-sync-fixture") {
+		t.Errorf("unknown repository must list candidates, got %q", errText)
+	}
+}
+
+// TestProjectRemoveBadArg: anything but exactly one `<project>/<name>`
+// composite is a usage error (exit 2).
+func TestProjectRemoveBadArg(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	for _, args := range [][]string{
+		{"project", "remove"},
+		{"project", "remove", "noslash"},
+		{"project", "remove", "a/b/c"},
+		{"project", "remove", "/leading"},
+		{"project", "remove", "trailing/"},
+	} {
+		code, _, errText := runIn(args)
+		if code != 2 {
+			t.Errorf("args %v: exit = %d, want 2\nstderr: %s", args, code, errText)
+			continue
+		}
+		// Zero args fails on cobra's argument count; one malformed
+		// argument must carry the composite hint.
+		if len(args) == 3 && !strings.Contains(errText, "must be <project>/<name>") {
+			t.Errorf("args %v: stderr must carry the composite hint, got %q", args, errText)
+		}
+	}
+}
+
+// TestProjectRemoveHelpExitsZero: the remove command documents itself
+// and the parent help mentions it.
+func TestProjectRemoveHelpExitsZero(t *testing.T) {
+	code, text, _ := runIn([]string{"project", "remove", "-h"})
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(text, "<project>/<name>") {
+		t.Errorf("help must document the composite target:\n%s", text)
+	}
+	_, parent, _ := runIn([]string{"project", "-h"})
+	if !strings.Contains(parent, "remove") {
+		t.Errorf("parent help must mention remove:\n%s", parent)
+	}
+}
+
+// copyFixtureWithIdentity copies the sync fixture and rewrites its
+// eka.yaml identity (project/name), so tests can register several
+// repositories under one project.
+func copyFixtureWithIdentity(t *testing.T, project, name string) string {
+	t.Helper()
+	dir := copySyncFixture(t)
+	data, err := os.ReadFile(filepath.Join(dir, "eka.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := metadata.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Project, m.Name = project, name
+	if err := os.WriteFile(filepath.Join(dir, "eka.yaml"), m.Marshal(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestProjectUnregisterHappyPath: unregistering a whole project with
+// --force exits 0, reports every removed repository with the store
+// note, and both the repos rows and the project row are gone while a
+// sibling project survives.
+func TestProjectUnregisterHappyPath(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repoA := copySyncFixture(t)
+	repoB := copyFixtureWithIdentity(t, "eka-sync-fixture", "second")
+	for _, repo := range []string{repoA, repoB} {
+		if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+			t.Fatalf("register %s: exit %d\n%s", repo, code, errText)
+		}
+	}
+	code, text, errText := runIn([]string{"project", "unregister", "eka-sync-fixture", "--force"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, text, errText)
+	}
+	for _, want := range []string{
+		"Projects",
+		"unregistered project eka-sync-fixture",
+		"(2 repositories)",
+		displayPath(repoA),
+		displayPath(repoB),
+		"Canonical knowledge objects remain in the workspace store; re-registering restores provenance access.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output must contain %q:\n%s", want, text)
+		}
+	}
+	// The registry rows are gone.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 0 {
+		t.Errorf("repos after unregistration = %+v, want none", repos)
+	}
+	projects, err := w.Projects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 0 {
+		t.Errorf("projects after unregistration = %+v, want none", projects)
+	}
+}
+
+// TestProjectUnregisterRequiresForceOutsideTTY: without --force and
+// outside a terminal the command refuses (exit 2) with the --force
+// hint — a captured-output run must never block on an invisible
+// prompt.
+func TestProjectUnregisterRequiresForceOutsideTTY(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	code, _, errText := runIn([]string{"project", "unregister", "eka-sync-fixture"})
+	if code != 2 {
+		t.Errorf("exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, `has 1 repository`) ||
+		!strings.Contains(errText, "eka project unregister eka-sync-fixture --force") {
+		t.Errorf("refusal must carry the count and the --force hint, got %q", errText)
+	}
+	// The registry is untouched by the refusal.
+	w := mustWorkspace(t)
+	t.Cleanup(func() { w.Close() })
+	repos, err := w.Repos("eka-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 {
+		t.Errorf("repos after refusal = %+v, want the repository kept", repos)
+	}
+}
+
+// TestProjectUnregisterUnknownProject: an unknown project is refused
+// (exit 2) with the deterministic candidate listing; a composite
+// <project>/<name> argument is a usage error.
+func TestProjectUnregisterUnknownProject(t *testing.T) {
+	t.Setenv("EKA_HOME", t.TempDir())
+	repo := copySyncFixture(t)
+	if code, _, errText := runIn([]string{"project", "register", repo}); code != 0 {
+		t.Fatalf("register: exit %d\n%s", code, errText)
+	}
+	code, _, errText := runIn([]string{"project", "unregister", "ghost"})
+	if code != 2 {
+		t.Errorf("unknown project: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, `unknown project "ghost"`) ||
+		!strings.Contains(errText, "available projects: eka-sync-fixture") {
+		t.Errorf("unknown project must list candidates, got %q", errText)
+	}
+	code, _, errText = runIn([]string{"project", "unregister", "a/b"})
+	if code != 2 {
+		t.Errorf("composite arg: exit = %d, want 2\nstderr: %s", code, errText)
+	}
+	if !strings.Contains(errText, `the target must be <project>`) {
+		t.Errorf("composite arg must carry the <project> hint, got %q", errText)
+	}
+}
+
+// TestProjectUnregisterHelpExitsZero: the unregister command documents
+// itself and the parent help mentions it alongside remove.
+func TestProjectUnregisterHelpExitsZero(t *testing.T) {
+	code, text, _ := runIn([]string{"project", "unregister", "-h"})
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	for _, want := range []string{"<project>", "--force"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("help must document %q:\n%s", want, text)
+		}
+	}
+	_, parent, _ := runIn([]string{"project", "-h"})
+	if !strings.Contains(parent, "unregister") || !strings.Contains(parent, "remove") {
+		t.Errorf("parent help must mention unregister and remove:\n%s", parent)
 	}
 }
 

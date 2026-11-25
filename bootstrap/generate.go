@@ -78,11 +78,27 @@ func Apply(target string, plan []Action, opts ApplyOptions) (*GenerationResult, 
 			}
 			res.CreatedDirs = append(res.CreatedDirs, a.Path)
 
-		case ActionGenerateEkaYAML:
+		case ActionGenerateEkaYAML, ActionGenerateEKA:
 			if err := writeFile(filepath.Join(target, a.Path), a.Content); err != nil {
 				return nil, fmt.Errorf("cannot write %s: %w", a.Path, err)
 			}
 			res.CreatedFiles = append(res.CreatedFiles, a.Path)
+
+		case ActionAgentsMDMerge:
+			// The merge only ever rewrites the marked region (or
+			// creates the file): user content outside the markers is
+			// preserved, so no confirmation is needed. A missing file
+			// counts as created, a reconciled one as overwritten.
+			full := filepath.Join(target, a.Path)
+			_, statErr := os.Stat(full)
+			if err := writeFile(full, a.Content); err != nil {
+				return nil, fmt.Errorf("cannot write %s: %w", a.Path, err)
+			}
+			if statErr != nil {
+				res.CreatedFiles = append(res.CreatedFiles, a.Path)
+			} else {
+				res.OverwrittenFiles = append(res.OverwrittenFiles, a.Path)
+			}
 
 		case ActionReuse:
 			res.ReusedFiles = append(res.ReusedFiles, a.Path)

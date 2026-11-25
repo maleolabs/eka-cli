@@ -1,0 +1,1 @@
+{"objective":"Polish plugin UX debt: wire B1 proxy commands without PATH, decouple mcp configure from skills/commands install, and add project unregister.","workItems":"Three work items: mcp-proxy-wiring, mcp-configure-decoupling, project-unregister.","changeLog":"Container planned on 2026-08-22 to bundle plugin proxy debt and unregister feature."}

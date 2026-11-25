@@ -1,0 +1,1 @@
+{"description":"Implement the two-tier trust model: registry-listed (maleolabs) plugins are full-trust (no prompt), third-party require explicit consent + surface source/capabilities before install. Checksum verification applies to all.","acceptanceCriteria":"Official install has no prompt; third-party install prompts and shows capabilities; both verify checksum."}

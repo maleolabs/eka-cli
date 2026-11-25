@@ -1,0 +1,1 @@
+{"description":"Define ses execution-state CKO model: content keys scope/current/next/items/decisions/mode, immutable instanceVersion per update, repo-attributed via snapshot push.","acceptanceCriteria":"- ses content shape documented (spec/ADR)\n- publish new instanceVersion per update produces immutable CKO\n- eka get ses:\u003cid\u003e + --timeline works"}

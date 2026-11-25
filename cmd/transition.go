@@ -65,38 +65,60 @@ const transitionSchema = "eka-transition-v1"
 func newTransitionCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transition <target> [<to>]",
-		Short: "Transition a work item, plan or container state",
+		Short: "Transition a work item, plan, container or artifact state",
 		Long: `Transition a work item along the execution-state table (ADR-019
-D1), a plan along the planning-state table, or a container along the
-container-state table, and publish the result to the workspace store.
+D1), a plan along the planning-state table, a container along the
+container-state table, or a knowledge artifact along the content-state
+lifecycle, and publish the result to the workspace store.
 
 The destination is the explicit <to> value, or the derived step of
 --forward / --backward. For work items: --forward is the next
 sequential state (planned -> todo -> in-progress -> in-review -> done;
 canceled -> todo), --backward the one-step pull-back (in-review ->
 in-progress, in-progress -> todo). For plans: --forward approves a
-draft plan (draft -> approved); planning-state immutable is the
-container lock — it happens atomically with the container activation
-(eka transition ctr:<id> active) and cannot be requested directly. For
+draft plan (draft -> approved), or retires a locked plan whose
+containers are all completed (immutable -> superseded); planning-state
+immutable is the container lock — it happens atomically with the
+container activation (eka transition ctr:<id> active) and cannot be
+requested directly, while superseded is the terminal retirement
+(eka transition plan:<id> superseded, gated on no active container
+deriving from the plan; retired plans accept no new containers). For
 containers (three states, planned -> active -> completed): --forward
 activates a planned container (planned -> active) or completes an
 active one (active -> completed, gated on every work item the
 container registers being done or canceled). Activation is gated on
-the exactly-one-active rule (no other container may be active — a
-planned container activates only after the active one completes) and
-on the depends-on plan being approved; the activation LOCKS the plan
-(planning-state -> immutable) atomically with the activation. The
+the one-active-container-per-source_repo rule (no OTHER active
+container may share the activating container's source_repo — the
+same-repo refusal names the blocking container; cross-repo activation
+additionally requires the activating container's transitive
+depends-on/derives-from plan closure to be disjoint from every other
+active container's, a shared node refusing with the shared plan line)
+and on the depends-on plan being approved; the activation LOCKS the
+plan (planning-state -> immutable) atomically with the activation. The
 three destination flags are mutually exclusive.
+
+For knowledge artifacts (vis/str/req/scp/epc/adr/dec/arc/spec/std/run/
+rel/gls/trc/fnd, plus rvw- and cmt-) the content-state lifecycle of
+the type's variant applies, forward-only, one step at a time: the
+standard variant draft -> review -> approved -> amended, the ADR
+variant proposed -> accepted -> superseded, the decision variant
+draft -> accepted -> superseded (amended / superseded are terminal).
+A skip (e.g. draft -> approved), a revert or a no-op is refused; a
+superseded ADR must be referenced by a replacement via ` + "`supersedes`" + `.
+plan- keeps planning-state as its transition domain (its content-state
+is out of scope for the transition API).
 
 The target is the line in the workspace store: <type>:<id>
 (unqualified — the repository namespace applies) or <ns>/<type>:<id>
-(qualified — the namespace must equal the repository's). Work items
-(sto/ts/bug/td/ch/spk) transition along execution-state, plans (plan-)
-along planning-state, containers (ctr-) along container-state; run
-'eka sync' first so the line exists in the workspace. ` + "`done`" + ` is
-terminal for work items (canceled is its only exit) and ` + "`canceled`" + `
-re-activates to ` + "`todo`" + `; ` + "`completed`" + ` is terminal for
-containers.
+(qualified — the namespace must equal the repository's). The target
+type selects the transition domain, so a destination keyword never
+clashes across domains: work items (sto/ts/bug/td/ch/spk) transition
+along execution-state, plans (plan-) along planning-state, containers
+(ctr-) along container-state, knowledge artifacts along content-state
+(eka transition adr:001 accepted); run 'eka sync' first so the line
+exists in the workspace. ` + "`done`" + ` is terminal for work items
+(canceled is its only exit) and ` + "`canceled`" + ` re-activates to
+` + "`todo`" + `; ` + "`completed`" + ` is terminal for containers.
 
 The work-item gates (R13) are checked early: in-review requires a
 resolved implementation note, done requires every note resolved —
@@ -123,6 +145,8 @@ Exit codes:
 		Example: `  eka transition sto:12 in-review
   eka transition plan:roadmap-v1 approved
   eka transition ctr:wave-7 completed
+  eka transition adr:001 accepted
+  eka transition spec:api review
   eka transition sto:12 --forward
   eka transition sto:12 --backward
   eka transition atrium-api/sto:12 done --by agent-x
@@ -199,7 +223,7 @@ Exit codes:
 						// agents use --force).
 						s := styleFor(cmd)
 						if !isTTYReader(cmd.InOrStdin()) || !s.TTY {
-							return transitionRefused(cmd, jsonOut, refusal.Reason, refusal.Hint)
+							return transitionRefused(cmd, jsonOut, target, refusal.Reason, refusal.Hint)
 						}
 						// The reusable arrow-selected menu (the m2apps
 						// bubbletea pattern — the same primitive the
@@ -235,7 +259,7 @@ Exit codes:
 						if err != nil {
 							var again *runtime.TransitionRefusal
 							if errors.As(err, &again) {
-								return transitionRefused(cmd, jsonOut, again.Reason, again.Hint)
+								return transitionRefused(cmd, jsonOut, target, again.Reason, again.Hint)
 							}
 							return fmt.Errorf("transition: %w", err)
 						}
@@ -243,7 +267,7 @@ Exit codes:
 						if refusal.Warning != "" {
 							fmt.Fprintf(cmd.ErrOrStderr(), "%seka: warning: %s\n", ui.Margin, refusal.Warning)
 						}
-						return transitionRefused(cmd, jsonOut, refusal.Reason, refusal.Hint)
+						return transitionRefused(cmd, jsonOut, target, refusal.Reason, refusal.Hint)
 					}
 				} else {
 					return fmt.Errorf("transition: %w", err) // Exit 2: usage/internal.
@@ -310,8 +334,11 @@ func transitionUsage(cmd *cobra.Command, jsonOut bool, message string) error {
 
 // transitionRefused renders a deterministic refusal (exit 1): the
 // single-line human refusal on stderr, and the machine refusal document
-// on stdout with --json.
-func transitionRefused(cmd *cobra.Command, jsonOut bool, reason, hint string) error {
+// on stdout with --json. It also records the refusal as an opt-in
+// telemetry gate-refusal (gate "transition") when a session id is
+// present — best-effort, it never changes the exit code or the output.
+func transitionRefused(cmd *cobra.Command, jsonOut bool, subject, reason, hint string) error {
+	telemetryAutoEmit(telKindGateRefusal, subject, "", telGateTransition, reason)
 	if jsonOut {
 		_ = emitJSON(cmd, transitionJSON{Schema: transitionSchema, OK: false, Reason: reason, Hint: hint})
 	}

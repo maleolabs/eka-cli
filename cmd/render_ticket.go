@@ -102,6 +102,86 @@ func renderTicketNotes(s *ui.Style, p *view.TicketProjection) {
 		fmt.Fprintf(s.W, "  %s\n", s.Dim("no notes yet — 'eka note <target> --role <role>' to add one"))
 		return
 	}
+	// Per-reviewer grouping for review trail (phase2-cli-render): group review notes by author,
+	// render each reviewer's trail together with verdict badge and note-state mark.
+	// Non-review notes and reviews without author fall back to flat order, but per-reviewer
+	// groups are emitted first to satisfy the per-reviewer trail requirement.
+	hasReview := false
+	for _, n := range p.Notes {
+		c := map[string]any{}
+		if n.Note.Content.Representation == exchange.StructuredJSON {
+			_ = json.Unmarshal(n.Note.ContentPayload, &c)
+		}
+		if role, _ := c["role"].(string); role == "review" {
+			hasReview = true
+			break
+		}
+	}
+	if hasReview {
+		// Group review notes by author name (author identity), preserving canonical order within group.
+		type group struct {
+			author string
+			notes  []view.TicketNote
+		}
+		groups := []group{}
+		index := map[string]int{}
+		var others []view.TicketNote
+		for _, n := range p.Notes {
+			c := map[string]any{}
+			if n.Note.Content.Representation == exchange.StructuredJSON {
+				_ = json.Unmarshal(n.Note.ContentPayload, &c)
+			}
+			role, _ := c["role"].(string)
+			if role != "review" {
+				others = append(others, n)
+				continue
+			}
+			author := n.Note.Author.Name
+			if author == "" {
+				author = "(unknown)"
+			}
+			if idx, ok := index[author]; ok {
+				groups[idx].notes = append(groups[idx].notes, n)
+			} else {
+				index[author] = len(groups)
+				groups = append(groups, group{author: author, notes: []view.TicketNote{n}})
+			}
+		}
+		// Render per-reviewer groups
+		for _, g := range groups {
+			// Verdict summary per reviewer: list verdicts present
+			verdicts := []string{}
+			for _, n := range g.notes {
+				c := map[string]any{}
+				if n.Note.Content.Representation == exchange.StructuredJSON {
+					_ = json.Unmarshal(n.Note.ContentPayload, &c)
+				}
+				if v, _ := c["verdict"].(string); v != "" {
+					verdicts = append(verdicts, v)
+				}
+			}
+			summary := ""
+			if len(verdicts) > 0 {
+				summary = " — " + strings.Join(verdicts, ", ")
+			}
+			fmt.Fprintf(s.W, "%s  %s%s\n", s.Accent("Reviewer"), s.Accent(g.author), s.Dim(summary))
+			for _, n := range g.notes {
+				renderTicketNote(s, n.Note)
+				for _, reply := range n.Replies {
+					renderTicketReply(s, reply)
+				}
+			}
+			fmt.Fprintln(s.W)
+		}
+		// Render non-review notes flat
+		for _, n := range others {
+			renderTicketNote(s, n.Note)
+			for _, reply := range n.Replies {
+				renderTicketReply(s, reply)
+			}
+		}
+		return
+	}
 	for _, n := range p.Notes {
 		renderTicketNote(s, n.Note)
 		for _, reply := range n.Replies {

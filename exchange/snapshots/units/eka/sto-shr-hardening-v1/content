@@ -1,0 +1,1 @@
+{"description":"Hardening shr: ganti hardcoded domainTokens ke registry, benerin exit-code collision, dedup L1/L2, hapus dead import, guard snapshot size, normalisasi ID.","acceptanceCriteria":"domainTokens pakai registry + alias records, exit-code 1 untuk collision, L1/L2 dedup, snapshot guard, ID normalisasi, view Operations 3 groups konsisten, vet/format pass."}

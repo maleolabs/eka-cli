@@ -1,0 +1,1 @@
+{"description":"Migrasi .eka/execution-state.md ke ses CKO + integrasi eka status Execution section current-only render + sync verification.","acceptanceCriteria":"- one-time migration .eka/execution-state.md -\u003e ses:execution-state:1\n- eka status repo-scoped renders Execution current snapshot\n- eka sync push transports ses across devices"}

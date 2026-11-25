@@ -1,0 +1,1 @@
+{"objective":"Execute ADR 036+037: repo-scoped status + ses CKO","workItems":"sto:status-repo-core, sto:status-flags-json, sto:status-mcp-parity, sto:ses-execution-model, sto:execution-migration-integration","changeLog":"created for status-execution-state plan"}

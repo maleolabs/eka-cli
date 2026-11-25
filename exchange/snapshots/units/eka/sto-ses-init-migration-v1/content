@@ -1,0 +1,1 @@
+{"description":"One-time migrasi .eka/execution-state.md -\u003e eka/ses:execution-state:1 saat eka init / eka sync adopt jika ses belum ada (idempotent, cek via Resolver).","acceptanceCriteria":"- eka init cek ses exists, jika belum ada buat ses:1 dari .eka/execution-state.md\n- idempotent second run no-op\n- eka sync push bawa ses"}

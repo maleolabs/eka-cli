@@ -1,0 +1,1 @@
+{"objective":"Container for LLM context efficiency MVP — 5 work items (skill-pack tiered routing, thin flags Entry.objectHash, budget/tooloutput/cache, codegraph indexer, code-context tool) implementing ADR-033/034. Locks plan:llm-context-efficiency on activation.","workItems":"5 items","changeLog":""}

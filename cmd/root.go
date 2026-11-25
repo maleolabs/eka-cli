@@ -1,16 +1,19 @@
 // Package cmd implements the EKA CLI as a thin Cobra command layer.
 //
 // The command tree (root, validate, init, export, import, get, view,
-// watch, sync, project, status, feedback, update, note) is the only
-// part of the codebase that knows about argument parsing, flags, help
-// text, output rendering and exit codes. It contains no domain logic:
-// validate delegates to the Authoring API (runtime.Authoring), init
-// delegates to the bootstrap engine, export/import delegate to the
+// watch, sync, project, status, feedback, update, note, assign,
+// unassign, reassign, plugin) is the only part of the codebase that
+// knows about argument parsing, flags, help text, output rendering and
+// exit codes. It contains no domain
+// logic: validate delegates to the Authoring API (runtime.Authoring),
+// init delegates to the bootstrap engine, export/import delegate to the
 // exchange engine, get delegates to the machine interface (machine/),
 // feedback delegates to the standalone feedback module (feedback/),
-// and every runtime command (sync, view, watch, project, status,
-// integrity) delegates to the Runtime Kernel services (the runtime
-// package) — the CLI is a CLIENT of the Runtime.
+// plugin delegates to the plugin contract + registry
+// (github.com/maleolabs/eka-core/plugin), and
+// every runtime command (sync, view, watch, project, status, integrity)
+// delegates to the Runtime Kernel services (the runtime package) — the
+// CLI is a CLIENT of the Runtime.
 //
 // Client-only boundary (milestone 5, documented): production code in
 // this package must NOT import the store, workspace, sync or compile
@@ -22,9 +25,28 @@
 // conformance (model types, e.g. Report for render helpers, plus the
 // representation-independent reference-parsing helper ParseReference —
 // authoring validation itself runs through runtime.Authoring),
-// bootstrap (init), feedback (the standalone ADR-026 feedback module)
-// and ui. Tests MAY import store/workspace/sync for
-// seeding and corruption fixtures (test-only, documented).
+// bootstrap (init), feedback (the standalone ADR-026 feedback module),
+// plugin (the plugin contract and registry from eka-core, plus the
+// install flow) and ui.
+// Tests MAY import store/workspace/sync for seeding and corruption
+// fixtures (test-only, documented).
+//
+// Three documented exceptions exist, each justified in its file: the
+// workspace registry writes of `eka project register` (cmd/project.go
+// — the Runtime's WorkspaceService does not expose the metadata
+// registration path), and the assignment edge writes of
+// cmd/assigned.go (the Authoring API's relate is edge-add only, so
+// `eka unassign`/`eka reassign` mirror the relate published-path
+// re-point and the draft rewrite at the store/workspace layer; the
+// mirror stays a faithful copy of the runtime mechanism so the two
+// cannot drift), the retire new-instance publishes of cmd/retire.go
+// (the Authoring API has no retire operation, so `eka retire` mirrors
+// the publish new-instance mechanism — MaxInstanceVersion+1,
+// CKO-level ValidateCKO, store.PutUnit — under the same faithful-copy
+// discipline), and the ticket edge removals of cmd/unrelate.go (the
+// Authoring API's relate is edge-add only, so `eka unrelate` mirrors
+// the relate same-version re-point and the draft rewrite for the
+// ticket's derives-from edges).
 //
 // Layout rationale: the reusable engines stay where they are
 // (bootstrap/, conformance/, exchange/, ...). There is deliberately no
@@ -33,7 +55,8 @@
 // abstraction. cmd/ is a leaf: nothing imports it except
 // cmd/eka/main.go.
 //
-// Exit codes (deterministic contract, preserved from the pre-Cobra CLI):
+// Exit codes (deterministic contract, preserved from the pre-Cobra CLI).
+// Base contract (all commands):
 //
 //	0  fully compliant (warnings allowed); init completed and validates;
 //	   export produced a package
@@ -41,6 +64,15 @@
 //	   non-conformant repository; export refused the repository)
 //	2  usage or internal error (unknown command, invalid path,
 //	   unreadable scan root, bad export target, export failure)
+//
+// Extended codes for `eka mcp` (sto:mcp-entrypoint-ux — help-visible, not a new base code):
+//
+//	2  conflict (preflight: file exists not owned, version skew without --force)
+//	3  not found (unknown agent, missing plugin for serve)
+//	4  precondition failed (non-TTY without bypass, not selectable agent)
+//
+// Exit 2 is shared between generic usage and mcp conflict by design; `eka mcp --help`
+// documents the extended mapping.
 package cmd
 
 import (
@@ -55,10 +87,14 @@ import (
 )
 
 // Exit codes of the deterministic contract documented above.
+// mcp extends with 2 (conflict), 3 (not found), 4 (precondition) — see package comment.
 const (
 	exitOK    = 0
 	exitFail  = 1
 	exitUsage = 2
+	// mcp extended codes reuse exitUsage (2) for conflict; 3/4 are mcp-only:
+	exitNotFound     = 3
+	exitPrecondition = 4
 )
 
 // exitError carries an explicit exit code out of a command's RunE. Commands
@@ -80,6 +116,10 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root.SetIn(stdin)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	// The registration warnings collected during root construction are
+	// flushed to the caller's stderr (registration runs before the
+	// streams exist).
+	flushPluginRegWarnings(stderr)
 
 	err := root.Execute()
 	if err == nil {
@@ -107,10 +147,14 @@ func renderError(err error) string {
 
 // availableCommands lists the registered subcommands in registration
 // order, excluding the built-in help/completion commands (which a fresh
-// tree does not contain yet).
+// tree does not contain yet) and hidden commands (the mcp stub when
+// the plugin is not installed).
 func availableCommands() string {
 	names := make([]string, 0, 2)
 	for _, c := range newRootCommand().Commands() {
+		if c.Hidden {
+			continue
+		}
 		names = append(names, c.Name())
 	}
 	return strings.Join(names, ", ")
@@ -136,7 +180,9 @@ get retrieves Engineering Knowledge as machine-readable CKO JSON
 (the machine interface — scripts, MCP, Atrium, AI agents), eka
 watch re-renders a projection live as the repository changes, eka
 update replaces this binary with the latest checksum-verified
-release from GitHub, and the Knowledge Runtime commands (eka sync,
+release from GitHub, eka plugin installs, lists, removes and
+updates official checksum-verified plugins (e.g. eka-mcp),
+and the Knowledge Runtime commands (eka sync,
 eka project, eka status, eka integrity) keep a local canonical
 workspace (~/.eka or $EKA_HOME) synchronized with registered
 repositories via
@@ -152,15 +198,26 @@ lists, plan actions).
 Exit codes:
   0  fully compliant (warnings allowed)
   1  blocking violations present
-  2  usage or internal error (unknown command, invalid path,
-     unreadable root)`,
+  2  usage/internal error OR mcp conflict (preflight without --force)
+  3  mcp: not found (unknown agent / missing plugin)
+  4  mcp: precondition failed (non-TTY without bypass, not selectable)`,
 		// `eka` without a subcommand shows the product landing: a calm
 		// orientation (what the CLI is, its commands, help and version
 		// pointers) instead of the raw usage dump. Landing is
 		// informational output — it exits 0. Unknown subcommands remain
 		// usage errors (exit 2).
+		//
+		// `eka --version` prints the CLI version instead of the landing:
+		// one deterministic line ("eka <version>") through the same
+		// presentation writer `eka version` uses — byte-identical to
+		// the first line of `eka version`, the same single source (the
+		// ldflags-injected `version` variable).
 		RunE: func(cmd *cobra.Command, args []string) error {
-			printLanding(styleFor(cmd))
+			if showVersion, _ := cmd.Flags().GetBool(flagVersion); showVersion {
+				fmt.Fprintf(styleFor(cmd).W, "eka %s\n", version)
+				return nil
+			}
+			printLanding(cmd, styleFor(cmd))
 			return nil
 		},
 		// The CLI owns all error output: SilenceErrors + SilenceUsage on
@@ -174,52 +231,100 @@ Exit codes:
 	}
 	root.PersistentFlags().BoolP(flagVerbose, "v", false,
 		"verbose output: additional detail lines (per-unit lists, plan actions)")
-	root.AddCommand(newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
+	root.PersistentFlags().Bool(flagVersion, false,
+		"print the CLI version (the same first line 'eka version' reports) and exit")
+	root.AddCommand(newShareCommand(), newValidateCommand(), newInitCommand(), newExportCommand(), newImportCommand(),
 		newGetCommand(), newContextCommand(), newViewCommand(), newWatchCommand(), newSyncCommand(), newProjectCommand(),
+		newCodeContextCmd(), newCodeDiscoverCmd(), newCodeGetCmd(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
-		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand())
+		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
+		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand(), newCaptureCommand(),
+		newShrCommand(), newRetireCommand(), newUnrelateCommand(), newSchemaCommand(), newAgentsMDCommand(),
+		newVerifyCommand(), newTelemetryCommand())
 	root.AddCommand(newAuthoringCommands()...)
+	// The root help and the landing Commands list are grouped by intent
+	// (Authoring / Repository & Exchange / Knowledge Access / Runtime &
+	// Workspace / Utility): cobra AddGroup/GroupID is the data model,
+	// assignCommandGroups distributes the registered commands, and the
+	// two cobra setters give the built-in help/completion commands their
+	// Utility group when ExecuteC creates them (without creating them
+	// here, so the fresh-tree command list stays built-in-free).
+	root.AddGroup(commandGroups...)
+	assignCommandGroups(root)
+	// CLI-owned MCP entrypoint (sto:mcp-entrypoint-ux): native `eka mcp`
+	// (overview + interactive installer) and `eka mcp serve` (protocol-only)
+	// are registered BEFORE plugin dispatch so the native command wins
+	// (first-wins collision: plugin's `mcp` dispatch is then refused).
+	root.AddCommand(newMcpCommand())
+	// B1 deferred registration (ADR-031): the commands of installed
+	// official plugins are registered into the tree at construction
+	// time, grouped under the dynamic Plugins group. Registration never
+	// fails the CLI — every problem is a visible warning and a skip.
+	// The dynamic group is added only when plugin commands exist, so a
+	// plugin-free CLI renders exactly the five static intent groups.
+	pluginCmds := registerPluginCommands(root)
+	if len(pluginCmds) > 0 {
+		root.AddGroup(&cobra.Group{ID: groupPlugins, Title: "Plugins"})
+	}
+	root.SetHelpCommandGroupID(groupUtility)
+	root.SetCompletionCommandGroupID(groupUtility)
 	// The output container wraps the help text of EVERY command
-	// (HelpFunc resolves up the tree): cobra's default help renders
-	// into a buffer, then the container adds the uniform left margin
-	// and the leading/trailing blank lines — help never sticks to the
-	// terminal corner, and the help content itself stays untouched.
-	defaultHelp := root.HelpFunc()
+	// (HelpFunc resolves up the tree): the help renderer produces the
+	// styled text (colors follow the real writer through the Style), the
+	// container adds the uniform left margin and the leading/trailing
+	// blank lines — help never sticks to the terminal corner.
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		s := styleFor(cmd)
 		out := cmd.OutOrStdout()
 		buf := &bytes.Buffer{}
 		cmd.SetOut(buf)
-		defaultHelp(cmd, args)
+		renderHelp(cmd, s, buf)
 		cmd.SetOut(out)
-		ui.Container(styleFor(cmd), buf.String())
+		ui.Container(s, buf.String())
 	})
 	return root
 }
 
 // printLanding renders the root landing page: a calm product orientation
-// without banners or decoration — heading, one-line description, compact
-// command overview, and pointers to help and version — wrapped in the
-// output container (uniform left margin + leading/trailing blank
-// lines), so it never sticks to the terminal corner. Deterministic on
-// non-TTY output; the heading is accent-colored on a color TTY.
-func printLanding(s *ui.Style) {
+// without banners or decoration — heading, one-line description, the
+// intent-grouped command overview (the same renderCommandGroups the root
+// help uses, so the two never drift apart), and pointers to help and
+// version — wrapped in the output container (uniform left margin +
+// leading/trailing blank lines), so it never sticks to the terminal
+// corner. Deterministic on non-TTY output; on a color TTY the heading
+// and section/group headers are accent-colored, command names Info and
+// the help hints Dim.
+func printLanding(cmd *cobra.Command, s *ui.Style) {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Accent("Engineering Knowledge Architecture (EKA)"))
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "The official command-line interface for the EKA engineering")
 	fmt.Fprintln(&b, "knowledge standard: bootstrap, validate, exchange, and run")
 	fmt.Fprintln(&b, "the knowledge runtime (sync, projects, status, integrity).")
+	fmt.Fprintf(&b, "%s\n", s.Dim("New here? Run 'eka init' to bootstrap a repository."))
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Commands")
-	for _, c := range newRootCommand().Commands() {
-		fmt.Fprintf(&b, "  %-12s %s\n", c.Name(), c.Short)
+	fmt.Fprint(&b, s.Accent("Commands"))
+	// The landing renders the current tree's commands minus the cobra
+	// built-ins ExecuteC creates (help/completion join the tree at
+	// Execute time) — the same built-in-free list a fresh tree yields.
+	cmds := make([]*cobra.Command, 0, len(cmd.Commands()))
+	for _, c := range cmd.Commands() {
+		if c.Name() == "completion" || c.Name() == helpCommandName {
+			continue
+		}
+		cmds = append(cmds, c)
 	}
+	renderCommandGroups(s, &b, commandGroupsFor(cmd), cmds)
+	// renderCommandGroups leaves the last member line unterminated:
+	// close it and add the blank line before the next section.
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Help")
-	fmt.Fprintln(&b, "  Run 'eka help <command>' for command details,")
-	fmt.Fprintln(&b, "  or 'eka <command> --help' for usage.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Version")
+	fmt.Fprintln(&b, s.Accent("Help"))
+	fmt.Fprintf(&b, "  %s\n", s.Dim("Run 'eka help <command>' for command details,"))
+	fmt.Fprintf(&b, "  %s\n", s.Dim("or 'eka <command> --help' for usage."))
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, s.Accent("Version"))
 	fmt.Fprintf(&b, "  %s (EKA standard %s)\n", version, standardVersion)
+	fmt.Fprintf(&b, "  %s\n", s.Dim("Run 'eka --version' for just the CLI version."))
 	ui.Container(s, b.String())
 }

@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/machine"
 	"github.com/maleolabs/eka-core/metadata"
@@ -34,6 +37,8 @@ import (
 //	                       Domain tokens (discovery|architecture|
 //	                       planning|execution|operations): the
 //	                       "domain" collection of every matching unit.
+//	"ses:execution-state"  latest execution snapshot for current repository project;
+//	                        use <ns>/ses:execution-state for explicit cross-project lookup
 //	"containers"           the containers query: every execution
 //	                       container line as a "containers" collection
 //	                       (plan, items/tickets, started/ended,
@@ -180,6 +185,14 @@ only. Any other combination is allowed: --compact and --no-content
 apply everywhere; traversal flags combine with each other and with
 --timeline on the same identity lookup.
 
+The ticket subcommand ('eka get ticket <target>') retrieves one
+ticket's projected status (schema "eka-ticket-v1"). tkt- units are
+GENERATED state projections — their files carry the header "Generated
+— State Projection. Do NOT edit state here; refresh on read." — so
+never edit a projection's state: transition the referenced work item
+instead ('eka transition <work-item-id> <state>'). Run 'eka get
+ticket --help' for the full reference.
+
 The repository must be an EKA repository — a directory tree carrying
 eka.yaml (run 'eka init' to create one) — registered in the EKA
 workspace and synced first ('eka sync'). Run this command inside the
@@ -217,9 +230,13 @@ Exit codes:
 			withUpstream, _ := cmd.Flags().GetBool(flagGetUpstream)
 			withDownstream, _ := cmd.Flags().GetBool(flagGetDownstream)
 			withTimeline, _ := cmd.Flags().GetBool(flagGetTimeline)
+			withFreshness, _ := cmd.Flags().GetBool(flagGetFreshness)
 			typeFilter, _ := cmd.Flags().GetString(flagGetType)
 			dimFilter, _ := cmd.Flags().GetString(flagGetDimension)
 			phaseFilter, _ := cmd.Flags().GetString(flagGetPhase)
+			levelFilter, _ := cmd.Flags().GetString(flagGetLevel)
+			projectFilter, _ := cmd.Flags().GetString(flagGetProject)
+			versionFilter, _ := cmd.Flags().GetString(flagGetVersion)
 			offset, _ := cmd.Flags().GetInt(flagGetOffset)
 			limit, _ := cmd.Flags().GetInt(flagGetLimit)
 			page, _ := cmd.Flags().GetInt(flagGetPage)
@@ -265,6 +282,9 @@ Exit codes:
 			if isContainers && (typeFilter != "" || dimFilter != "" || phaseFilter != "") {
 				return fmt.Errorf("get: --type, --dimension and --phase require a domain target (one of the five Engineering Domains)")
 			}
+			if isContainers && withFreshness {
+				return fmt.Errorf("get: --freshness requires an identity or domain target, not the containers query")
+			}
 			// Pagination flag value and combination rules (pure flag
 			// validation — before the target applicability checks).
 			if err := pagination.validate(); err != nil {
@@ -285,6 +305,18 @@ Exit codes:
 			}
 			if isContainers && (active || current) && container != "" {
 				return fmt.Errorf("get: --active/--current and --container are mutually exclusive")
+			}
+			if levelFilter != "" {
+				lf := strings.ToUpper(strings.TrimSpace(levelFilter))
+				if lf != "L0" && lf != "L1" && lf != "L2" {
+					return fmt.Errorf("get: --level must be L0, L1 or L2, got %q", levelFilter)
+				}
+				levelFilter = lf
+			}
+			if versionFilter != "" {
+				if _, _, _, ok := parseGetVersionParts(versionFilter); !ok {
+					return fmt.Errorf("get: --version must be semver X.Y.Z or X.Y, got %q", versionFilter)
+				}
 			}
 			// The resolution prologue: open (never create) the Runtime,
 			// then gate on workspace and repository state.
@@ -328,18 +360,22 @@ Exit codes:
 				return &exitError{code: exitFail}
 			}
 			opts := getOptions{
-				compact:     compact,
-				noContent:   noContent,
-				upstream:    withUpstream,
-				downstream:  withDownstream,
-				timeline:    withTimeline,
-				typeFilter:  typeFilter,
-				dimFilter:   dimFilter,
-				phaseFilter: phaseFilter,
-				active:      active,
-				current:     current,
-				container:   container,
-				pagination:  pagination,
+				compact:       compact,
+				noContent:     noContent,
+				upstream:      withUpstream,
+				downstream:    withDownstream,
+				timeline:      withTimeline,
+				freshness:     withFreshness,
+				typeFilter:    typeFilter,
+				dimFilter:     dimFilter,
+				phaseFilter:   phaseFilter,
+				levelFilter:   levelFilter,
+				projectFilter: projectFilter,
+				versionFilter: versionFilter,
+				active:        active,
+				current:       current,
+				container:     container,
+				pagination:    pagination,
 			}
 			// Issue-number targets (RFC): "#<n>" resolves to its line
 			// (unambiguous across the per-group counters) before the
@@ -377,9 +413,13 @@ Exit codes:
 	cmd.Flags().Bool(flagGetUpstream, false, "identity lookup: include the resolved upstream units (the units the target's relationships point at) as an \"upstream\" array")
 	cmd.Flags().Bool(flagGetDownstream, false, "identity lookup: include the units that reference the target as a \"downstream\" array")
 	cmd.Flags().Bool(flagGetTimeline, false, "identity lookup: include the line's instances as a \"timeline\" array ({canonical_form, instance_version, revision, object_hash, change_log})")
+	cmd.Flags().Bool(flagGetFreshness, false, "include the freshness block ({validUntil, lastConfirmed, daysUntilExpiry, status}) on every document — status is stale|current|undeclared")
 	cmd.Flags().String(flagGetType, "", "domain query: filter by artifact type token (e.g. adr, sto, ctr)")
 	cmd.Flags().String(flagGetDimension, "", "domain query: filter by primary knowledge dimension")
 	cmd.Flags().String(flagGetPhase, "", "domain query: filter by phase context attribute")
+	cmd.Flags().String(flagGetLevel, "", "domain/identity: filter by shr level (L0, L1, L2) — server-side; for shr sharing objects")
+	cmd.Flags().String(flagGetProject, "", "shr only: filter by sourceProject (per-project identifier)")
+	cmd.Flags().String(flagGetVersion, "", "shr only: filter by sourceVersion (semver, respects immutability)")
 	cmd.Flags().Int(flagGetOffset, 0, "containers/execution: 0-based offset into the collection (default 0)")
 	cmd.Flags().Int(flagGetLimit, 0, "containers/execution: page size (default 0 = no limit)")
 	cmd.Flags().Int(flagGetPage, 1, "containers/execution: 1-based page number (requires --limit; default 1)")
@@ -400,9 +440,13 @@ const (
 	flagGetUpstream   = "upstream"
 	flagGetDownstream = "downstream"
 	flagGetTimeline   = "timeline"
+	flagGetFreshness  = "freshness"
 	flagGetType       = "type"
 	flagGetDimension  = "dimension"
 	flagGetPhase      = "phase"
+	flagGetLevel      = "level"
+	flagGetProject    = "project"
+	flagGetVersion    = "version"
 	// Containers query and pagination options (Feature: containers
 	// list).
 	flagGetOffset    = "offset"
@@ -416,20 +460,47 @@ const (
 // getOptions carries the retrieval options of one get run, already
 // validated for target applicability by the command prologue.
 type getOptions struct {
-	compact     bool
-	noContent   bool
-	upstream    bool
-	downstream  bool
-	timeline    bool
-	typeFilter  string
-	dimFilter   string
-	phaseFilter string
+	compact    bool
+	noContent  bool
+	upstream   bool
+	downstream bool
+	timeline   bool
+	// freshness appends the clock-dependent freshness block to every
+	// document of this retrieval (--freshness; identity and domain
+	// forms). Absent, the output is byte-identical to today's.
+	freshness     bool
+	typeFilter    string
+	dimFilter     string
+	phaseFilter   string
+	levelFilter   string
+	projectFilter string
+	versionFilter string
 	// Containers query filters (the containers target only).
 	active    bool
 	current   bool
 	container string
 	// Pagination (the execution domain and the containers target).
 	pagination paginationFlags
+}
+
+func resolveProjectSES(r *runtime.Runtime, repo runtime.Repo) (*exchange.Unit, bool, error) {
+	ns := repo.Namespace
+	if ns == "" {
+		ns = "eka"
+	}
+	units, err := r.Knowledge.Search(runtime.SearchQuery{
+		ProjectID: repo.ProjectID,
+		Namespace: ns,
+		Type:      "ses",
+		ID:        "execution-state",
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(units) == 0 {
+		return nil, false, nil
+	}
+	return units[len(units)-1], true, nil
 }
 
 // getIdentity resolves the identity target and builds its retrieval
@@ -439,16 +510,50 @@ type getOptions struct {
 // compactly or in the indented form. All runtime failures and
 // inapplicable combinations surface as deterministic errors (exit 2).
 func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOptions) ([]byte, error) {
-	// Identity lookup: canonical form (exact instance) or qualified
-	// line form (highest instance — the latest knowledge version) —
-	// the Resolver contract. Unqualified
-	// forms are refused by the Resolver with the expected forms listed.
-	unit, ok, err := r.Resolver.Resolve(target)
+	// SES convenience lookup must stay within current repository project.
+	var unit *exchange.Unit
+	var ok bool
+	var err error
+	if target == "ses:execution-state" {
+		unit, ok, err = resolveProjectSES(r, repo)
+	} else {
+		// Identity lookup: canonical form (exact instance) or qualified
+		// line form (highest instance — the latest knowledge version) —
+		// the Resolver contract. Unqualified forms are refused by the
+		// Resolver with the expected forms listed.
+		unit, ok, err = r.Resolver.Resolve(target)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err) // Exit 2: usage.
 	}
 	if !ok {
 		return nil, fmt.Errorf("get: no knowledge object matches %q", target) // Exit 2.
+	}
+	// Server-side level filter for identity: when --level provided, the
+	// resolved unit must carry that shr level (stored in content level field).
+	if o.levelFilter != "" {
+		if lvl := shrLevelOf(unit); lvl != "" && lvl != o.levelFilter {
+			return nil, fmt.Errorf("get: %q level %q does not match filter --level %q", target, lvl, o.levelFilter)
+		}
+		if lvl := shrLevelOf(unit); lvl == "" {
+			return nil, fmt.Errorf("get: --level filter only applies to shr objects, %q is not a shr (no level)", target)
+		}
+	}
+	if o.projectFilter != "" {
+		if proj := shrProjectOf(unit); proj != "" && proj != o.projectFilter {
+			return nil, fmt.Errorf("get: %q project %q does not match filter --project %q", target, proj, o.projectFilter)
+		}
+		if proj := shrProjectOf(unit); proj == "" {
+			return nil, fmt.Errorf("get: --project filter only applies to shr objects, %q is not a shr (no project)", target)
+		}
+	}
+	if o.versionFilter != "" {
+		if ver := shrVersionOf(unit); ver != "" && ver != o.versionFilter {
+			return nil, fmt.Errorf("get: %q version %q does not match filter --version %q", target, ver, o.versionFilter)
+		}
+		if ver := shrVersionOf(unit); ver == "" {
+			return nil, fmt.Errorf("get: --version filter only applies to shr objects, %q is not a shr (no version)", target)
+		}
 	}
 	doc, err := machine.NewDocument(unit)
 	if err != nil {
@@ -511,6 +616,12 @@ func getIdentity(r *runtime.Runtime, repo runtime.Repo, target string, o getOpti
 		}
 		doc.AddTimeline(tl)
 	}
+	if o.freshness {
+		// One clock reading for the whole retrieval: every document of
+		// the response is judged as of the same instant.
+		f := runtime.FreshnessFor(unit, time.Now())
+		doc.Freshness = &f
+	}
 	if o.compact {
 		return doc.MarshalCompact()
 	}
@@ -542,6 +653,19 @@ func dedupLinesLatest(units []*exchange.Unit) []*exchange.Unit {
 	return out
 }
 
+// unitByCanonicalForm finds the unit a collection document was built
+// from (NewCollection sorts documents by canonical form; the source
+// units keep their store order). Linear because collections are
+// page-sized and the mapping is needed only under --freshness.
+func unitByCanonicalForm(units []*exchange.Unit, form string) *exchange.Unit {
+	for _, u := range units {
+		if u.CanonicalIdentityForm == form {
+			return u
+		}
+	}
+	return nil
+}
+
 // getDomain runs the domain query: every unit of the Engineering
 // Domain matching the exact-match filters (--type/--dimension/--phase)
 // as a "domain" collection, sorted by canonical form, optionally
@@ -564,9 +688,28 @@ func getDomain(r *runtime.Runtime, repo runtime.Repo, target string, o getOption
 		return nil, fmt.Errorf("get failed: %w", err) // Exit 2: store failure.
 	}
 	units = dedupLinesLatest(units)
+	// Server-side shr level filter for domain queries: --level L0|L1|L2.
+	if o.levelFilter != "" {
+		units = filterByShrLevel(units, o.levelFilter)
+	}
+	if o.projectFilter != "" {
+		units = filterByShrProject(units, o.projectFilter)
+	}
+	if o.versionFilter != "" {
+		units = filterByShrVersion(units, o.versionFilter)
+	}
 	col, err := machine.NewCollection(name, units)
 	if err != nil {
 		return nil, fmt.Errorf("get failed: %w", err) // Exit 2: internal.
+	}
+	if o.freshness {
+		// The same clock instant for the whole collection keeps the
+		// response internally consistent.
+		now := time.Now()
+		for _, d := range col.Units {
+			f := runtime.FreshnessFor(unitByCanonicalForm(units, d.CanonicalForm), now)
+			d.Freshness = &f
+		}
 	}
 	if o.noContent {
 		// NewCollection builds the unit documents internally; strip
@@ -695,10 +838,116 @@ func machineChangeLog(entries []exchange.ChangeLogEntry) []machine.ChangeLogEntr
 	return out
 }
 
+// filterByShrLevel keeps only shr units whose content level matches the
+// filter (L0|L1|L2). Non-shr units are excluded when a level filter is
+// active (server-side shr filtering).
+func filterByShrLevel(units []*exchange.Unit, lvl string) []*exchange.Unit {
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrLevelOf(u) == lvl {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// shrLevelOf extracts the shr level (L0|L1|L2) from a unit's structured
+// content payload. Returns "" for non-shr or missing level.
+func shrLevelOf(u *exchange.Unit) string {
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["level"].(string); ok {
+		return strings.ToUpper(strings.TrimSpace(v))
+	}
+	return ""
+}
+
+// parseGetVersionParts validates semver for get --version.
+func parseGetVersionParts(v string) (int, int, int, bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, 0, 0, false
+	}
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	var nums [3]int
+	for i := 0; i < 3; i++ {
+		n := 0
+		for _, ch := range parts[i] {
+			if ch < '0' || ch > '9' {
+				return 0, 0, 0, false
+			}
+			n = n*10 + int(ch-'0')
+		}
+		nums[i] = n
+	}
+	return nums[0], nums[1], nums[2], true
+}
+func shrProjectOf(u *exchange.Unit) string {
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["sourceProject"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+func shrVersionOf(u *exchange.Unit) string {
+	if u.Identity.Type != "shr" {
+		return ""
+	}
+	if len(u.ContentPayload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(u.ContentPayload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m["sourceVersion"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+func filterByShrProject(units []*exchange.Unit, proj string) []*exchange.Unit {
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrProjectOf(u) == proj {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+func filterByShrVersion(units []*exchange.Unit, ver string) []*exchange.Unit {
+	out := make([]*exchange.Unit, 0, len(units))
+	for _, u := range units {
+		if shrVersionOf(u) == ver {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // domainTokens are the five Engineering Domain query tokens in stratum
-// order, mapped to the canonical Engineering Domain names (the values
-// carried by Classification.Domain of stored units and the machine
-// JSON). Deterministic — never derived from map iteration.
+// order, mapped to the canonical Engineering Domain names. Hardened:
+// now derived from conformance registry (single source of truth) plus
+// alias "records" for Operations (shr dimension alias, view Operations 3 groups).
 var domainTokens = []struct {
 	token string
 	name  string
@@ -708,14 +957,27 @@ var domainTokens = []struct {
 	{"planning", "Planning"},
 	{"execution", "Execution"},
 	{"operations", "Operations"},
+	{"records", "Operations"}, // alias: dimension records → Operations domain
 }
 
 // domainTokenName maps a query token to its canonical Engineering
-// Domain name; the second return value is false for unknown tokens.
+// Domain name via registry + alias. Uses conformance.DomainForDimension
+// as secondary source for alias validation.
 func domainTokenName(token string) (string, bool) {
+	// Alias: records → Operations (shr records dimension)
+	if token == "records" {
+		return "Operations", true
+	}
 	for _, d := range domainTokens {
 		if d.token == token {
 			return d.name, true
+		}
+	}
+	// Registry fallback: if token is a dimension that maps to a domain, accept as alias
+	if _, ok := conformance.DomainForDimension(token); ok {
+		// Only alias dimensions that are Operations; others are not domain tokens
+		if token == "records" || token == "operations" {
+			return "Operations", true
 		}
 	}
 	return "", false

@@ -1,0 +1,28 @@
+# Pin of the eka-standard artifacts vendored into eka-cli.
+#
+# Why this exists: eka-cli copies the root EKA standard declaration and the git
+# hook templates from eka-standard and embeds them into the binary
+# (standardembed, ADR-023). The tests in standardembed_test.go assert only
+# internal consistency — that the declaration parses and that its Version X.Y
+# line matches the standard version the conformance rules implement. A
+# hand-edited copy that keeps a valid Version line satisfies all of them while
+# its content diverges from the published standard.
+#
+# The digests below record the bytes of the eka-standard release named by
+# standardRelease, so divergence from that release is detectable. They do not
+# detect a simultaneous edit of the file and this pin; that is what the refresh
+# script and code review are for. The pin makes accidental drift loud, which is
+# the failure mode that actually occurs.
+#
+# Tested by standardembed_pin_test.go. Refresh after copying a file from
+# eka-standard — the copy and the re-pin must be one operation:
+#
+#   go run ./scripts/pin-vendored -write
+standardRelease: "1.7"
+
+# sha256 of each vendored artifact, keyed by its path relative to this module
+# root (forward slashes on every platform).
+standard:
+  EKA: 2937ce38f2328ddfbb5a06178bd18bff94f0ff04c4d07ef70daf010ae0169cd3
+  templates/hooks/pre-commit: edc49a3e0bd07a05d631c732f730f53a84ac783f8d9ae062bb8501b1e21b7b97
+  templates/hooks/pre-push: 2c02d46e88621404403d4529d32907598188141ca408ea667ff20cd2c6cf4d99

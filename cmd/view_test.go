@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/runtime"
 )
 
@@ -115,6 +116,12 @@ func TestViewHelpExitsZero(t *testing.T) {
 		}
 		if !strings.Contains(text, "EKA workspace") {
 			t.Errorf("args %v: help must document the workspace canonical source:\n%s", args, text)
+		}
+		// The generated-projection constraint is discoverable
+		// (sto:cli-polish): the ticket projection help explains that
+		// tkt- units are generated state projections.
+		if !strings.Contains(text, "GENERATED state projections") {
+			t.Errorf("args %v: help must document the generated projection constraint:\n%s", args, text)
 		}
 	}
 }
@@ -264,7 +271,7 @@ func TestViewExecutionHappyPath(t *testing.T) {
 		"Execution",
 		"Container    eka-view-fixture/ctr:wave-1",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"• eka-view-fixture/ctr:wave-1  (active)",
@@ -322,11 +329,13 @@ func TestViewExecutionAliasesIdentical(t *testing.T) {
 	}
 }
 
-// TestViewMultipleActiveWarning: the multi-active container anomaly is
-// surfaced at the CLI — the warning line names the deterministically
-// chosen container (lexicographically smallest canonical identity) and
-// the command still exits 0.
-func TestViewMultipleActiveWarning(t *testing.T) {
+// TestViewMultipleActiveBoards: the multi-active state is a VALID
+// parallel execution state (dec:parallel-container-execution) — the
+// execution projection renders ONE board per active container plus a
+// containers summary, and the old anomaly warning is gone. The
+// deterministically chosen primary container (lexicographically
+// smallest canonical identity) leads; the command exits 0.
+func TestViewMultipleActiveBoards(t *testing.T) {
 	seedViewRepo(t, "multi-active")
 	code, out, errText := runIn([]string{"view", "execution"})
 	if code != 0 {
@@ -335,17 +344,21 @@ func TestViewMultipleActiveWarning(t *testing.T) {
 	if errText != "" {
 		t.Errorf("stderr must be empty, got %q", errText)
 	}
+	// Both active containers render their own board header.
 	for _, want := range []string{
-		"Multiple active containers — showing eka-view-fixture/ctr:wave-1",
-		"Container    eka-view-fixture/ctr:wave-1",
-		"│ Planned (0)",
-		"│ Done (0)",
-		"—",
-		"Active Work: 0",
-		"Overall Progress: ░░░░░░░░░░ 0/0 (0%)",
+		"eka-view-fixture/ctr:wave-1",
+		"eka-view-fixture/ctr:wave-2",
+		"Active: 2 container(s) running in parallel",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output must contain %q:\n%s", want, out)
+		}
+	}
+	// The anomaly warning is gone: multi-active is valid, never a
+	// warning.
+	for _, stale := range []string{"Multiple active containers — showing", "anomaly"} {
+		if strings.Contains(out, stale) {
+			t.Errorf("output must not contain the stale anomaly warning %q:\n%s", stale, out)
 		}
 	}
 	// Deterministic across runs, like every other projection.
@@ -368,7 +381,7 @@ func TestViewBoardHappyPath(t *testing.T) {
 		"Board",
 		"Container    all",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"6 work items across 2 containers",
@@ -863,7 +876,7 @@ func TestViewContainersHappyPath(t *testing.T) {
 	for _, want := range []string{
 		"Containers",
 		"Repository   .",
-		"Knowledge    EKA v1.0",
+		"Knowledge    EKA v" + exchange.SpecificationVersion,
 		"Domain       Execution",
 		"↓ View",
 		"NAME    PLAN  ITEMS/TICKETS  STARTED     ENDED  STATUS",
@@ -1034,10 +1047,14 @@ func TestViewRetrievalFlagErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"view", "board", "--active"}, "the board projection supports --offset/--limit/--page only"},
-		{[]string{"view", "board", "--container", "wave-0"}, "the board projection supports --offset/--limit/--page only"},
-		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination; containers: pagination and filters)"},
-		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination; containers: pagination and filters)"},
+		{[]string{"view", "board", "--active"}, "the board projection supports --offset/--limit/--page/--member/--json only"},
+		{[]string{"view", "board", "--container", "wave-0"}, "the board projection supports --offset/--limit/--page/--member/--json only"},
+		{[]string{"view", "board", "--json", "--limit", "2"}, "board --json does not compose with pagination"},
+		{[]string{"view", "containers", "--json"}, "--json is a board-projection flag"},
+		{[]string{"view", "execution", "--limit", "2"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "ticket", "tkt-ts-gamma", "--active"}, "the ticket projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "execution", "--member", "alice"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
+		{[]string{"view", "execution", "--json"}, "the execution projection does not support these flags (board: pagination, --member and --json; containers: pagination and filters; operations: --type/--level/--project/--version)"},
 	}
 	for _, c := range cases {
 		code, out, errText := runIn(c.args)
@@ -1057,7 +1074,7 @@ func TestViewRetrievalFlagErrors(t *testing.T) {
 	t.Setenv("EKA_HOME", t.TempDir())
 	chdirInto(t, t.TempDir())
 	code, _, errText := runIn([]string{"view", "board", "--active"})
-	if code != 2 || !strings.Contains(errText, "supports --offset/--limit/--page only") {
+	if code != 2 || !strings.Contains(errText, "supports --offset/--limit/--page/--member/--json only") {
 		t.Errorf("board --active without a workspace: exit = %d, %q; want 2 + the usage error", code, errText)
 	}
 }

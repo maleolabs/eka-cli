@@ -36,6 +36,15 @@ A project groups one or more repositories; inside an EKA repository
 from the file — project, repository name and namespace. The canonical
 store attributes every pulled object to its repository.
 
+'eka project remove <project>/<name>' unregisters a repository;
+removing a project's LAST repository deletes the empty project too
+(canonical knowledge objects stay in the workspace store).
+
+'eka project unregister <project> [--force]' unregisters a whole
+project and all its repositories (path moved, project deleted,
+cleanup). On a terminal the command prompts for confirmation;
+outside a terminal --force is required.
+
 Exit codes:
   0  success
   2  usage or internal error`,
@@ -44,7 +53,7 @@ Exit codes:
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newProjectRegisterCommand(), newProjectListCommand())
+	cmd.AddCommand(newProjectRegisterCommand(), newProjectListCommand(), newProjectRemoveCommand(), newProjectUnregisterCommand())
 	return cmd
 }
 
@@ -319,6 +328,244 @@ Exit codes:
 		},
 	}
 	return cmd
+}
+
+// newProjectRemoveCommand builds `eka project remove <project>/<name>`.
+func newProjectRemoveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove <project>/<name>",
+		Short: "Remove a repository from the workspace registry",
+		Long: `Remove (unregister) the repository <name> of <project> from
+the EKA workspace registry. The target is the composite
+<project>/<name> — exactly as 'eka project list' renders it.
+
+Removing a repository deletes its registry row; when it was the
+project's LAST repository, the emptied project row is deleted too.
+Canonical knowledge objects are NOT deleted: they remain in the
+workspace store under their provenance pair, and re-registering the
+repository restores their provenance access.
+
+Exit codes:
+  0  removal succeeded
+  2  usage or internal error (bad composite argument, unknown project
+     or repository, registry failure)`,
+		Example: `  eka project remove atrium/api
+  eka project remove eka-sync-fixture/eka-sync-fixture`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID, name, err := parseProjectRepoArg(args[0])
+			if err != nil {
+				return fmt.Errorf("project remove failed: %w", err)
+			}
+
+			r, err := runtime.Ensure()
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+
+			// Deterministic candidate listing: an unknown project or
+			// repository names what IS registered (the same style the
+			// other commands use for unknown targets).
+			projects, err := r.Workspace.Projects()
+			if err != nil {
+				return err
+			}
+			var known bool
+			for _, p := range projects {
+				if p.ID == projectID {
+					known = true
+					break
+				}
+			}
+			if !known {
+				ids := make([]string, 0, len(projects))
+				for _, p := range projects {
+					ids = append(ids, p.ID)
+				}
+				sort.Strings(ids)
+				if len(ids) == 0 {
+					return fmt.Errorf("project remove failed: unknown project %q — no projects are registered; run 'eka project register' first", projectID)
+				}
+				return fmt.Errorf("project remove failed: unknown project %q — available projects: %s", projectID, strings.Join(ids, ", "))
+			}
+			repos, err := r.Workspace.Repos(projectID)
+			if err != nil {
+				return err
+			}
+			var repo *workspace.Repo
+			names := make([]string, 0, len(repos))
+			for i := range repos {
+				names = append(names, repos[i].Name)
+				if repos[i].Name == name {
+					repo = &repos[i]
+				}
+			}
+			if repo == nil {
+				if len(names) == 0 {
+					return fmt.Errorf("project remove failed: unknown repository %q in project %q — the project has no repositories", name, projectID)
+				}
+				sort.Strings(names)
+				return fmt.Errorf("project remove failed: unknown repository %q in project %q — available repositories: %s", name, projectID, strings.Join(names, ", "))
+			}
+
+			removed, err := r.Workspace.UnregisterRepo(projectID, name)
+			if err != nil {
+				return err
+			}
+			if !removed {
+				return fmt.Errorf("project remove failed: repository %s/%s vanished during removal; nothing was changed", projectID, name)
+			}
+			s := styleFor(cmd)
+			ui.NewHeader(s, "Projects").
+				Add("Workspace", r.Path()).
+				Render()
+			fmt.Fprintf(s.W, "\n%s removed %s  (%s)\n", ui.IconBullet, s.Info(repo.Name), displayPath(repo.Path))
+			fmt.Fprintf(s.W, "\n%s\n", s.Dim("Canonical knowledge objects remain in the workspace store; re-registering restores provenance access."))
+			return nil
+		},
+	}
+	return cmd
+}
+
+// newProjectUnregisterCommand builds `eka project unregister <project> [--force]`.
+func newProjectUnregisterCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unregister <project> [--force]",
+		Short: "Remove a project and all its repositories from the workspace registry",
+		Long: `Remove (unregister) the whole project <project> and all its
+repositories from the EKA workspace registry. The target is the
+project id — exactly as 'eka project list' renders it.
+
+Unregistering a project deletes every repository row under that
+project; the emptied project row is deleted too. Canonical knowledge
+objects are NOT deleted: they remain in the workspace store under
+their provenance pairs, and re-registering restores provenance
+access. Use for: project deleted, path moved, cleanup.
+
+On a terminal the command prompts for confirmation when the project
+has repositories; outside a terminal --force is required (agents
+decide programmatically). The prompt defaults to abort.
+
+Exit codes:
+  0  unregistration succeeded (or aborted at the prompt)
+  2  usage or internal error (bad argument, unknown project, registry
+     failure, or --force required outside a terminal)`,
+		Example: `  eka project unregister atrium --force
+  eka project unregister eka-sync-fixture`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectID := args[0]
+			if strings.Contains(projectID, "/") || strings.TrimSpace(projectID) == "" {
+				return fmt.Errorf("project unregister failed: the target must be <project>, got %q", args[0])
+			}
+			force, err := cmd.Flags().GetBool("force")
+			if err != nil {
+				return fmt.Errorf("project unregister failed: %w", err)
+			}
+
+			r, err := runtime.Ensure()
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+
+			projects, err := r.Workspace.Projects()
+			if err != nil {
+				return err
+			}
+			var known bool
+			for _, p := range projects {
+				if p.ID == projectID {
+					known = true
+					break
+				}
+			}
+			if !known {
+				ids := make([]string, 0, len(projects))
+				for _, p := range projects {
+					ids = append(ids, p.ID)
+				}
+				sort.Strings(ids)
+				if len(ids) == 0 {
+					return fmt.Errorf("project unregister failed: unknown project %q — no projects are registered; run 'eka project register' first", projectID)
+				}
+				return fmt.Errorf("project unregister failed: unknown project %q — available projects: %s", projectID, strings.Join(ids, ", "))
+			}
+			repos, err := r.Workspace.Repos(projectID)
+			if err != nil {
+				return err
+			}
+			n := len(repos)
+
+			// Confirmation: interactive when tty, otherwise require --force.
+			if n > 0 && !force {
+				sTTY := styleFor(cmd)
+				tty := sTTY.TTY && isTTYReader(cmd.InOrStdin())
+				if !tty {
+					return fmt.Errorf("project unregister failed: project %q has %s; run 'eka project unregister %s --force' to unregister or confirm interactively on a terminal", projectID, plural(n, "repository", "repositories"), projectID)
+				}
+				// Interactive confirmation (TTY): unregister vs abort, default abort.
+				prompt := fmt.Sprintf("unregister project %q (%s) and all its repositories?", projectID, plural(n, "repository", "repositories"))
+				value, err := ui.Select(sTTY, cmd.InOrStdin(), cmd.OutOrStdout(), prompt,
+					[]ui.MenuItem{
+						{Title: "unregister project " + projectID, Value: "unregister"},
+						{Title: "abort", Value: "abort"},
+					}, 1)
+				if err != nil {
+					if errors.Is(err, ui.ErrCancelled) {
+						fmt.Fprintf(sTTY.W, "Aborted; project %s kept.\n", projectID)
+						return nil
+					}
+					return fmt.Errorf("project unregister failed: %w", err)
+				}
+				if value != "unregister" {
+					fmt.Fprintf(sTTY.W, "Aborted; project %s kept.\n", projectID)
+					return nil
+				}
+			}
+
+			// Remove the whole project in one registry operation: every
+			// repository row under it and the project row itself
+			// (workspace.UnregisterProject semantics). Canonical objects
+			// stay. The count is re-read at removal time, so a repository
+			// registered between the listing above and this call is
+			// removed too — the confirmation prompt names the count seen
+			// at prompt time, the summary reports what was actually
+			// removed.
+			removedCount, err := r.Workspace.UnregisterProject(projectID)
+			if err != nil {
+				return err
+			}
+			s := styleFor(cmd)
+			ui.NewHeader(s, "Projects").
+				Add("Workspace", r.Path()).
+				Render()
+			if n == 0 {
+				fmt.Fprintf(s.W, "\n%s unregistered project %s (no repositories)\n", ui.IconBullet, s.Info(projectID))
+			} else {
+				fmt.Fprintf(s.W, "\n%s unregistered project %s (%s)\n", ui.IconBullet, s.Info(projectID), plural(removedCount, "repository", "repositories"))
+				for _, repo := range repos {
+					fmt.Fprintf(s.W, "  %s %s  (%s)\n", ui.IconBullet, s.Info(repo.Name), displayPath(repo.Path))
+				}
+			}
+			fmt.Fprintf(s.W, "\n%s\n", s.Dim("Canonical knowledge objects remain in the workspace store; re-registering restores provenance access."))
+			return nil
+		},
+	}
+	cmd.Flags().Bool("force", false, "unregister without the confirmation prompt (non-interactive runs)")
+	return cmd
+}
+
+// parseProjectRepoArg splits the composite `<project>/<name>` argument:
+// exactly one separator with two non-empty halves — anything else is a
+// usage error (exit 2).
+func parseProjectRepoArg(arg string) (project, name string, err error) {
+	parts := strings.Split(arg, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("the target must be <project>/<name>, got %q", arg)
+	}
+	return parts[0], parts[1], nil
 }
 
 // displayPath renders a repository path relative to the current

@@ -1,0 +1,1 @@
+{"changes":["eka-cli/cmd/code_context_test.go"],"role":"implementation","summary":"[role: backend] Added parity quality: CLI/MCP equivalence, stable ordering, 32/64 bounds, cache invalidation, output purity, token reduction","tests":["TestCodeContextParityAndDeterminism"]}
