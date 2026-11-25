@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/maleolabs/eka-core/contexts"
 	"github.com/maleolabs/eka-core/metadata"
 )
 
@@ -63,16 +64,6 @@ const AgentsMDTruncatedPrefix = "... +"
 // only when the index carries at least one type group.
 const agentsMDConstraintsHeading = "Constraints (Discovery + Architecture, stratum 1-2; index only — read one with `eka get <ns>/<type>:<id>`):"
 
-// IndexEntry is one type group of the managed block's constraint index:
-// the artifact type token and the ids of the latest active stratum-1/2
-// knowledge lines of that type, rendered as one "type: id id ..." line.
-// Callers supply entries in render order (stratum then token, ids
-// sorted); BuildAgentsMDBlock preserves it.
-type IndexEntry struct {
-	Type string
-	IDs  []string
-}
-
 // agentsMDIndexLine is one rendered constraint-index line with the
 // number of (type,id) entries it carries (for the truncation count).
 type agentsMDIndexLine struct {
@@ -106,7 +97,7 @@ type agentsMDIndexLine struct {
 // past AgentsMDBlockBudget; the index is then omitted rather than paying
 // a dangling truncation line. Determinism (same inputs → same bytes) is
 // the contract.
-func BuildAgentsMDBlock(project, namespace string, index []IndexEntry) ([]byte, int) {
+func BuildAgentsMDBlock(project, namespace string, index []contexts.ConstraintGroup) ([]byte, int) {
 	var b bytes.Buffer
 	b.WriteString(agentsMDMarkerStart + "\n")
 	b.WriteString("## EKA Workflow Context (auto-managed; edit outside the markers only)\n")
@@ -137,7 +128,7 @@ func BuildAgentsMDBlock(project, namespace string, index []IndexEntry) ([]byte, 
 
 // agentsMDIndexLines renders the index to one line per type group;
 // groups with no ids are skipped (defensive — they carry nothing).
-func agentsMDIndexLines(index []IndexEntry) []agentsMDIndexLine {
+func agentsMDIndexLines(index []contexts.ConstraintGroup) []agentsMDIndexLine {
 	lines := make([]agentsMDIndexLine, 0, len(index))
 	for _, e := range index {
 		if len(e.IDs) == 0 {
@@ -243,7 +234,7 @@ func RenderAgentsMDBlock(root string) (block []byte, omitted, constraints int, m
 
 // IndexEntryCount is the number of index entries (constraint lines) in
 // an index: the sum of every group's ids.
-func IndexEntryCount(index []IndexEntry) int {
+func IndexEntryCount(index []contexts.ConstraintGroup) int {
 	n := 0
 	for _, e := range index {
 		n += len(e.IDs)

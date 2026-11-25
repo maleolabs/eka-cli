@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/maleolabs/eka-core/contexts"
 )
 
 // This file implements the per-host projection shims of M2: the rule files
@@ -121,7 +123,7 @@ func shimSlug(dir string) string {
 // hostShimContent renders one shim: YAML frontmatter naming the subtree
 // pattern and a bounded body naming the bound constraints plus the read
 // hint. Reuses the root index renderer and budget so the two never drift.
-func hostShimContent(host, namespace, dir string, index []IndexEntry) []byte {
+func hostShimContent(host, namespace, dir string, index []contexts.ConstraintGroup) []byte {
 	var b bytes.Buffer
 	b.WriteString("---\n")
 	if host == HostCursor {

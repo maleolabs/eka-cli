@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/maleolabs/eka-core/contexts"
 	"github.com/maleolabs/eka-core/exchange"
 )
 
 // testBlock builds the managed block for a test, discarding the omitted
 // count (tests that care read it from BuildAgentsMDBlock directly).
-func testBlock(project, namespace string, index []IndexEntry) []byte {
+func testBlock(project, namespace string, index []contexts.ConstraintGroup) []byte {
 	b, _ := BuildAgentsMDBlock(project, namespace, index)
 	return b
 }
@@ -62,7 +63,7 @@ func TestBuildAgentsMDBlock(t *testing.T) {
 // one "type: id id ..." line per group, in the supplied order, within
 // the byte budget.
 func TestBuildAgentsMDBlockIndex(t *testing.T) {
-	index := []IndexEntry{
+	index := []contexts.ConstraintGroup{
 		{Type: "fnd", IDs: []string{"a", "b"}},
 		{Type: "adr", IDs: []string{"001-x"}},
 	}
@@ -86,13 +87,13 @@ func TestBuildAgentsMDBlockIndex(t *testing.T) {
 // deterministically and the block stays within the byte budget (assert
 // the byte count, not a line count).
 func TestBuildAgentsMDBlockBounded(t *testing.T) {
-	var index []IndexEntry
+	var index []contexts.ConstraintGroup
 	for _, typ := range []string{"fnd", "req", "str", "vis", "adr", "dec", "spec", "std", "arc", "gls"} {
 		var ids []string
 		for i := 0; i < 200; i++ {
 			ids = append(ids, fmt.Sprintf("%03d-a-fairly-long-constraint-identifier-%d", i, i))
 		}
-		index = append(index, IndexEntry{Type: typ, IDs: ids})
+		index = append(index, contexts.ConstraintGroup{Type: typ, IDs: ids})
 	}
 	b, omitted := BuildAgentsMDBlock("p", "n", index)
 	if len(b) > AgentsMDBlockBudget {
@@ -117,7 +118,7 @@ func TestBuildAgentsMDBlockBounded(t *testing.T) {
 // budget binds the INDEX, not the fixed prose+identity (EKA identifiers
 // are uncapped — metadata.ValidIdent imposes no length limit).
 func TestBuildAgentsMDBlockOverlongIdentity(t *testing.T) {
-	index := []IndexEntry{{Type: "fnd", IDs: []string{"a", "b", "c"}}}
+	index := []contexts.ConstraintGroup{{Type: "fnd", IDs: []string{"a", "b", "c"}}}
 	long := strings.Repeat("x", AgentsMDBlockBudget)
 	b := string(testBlock(long, long, index))
 	if strings.Contains(b, agentsMDConstraintsHeading) {
