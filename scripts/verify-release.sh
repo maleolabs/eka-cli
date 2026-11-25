@@ -116,5 +116,27 @@ else
   fi
 fi
 
+# --- axis 5: the generated README artifacts still describe this repository ---
+# The demo recording and the latency table are committed artifacts that a script
+# in this repository derives, so this axis needs no sibling checkout and works in
+# release CI as well as locally. It re-runs nothing: --check compares the demo
+# against its recorded digest and the table and chart against the record they came
+# from. Re-recording and re-measuring stay deliberate acts, which is what keeps
+# this axis cheap enough to stand in front of every tag.
+for GENERATED in media bench; do
+  GEN_SCRIPT="$ROOT/scripts/$GENERATED.sh"
+  if [ ! -f "$GEN_SCRIPT" ]; then
+    skip "$GENERATED: scripts/$GENERATED.sh is absent"
+    continue
+  fi
+  OUT=$(cd "$ROOT" && sh "$GEN_SCRIPT" --check 2>&1)
+  if [ $? -eq 0 ]; then
+    pass "$GENERATED: committed artifacts match what scripts/$GENERATED.sh derives"
+  else
+    REASON=$(printf '%s\n' "$OUT" | grep '^FAIL' | head -2 | tr '\n' ' ')
+    fail "$GENERATED: ${REASON:-scripts/$GENERATED.sh --check failed}"
+  fi
+done
+
 printf '\nverdict: %d axes checked, %d failed, %d skipped\n' "$CHECKED" "$FAILED" "$SKIPPED"
 [ "$FAILED" -eq 0 ]

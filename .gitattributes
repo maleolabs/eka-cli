@@ -6,3 +6,6 @@
 # (Windows checkouts would otherwise rewrite LF into CRLF and break the
 # byte-exact contract).
 EKA -text
+
+# Recorded README media is committed binary: never normalise or diff it as text.
+*.gif binary
