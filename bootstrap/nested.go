@@ -1,15 +1,13 @@
 package bootstrap
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path"
 	"sort"
 	"strings"
 
+	"github.com/maleolabs/eka-core/contexts"
 	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/pathglob"
 )
 
 // This file implements the path-scoped projection of the constraint index
@@ -50,18 +48,8 @@ import (
 // subtree, and the managed block bytes BuildAgentsMDBlock produced.
 type NestedEntry struct {
 	Dir   string
-	Index []IndexEntry
+	Index []contexts.ConstraintGroup
 	Block []byte
-}
-
-// scopedConstraint is one constraint line (latest active instance of the
-// strata 1-2 domains) carrying its declared `appliesTo` scope. A line with
-// no scope binds no path (it stays in the root block only).
-type scopedConstraint struct {
-	typ      string
-	id       string
-	version  int
-	patterns []pathglob.Pattern
 }
 
 // NestedEntriesFromSnapshot computes the nested entry points bound by the
@@ -81,15 +69,14 @@ func NestedEntriesFromSnapshot(snapshotDir, project, namespace string, tracked [
 	if err != nil {
 		return nil, false, err
 	}
-	constraints, err := scopedConstraints(res.Package.Units)
-	if err != nil {
-		return nil, false, err
-	}
 	src := sourceFiles(tracked)
 	dirs := nestedCandidateDirs(src, SnapshotDir)
 	entries = make([]NestedEntry, 0, len(dirs))
 	for _, dir := range dirs {
-		index := boundIndex(constraints, src, dir)
+		index, err := contexts.SubtreeConstraints(res.Package.Units, src, dir)
+		if err != nil {
+			return nil, false, err
+		}
 		if IndexEntryCount(index) == 0 {
 			continue // AC4: no binding → no file.
 		}
@@ -120,74 +107,6 @@ func sourceFiles(tracked []string) []string {
 	return out
 }
 
-// scopedConstraints reduces the snapshot units to the constraint lines of
-// the projected domains, each carrying its latest instance's `appliesTo`
-// scope, ordered by (stratum, type, id) so the derived index is stable.
-func scopedConstraints(units []*exchange.Unit) ([]scopedConstraint, error) {
-	type lineKey struct{ typ, id string }
-	latest := map[lineKey]scopedConstraint{}
-	for _, u := range units {
-		if _, ok := constraintStratumOf(u.Identity.Type); !ok {
-			continue
-		}
-		if u.StateVector.ExistenceState != "active" {
-			continue
-		}
-		patterns, declared, err := unitAppliesTo(u)
-		if err != nil {
-			return nil, fmt.Errorf("%s: `appliesTo` %v", u.CanonicalIdentityForm, err)
-		}
-		if !declared {
-			continue
-		}
-		k := lineKey{u.Identity.Type, u.Identity.ID}
-		if prev, seen := latest[k]; seen && u.Identity.InstanceVersion <= prev.version {
-			continue
-		}
-		latest[k] = scopedConstraint{
-			typ:      u.Identity.Type,
-			id:       u.Identity.ID,
-			version:  u.Identity.InstanceVersion,
-			patterns: patterns,
-		}
-	}
-	out := make([]scopedConstraint, 0, len(latest))
-	for _, c := range latest {
-		out = append(out, c)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		si, sj := constraintStratum(out[i].typ), constraintStratum(out[j].typ)
-		if si != sj {
-			return si < sj
-		}
-		if out[i].typ != out[j].typ {
-			return out[i].typ < out[j].typ
-		}
-		return out[i].id < out[j].id
-	})
-	return out, nil
-}
-
-// unitAppliesTo reads one unit's optional `appliesTo` declaration from its
-// content payload. It reports declared=false when the payload is not a JSON
-// object or carries no `appliesTo` key (absence is not a defect) — the same
-// contract the contexts retrieval door applies to the store.
-func unitAppliesTo(u *exchange.Unit) (patterns []pathglob.Pattern, declared bool, err error) {
-	var content map[string]any
-	if json.Unmarshal(u.ContentPayload, &content) != nil || content == nil {
-		return nil, false, nil
-	}
-	raw, ok := content["appliesTo"]
-	if !ok {
-		return nil, false, nil
-	}
-	patterns, err = pathglob.Interpret(raw)
-	if err != nil {
-		return nil, false, err
-	}
-	return patterns, true, nil
-}
-
 // nestedCandidateDirs returns the sorted directories that directly contain
 // a tracked file (D == path.Dir(file)), excluding the repository root and
 // the sealed transport tree. A directory that only holds deeper directories
@@ -210,41 +129,4 @@ func nestedCandidateDirs(tracked []string, sealed string) []string {
 	}
 	sort.Strings(dirs)
 	return dirs
-}
-
-// boundIndex is the constraint index of one subtree: the lines whose scope
-// matches a tracked file under dir, grouped by type exactly as the root
-// index is (groupConstraintIndex), or nil when nothing binds.
-func boundIndex(constraints []scopedConstraint, tracked []string, dir string) []IndexEntry {
-	byType := map[string][]string{}
-	for _, c := range constraints {
-		if constraintBinds(c, tracked, dir) {
-			byType[c.typ] = append(byType[c.typ], c.id)
-		}
-	}
-	if len(byType) == 0 {
-		return nil
-	}
-	return groupConstraintIndex(byType)
-}
-
-// constraintBinds reports whether any tracked file under dir matches one of
-// the constraint's declared patterns.
-func constraintBinds(c scopedConstraint, tracked []string, dir string) bool {
-	for _, f := range tracked {
-		if !underDir(f, dir) {
-			continue
-		}
-		for _, p := range c.patterns {
-			if p.Match(f) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// underDir reports whether file is dir itself or lives below it.
-func underDir(file, dir string) bool {
-	return file == dir || strings.HasPrefix(file, dir+"/")
 }
