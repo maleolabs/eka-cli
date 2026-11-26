@@ -7,7 +7,7 @@
 Project: eka | Namespace: eka | Position: `eka status`
 Knowledge lives in the canonical store, not repo files. Loop: Understand -> Context -> Reason -> Change -> Validate -> Publish.
 Read: `eka status` · `eka get <ns>/<type>:<id>` · `eka context <subject> --depth engineering` · `eka view <projection>`.
-Change: `eka new` -> `eka validate` -> `eka publish`; `eka transition <line> <to>`; evidence `eka note --role <role>`; owner `eka assign <item> --to <mbr>`.
+Change: `eka new` -> `eka validate` -> `eka publish`; `eka transition <line> <to>`; evidence `eka note --role <role>`.
 Rules: never edit store data directly; transitions are gated and forward-only (read real state via `eka get`); after each transition run `eka sync push`.
 Skills: `eka-router` first, then `eka-orientation` (mental model), `eka-engineering-workflow` (loop), `eka-troubleshooting` (refusals).
 Constraints (Discovery + Architecture, stratum 1-2; index only — read one with `eka get <ns>/<type>:<id>`):
