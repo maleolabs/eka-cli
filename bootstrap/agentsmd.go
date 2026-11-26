@@ -104,7 +104,7 @@ func BuildAgentsMDBlock(project, namespace string, index []contexts.ConstraintGr
 	fmt.Fprintf(&b, "Project: %s | Namespace: %s | Position: `eka status`\n", project, namespace)
 	b.WriteString("Knowledge lives in the canonical store, not repo files. Loop: Understand -> Context -> Reason -> Change -> Validate -> Publish.\n")
 	b.WriteString("Read: `eka status` · `eka get <ns>/<type>:<id>` · `eka context <subject> --depth engineering` · `eka view <projection>`.\n")
-	b.WriteString("Change: `eka new` -> `eka validate` -> `eka publish`; `eka transition <line> <to>`; evidence `eka note --role <role>`; owner `eka assign <item> --to <mbr>`.\n")
+	b.WriteString("Change: `eka new` -> `eka validate` -> `eka publish`; `eka transition <line> <to>`; evidence `eka note --role <role>`.\n")
 	b.WriteString("Rules: never edit store data directly; transitions are gated and forward-only (read real state via `eka get`); after each transition run `eka sync push`.\n")
 	b.WriteString("Skills: `eka-router` first, then `eka-orientation` (mental model), `eka-engineering-workflow` (loop), `eka-troubleshooting` (refusals).\n")
 	lines := agentsMDIndexLines(index)
