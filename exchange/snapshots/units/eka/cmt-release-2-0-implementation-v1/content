@@ -1,0 +1,1 @@
+{"changes":["No 2.0 version bump/tag: the user will expand the EKA v2 milestone (bug fixes + small enhancements) so the v1\u003c-\u003ev2 UX diff is felt","Deferred to the v2 expansion"],"role":"implementation","summary":"Deferred by the no-version-bump decision.","tests":["n/a (deferred)"]}

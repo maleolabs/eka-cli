@@ -1,0 +1,1 @@
+{"changes":["Go module /v2 rename is breaking plumbing (core+cli+mcp re-pin) that only pays off with a release; cements churn without one","Deferred to the v2 expansion"],"role":"implementation","summary":"Deferred by the no-version-bump decision.","tests":["n/a (deferred)"]}
