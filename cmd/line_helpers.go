@@ -5,26 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/maleolabs/eka-core/conformance"
 	"github.com/maleolabs/eka-core/exchange"
 	"github.com/maleolabs/eka-core/store"
-	"github.com/maleolabs/eka-core/view"
 )
 
 // This file holds the shared line-addressing helpers of the authoring
 // command surface: the highest-instance / pending-draft resolution of a
-// line, the member (mbr-) target parsing and listing used by the
-// member-scoped view, the generic JSON-draft relationships reader, and
-// the CKO-level store resolver.
+// line, the generic JSON-draft relationships reader, and the CKO-level
+// store resolver.
 //
 // The work-ownership commands (`eka assign`, `eka reassign`,
 // `eka unassign`) were removed (ownership deprecated in place). These
-// helpers survive because other commands still use them: `eka view
-// --member` (member resolution), `eka unrelate` and `eka retire` (line
-// resolution, draft reads and CKO validation). Read tolerance for
-// existing assigned-to / mbr data stays — the helpers only read.
+// helpers survive because `eka unrelate` and `eka retire` still use
+// them (line resolution, draft reads and CKO validation). Read
+// tolerance for existing assigned-to / mbr data stays — the helpers
+// only read.
 
 // currentLineUnit returns the highest instance of the item line among
 // the project units, or nil when the line has no published instance.
@@ -56,97 +53,6 @@ func pendingDraftPath(wsRoot, project, typeToken, id string) (string, bool, erro
 		return "", true, nil
 	}
 	return "", false, nil
-}
-
-// memberTargetRefusal is a deterministic refusal (exit 1) of the member
-// (mbr-) target parsing: reason + hint, nothing was written.
-type memberTargetRefusal struct {
-	reason string
-	hint   string
-}
-
-// Error renders the deterministic refusal message.
-func (e *memberTargetRefusal) Error() string {
-	return fmt.Sprintf("%s; %s", e.reason, e.hint)
-}
-
-// parseMemberTarget parses a member target into the candidate canonical
-// member line form within the item's namespace. Accepted forms:
-// <mbr-id>, mbr:<id>, mbr-<id>, and the qualified <ns>/mbr:<id>. A
-// qualified target must name an mbr- line of the ITEM'S namespace —
-// cross-namespace (cross-repository) targets are refused. The errors
-// are *memberTargetRefusal: the member-scoped view renders the reason
-// text as its usage class (exit 2).
-func parseMemberTarget(raw, itemNS string) (string, error) {
-	t := strings.TrimSpace(raw)
-	if t == "" {
-		return "", &memberTargetRefusal{reason: "a member target is required", hint: "pass --to <mbr-id>, mbr:<id>, mbr-<id>, or <ns>/mbr:<id>"}
-	}
-	if strings.Contains(t, "/") {
-		ref, err := conformance.ParseReference(t, itemNS, "mbr")
-		if err != nil {
-			return "", &memberTargetRefusal{reason: fmt.Sprintf("invalid member target %q", t), hint: "use <mbr-id>, mbr:<id>, mbr-<id>, or <ns>/mbr:<id>"}
-		}
-		if ref.Type != "mbr" {
-			return "", &memberTargetRefusal{reason: fmt.Sprintf("%q is not a member (mbr-) line", t), hint: "the target points to a member line"}
-		}
-		if ref.Namespace != itemNS {
-			return "", &memberTargetRefusal{
-				reason: fmt.Sprintf("member %s originates outside the work item's repository (%s); cross-repository targets are refused",
-					view.LineForm(ref.Namespace, "mbr", ref.ID), itemNS),
-				hint: "use only members of the same repository",
-			}
-		}
-		return view.LineForm(ref.Namespace, "mbr", ref.ID), nil
-	}
-	id := strings.TrimPrefix(strings.TrimPrefix(t, "mbr:"), "mbr-")
-	if id == "" {
-		return "", &memberTargetRefusal{reason: fmt.Sprintf("invalid member target %q", t), hint: "use <mbr-id>, mbr:<id>, mbr-<id>, or <ns>/mbr:<id>"}
-	}
-	return view.LineForm(itemNS, "mbr", id), nil
-}
-
-// memberLines lists the distinct member (mbr-) lines of the project
-// units, sorted by canonical identity form.
-func memberLines(units []*exchange.Unit) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, u := range units {
-		if u.Identity.Type != "mbr" {
-			continue
-		}
-		form := view.LineForm(u.Identity.Namespace, u.Identity.Type, u.Identity.ID)
-		if seen[form] {
-			continue
-		}
-		seen[form] = true
-		out = append(out, form)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// memberLinesInNS lists the distinct member lines of one namespace —
-// the known members of the item's repository.
-func memberLinesInNS(units []*exchange.Unit, ns string) []string {
-	var out []string
-	for _, form := range memberLines(units) {
-		if strings.HasPrefix(form, ns+"/mbr:") {
-			out = append(out, form)
-		}
-	}
-	return out
-}
-
-// memberLineExists reports whether the canonical member form is a known
-// member line of the project.
-func memberLineExists(units []*exchange.Unit, form string) bool {
-	for _, u := range units {
-		if u.Identity.Type == "mbr" && view.LineForm(u.Identity.Namespace, u.Identity.Type, u.Identity.ID) == form {
-			return true
-		}
-	}
-	return false
 }
 
 // draftRelationshipsOf extracts the edge set of a generic JSON draft
