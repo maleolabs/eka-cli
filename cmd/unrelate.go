@@ -24,8 +24,8 @@ import (
 
 // This file implements `eka unrelate <line> <target>`: the
 // relationship-only edge-REMOVEYAL of a ticket (tkt-) line — the inverse
-// of `eka relate` for the ticket's derives-from edges. Like relate (and
-// the assignment edge writes of cmd/assigned.go) the published path
+// of `eka relate` for the ticket's derives-from edges. Like relate the
+// published path
 // re-points the line's current instance to a new immutable payload with
 // the SAME instance version and revision (no instance churn); the draft
 // path rewrites the pending JSON draft's relationships block in place.
@@ -34,12 +34,11 @@ import (
 // `eka relate --remove`. Relate's contract is edge-add only (a relate
 // with no relationship flags is a usage error, duplicates are an
 // idempotent no-op); bolting an inverted --remove flag onto it would
-// tangle two opposite semantics in one invocation. The assignment
-// precedent (assign/reassign/unassign are separate commands) applies:
-// removal gets its own verb. `eka unrelate` is ticket-scoped (tkt-
+// tangle two opposite semantics in one invocation. Removal gets its own
+// verb. `eka unrelate` is ticket-scoped (tkt-
 // lines only — the only artifact whose relationships are exclusively
 // managed derives-from edges); other types keep their dedicated
-// commands (`eka unassign` for assigned-to).
+// commands.
 //
 // Unlink vs retire (the distinction the help texts pin):
 //
@@ -132,8 +131,7 @@ namespace applies) or <ns>/<type>:<id> (qualified — the namespace
 must equal the repository's). Only tickets (tkt-) are unrelatable:
 their relationships are exclusively derives-from edges (the 2-edge
 convention: ctr:<wave> + work-item sto/ts/bug/...). Any other type is
-refused — assignments go through 'eka unassign', everything else
-through its own command.
+refused — every other type keeps its own dedicated command.
 
 The target is the edge to remove: <type>:<id> or <ns>/<type>:<id>
 (a bare id is refused — the edge type disambiguates the membership).
@@ -430,7 +428,7 @@ func resolveUnrelateTarget(r *runtime.Runtime, lineRef conformance.Reference) (*
 	if lineRef.Type != "tkt" {
 		return nil, &unrelateRefusal{
 			reason: fmt.Sprintf("%s is not a ticket; unrelate applies to tickets (tkt-) only", lineRef.Type+":"+lineRef.ID),
-			hint:   "use 'eka unassign' to remove an assignment, 'eka retire' to withdraw any other artifact line",
+			hint:   "use 'eka retire' to withdraw any other artifact line",
 		}
 	}
 	abs, err := filepath.Abs(".")
@@ -572,8 +570,7 @@ func unrelateEdgeList(edges []exchange.Relationship) string {
 // to a new immutable payload carrying exactly the surviving
 // derives-from edges, with the SAME canonical form, instance version
 // and revision — the exact relate published-path mechanism
-// (runtime/relate.go relatePublished, mirrored by
-// writeAssignmentPublished): the standard publish validation
+// (runtime/relate.go relatePublished): the standard publish validation
 // (ValidateCKO with the store resolver — R8 included) and the
 // reference re-point via store.RepointUnit. No change-log entry is
 // appended: tickets own no state domain (R7), the same reason relate
@@ -732,8 +729,8 @@ func draftDerivesFromTargets(path string) ([]string, error) {
 
 // rewriteDraftDerivesFrom deterministically rewrites a JSON draft's
 // relationships block so the derives-from edges equal the surviving
-// set — the mirror of rewriteDraftAssignment (runtime/relate.go
-// rewriteDraftRelationships): the file is parsed into a generic
+// set — the mirror of relate's draft rewrite
+// (runtime/relate.go rewriteDraftRelationships): the file is parsed into a generic
 // object, the `relationships` key is rebuilt from the surviving edge
 // set (camelCase field names, per-field sorted targets), and the file
 // is written back as 2-space-indented JSON with a trailing newline.

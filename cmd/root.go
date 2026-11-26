@@ -1,8 +1,8 @@
 // Package cmd implements the EKA CLI as a thin Cobra command layer.
 //
 // The command tree (root, validate, init, export, import, get, view,
-// watch, sync, project, status, feedback, update, note, assign,
-// unassign, reassign, plugin) is the only part of the codebase that
+// watch, sync, project, status, feedback, update, note, plugin) is the
+// only part of the codebase that
 // knows about argument parsing, flags, help text, output rendering and
 // exit codes. It contains no domain
 // logic: validate delegates to the Authoring API (runtime.Authoring),
@@ -34,12 +34,7 @@
 // Three documented exceptions exist, each justified in its file: the
 // workspace registry writes of `eka project register` (cmd/project.go
 // — the Runtime's WorkspaceService does not expose the metadata
-// registration path), and the assignment edge writes of
-// cmd/assigned.go (the Authoring API's relate is edge-add only, so
-// `eka unassign`/`eka reassign` mirror the relate published-path
-// re-point and the draft rewrite at the store/workspace layer; the
-// mirror stays a faithful copy of the runtime mechanism so the two
-// cannot drift), the retire new-instance publishes of cmd/retire.go
+// registration path), the retire new-instance publishes of cmd/retire.go
 // (the Authoring API has no retire operation, so `eka retire` mirrors
 // the publish new-instance mechanism — MaxInstanceVersion+1,
 // CKO-level ValidateCKO, store.PutUnit — under the same faithful-copy
@@ -238,7 +233,7 @@ Exit codes:
 		newCodeContextCmd(), newCodeDiscoverCmd(), newCodeGetCmd(),
 		newStatusCommand(), newIntegrityCommand(), newUpdateCommand(), newVersionCommand(),
 		newTransitionCommand(), newNoteCommand(), newFeedbackCommand(), newSnapshotCommand(),
-		newPluginCommand(), newAssignCommand(), newUnassignCommand(), newReassignCommand(), newCaptureCommand(),
+		newPluginCommand(), newCaptureCommand(),
 		newShrCommand(), newRetireCommand(), newUnrelateCommand(), newSchemaCommand(), newAgentsMDCommand(),
 		newVerifyCommand(), newTelemetryCommand())
 	root.AddCommand(newAuthoringCommands()...)

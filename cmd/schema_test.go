@@ -49,7 +49,7 @@ func TestSchemaReportDeclaresMutationRisk(t *testing.T) {
 	}
 	mustMutate := []string{
 		"new", "publish", "discard", "transition", "note", "capture",
-		"edit", "relate", "retire", "assign", "sync", "project", "init",
+		"edit", "relate", "retire", "sync", "project", "init",
 		// Inside a Utility-grouped command but writes drafts and opens
 		// GitHub issues, so it is an external side effect.
 		"feedback", "feedback new", "feedback publish",
