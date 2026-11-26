@@ -11,7 +11,7 @@ Change: `eka new` -> `eka validate` -> `eka publish`; `eka transition <line> <to
 Rules: never edit store data directly; transitions are gated and forward-only (read real state via `eka get`); after each transition run `eka sync push`.
 Skills: `eka-router` first, then `eka-orientation` (mental model), `eka-engineering-workflow` (loop), `eka-troubleshooting` (refusals).
 Constraints (Discovery + Architecture, stratum 1-2; index only — read one with `eka get <ns>/<type>:<id>`):
-fnd: agent-agnostic-skill-pack eka-acronym-collision eka-product-identity-and-market-position full-codebase-review-2026-11 knowledge-sharing llm-context-efficiency rag-db-optimization revision-resets-object-state status-stale-instance-active team-collaboration
+fnd: agent-agnostic-skill-pack eka-acronym-collision eka-product-identity-and-market-position full-codebase-review-2026-11 knowledge-sharing llm-context-efficiency rag-db-optimization retire-graph-supersedes-deadlock revision-resets-object-state status-stale-instance-active team-collaboration
 req: agent-agnostic-skill-pack agent-self-describing-surface capture-drafts-cannot-publish cli-experience codegraph-cache-effectiveness eka-improvements eka-mcp-production embed-parity-enforcement exchange-export-atomicity git-discovery-unbounded-walk high-risk-test-coverage knowledge-freshness-semantics knowledge-sharing mcp-destructive-confirmation-parity parallel-container-execution plugin-install-trust prd release-coordination team-collaboration team-collaboration-phase2 tool-dispatch-decomposition version-surface-drift
 str: self-hosting
 vis: vision
