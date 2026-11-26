@@ -29,15 +29,14 @@ import (
 // content-addressed archive untouched; no row is ever deleted.
 //
 // The command is a thin Cobra layer over the store primitives — the
-// third documented exception to the client-only boundary in root.go
-// (after `eka project register` and the assignment edge writes of
-// cmd/assigned.go): the Authoring API has no retire operation (relate
+// second documented exception to the client-only boundary in root.go
+// (after `eka project register`): the Authoring API has no retire
+// operation (relate
 // is edge-add only, transition re-points in place at the SAME instance
 // version), so the retire write mirrors the publish new-instance
 // mechanism instead — MaxInstanceVersion+1, CKO-level ValidateCKO with
 // the store resolver, store.PutUnit with the preserved provenance
-// pair — the same faithful-copy discipline as writeAssignmentPublished
-// (copy the runtime mechanism, never drift from it).
+// pair — copying the runtime mechanism, never drifting from it.
 //
 // Gates (deterministic refusals, exit 1, one line + hint):
 //
@@ -717,7 +716,7 @@ func publishRetireLine(ctx *retireTarget, ref conformance.Reference, to string, 
 // an open store: copy the line's current (highest) instance, freeze
 // everything except existence-state/updated/change-log, validate at
 // CKO level with the store resolver (the publish discipline of
-// draft.go Publish and writeAssignmentPublished), and insert via
+// draft.go Publish), and insert via
 // store.PutUnit with the preserved provenance pair (the tombstone
 // propagates through `eka sync push` like any other publish —
 // integrity stays green, the old payloads stay archived).
@@ -771,7 +770,8 @@ func publishRetireLineCtx(st *store.Store, project string, ref conformance.Refer
 		Date: today, Domain: conformance.DomainExistenceState, From: from, To: to, By: by,
 	})
 
-	// The standard publish validation (mirror of writeAssignmentPublished):
+	// The standard publish validation (the same CKO-level discipline as
+	// the other authoring writes):
 	// the would-be unit must validate at CKO level with the store
 	// resolver (Rule 5 reference resolution plus the structural
 	// checks). R13 transition gates do not apply to retire.
@@ -788,8 +788,8 @@ func publishRetireLineCtx(st *store.Store, project string, ref conformance.Refer
 		return "", &retireValidationError{Target: lineForm, Report: report}
 	}
 
-	// The provenance pair is preserved from the current reference (like
-	// writeAssignmentPublished): the tombstone stays attributed to the
+	// The provenance pair is preserved from the current reference: the
+	// tombstone stays attributed to the
 	// repository that owns the line.
 	curRef, ok, err := st.Ref(current.CanonicalIdentityForm)
 	if err != nil {

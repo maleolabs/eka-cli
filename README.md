@@ -140,9 +140,6 @@ The complete command list, with one-line descriptions:
 | `draft` | Manage drafts (list / validate). |
 | `publish` | Publish a draft as an immutable knowledge object. |
 | `discard` | Discard a draft without publishing. |
-| `assign` | Assign a work item to a member. |
-| `reassign` | Move a work item's assignment to another member. |
-| `unassign` | Remove a work item's assignment. |
 | `relate` | Add relationship edges without re-publishing. |
 | `capture` | Universal capture gateway (provenance=reconciled from git, ADR-035). |
 | `code-context` | Serve deterministic local code context (level 0..3, depth local/dependency/engineering). |

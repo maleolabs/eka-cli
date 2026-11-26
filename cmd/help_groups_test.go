@@ -19,7 +19,7 @@ import (
 // which cobra only creates at Execute time, are covered by the root
 // help assertions below).
 var groupMember = map[string][]string{
-	groupAuthoring:          {"assign", "capture", "discard", "draft", "edit", "new", "note", "publish", "reassign", "relate", "retire", "share", "shr", "transition", "unassign", "unrelate"},
+	groupAuthoring:          {"capture", "discard", "draft", "edit", "new", "note", "publish", "relate", "retire", "share", "shr", "transition", "unrelate"},
 	groupRepositoryExchange: {"agents-md", "export", "import", "init", "validate"},
 	groupKnowledgeAccess:    {"code-context", "code-discover", "code-get", "context", "get", "view", "watch"},
 	groupRuntimeWorkspace:   {"integrity", "project", "snapshot", "status", "sync", "verify", "telemetry"},
