@@ -93,8 +93,20 @@ echo "New version:     $NEW_VERSION"
 # anvil.yaml version field is without 'v' prefix
 anvil project version set "$NEW_VERSION"
 
+# ── Sync the README's CLI version axis ─────────────────────────────
+# TestReadmeStatesProjectVersion pins the README's "CLI `vX.Y.Z`" claim
+# to anvil.yaml, and the Release workflow re-runs the unit tests on the
+# tagged commit — a bump that skips the README fails the release. The
+# sed is written to a temp file (portable: no GNU/BSD -i divergence).
+sed "s|CLI \`v$CURRENT\`|CLI \`v$NEW_VERSION\`|" README.md > README.md.tmp \
+  && mv README.md.tmp README.md
+if ! grep -q "CLI \`v$NEW_VERSION\`" README.md; then
+  echo "Error: could not sync the README CLI version axis to v$NEW_VERSION — update it manually." >&2
+  exit 1
+fi
+
 # ── Commit ─────────────────────────────────────────────────────────
-git add anvil.yaml
+git add anvil.yaml README.md
 git commit -m "chore: bump version to $NEW_VERSION"
 
 # ── Push to origin (current branch) ───────────────────────────────
