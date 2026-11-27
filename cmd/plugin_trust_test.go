@@ -515,8 +515,8 @@ func TestPluginRenderHeaderSanitizesTag(t *testing.T) {
 // --- Minimal subprocess environment (M3) -------------------------------
 
 // TestPluginSubprocessEnvMinimal: the manifest subprocess runs under a
-// minimal environment whitelist (PATH, HOME, EKA_PLUGIN_DIR) — the
-// CLI's secrets (GH_TOKEN, SSH_AUTH_SOCK) are NOT inherited, so a
+// minimal environment whitelist (PATH, HOME, EKA_PLUGIN_DIR, EKA_HOME)
+// — the CLI's secrets (GH_TOKEN, SSH_AUTH_SOCK) are NOT inherited, so a
 // third-party binary executed for its manifest before consent cannot
 // read them.
 func TestPluginSubprocessEnvMinimal(t *testing.T) {

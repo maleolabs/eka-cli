@@ -1025,7 +1025,7 @@ func runMcpServe(cmd *cobra.Command, args []string) error {
 	}
 	// Dispatch with bounded env, propagate exit code, stdout purity: plugin stdout -> our stdout, diagnostics -> stderr
 	c := exec.CommandContext(ctx, exe, "serve")
-	c.Env = pluginDispatchEnv()
+	c.Env = plugin.PluginEnv()
 	c.Stdin = cmd.InOrStdin()
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()

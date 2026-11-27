@@ -29,6 +29,8 @@ github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/maleolabs/eka-core/v2 v2.0.1 h1:QBJzqtftoc/Giv8wABeTPRBNSwpC2vnUKiGZh52z0Is=
 github.com/maleolabs/eka-core/v2 v2.0.1/go.mod h1:eXGSy3u3g2h7AxGNXdSopOw1C6tc37prx3pP90PjhEw=
+github.com/maleolabs/eka-core/v2 v2.1.0 h1:ZMvnpnjQv/2tMMvncsWtm/XPmvqSHMDaiht5+NvW35U=
+github.com/maleolabs/eka-core/v2 v2.1.0/go.mod h1:eXGSy3u3g2h7AxGNXdSopOw1C6tc37prx3pP90PjhEw=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mattn/go-localereader v0.0.1 h1:ygSAOl7ZXTx4RdPYinUpg6W99U8jWvWi9Ye2JC/oIi4=

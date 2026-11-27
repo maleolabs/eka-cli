@@ -122,7 +122,7 @@ const pluginMaxCommandCount = 100
 //
 //	eka-<name> <args...> [user args...]
 //
-// under the bounded env whitelist (pluginDispatchEnv); the plugin's
+// under the bounded env whitelist (plugin.PluginEnv); the plugin's
 // stdout/stderr/stdin inherit the CLI's streams and its exit code
 // propagates. The plugin owns its own flags — the CLI never interprets
 // them (DisableFlagParsing).
@@ -549,7 +549,7 @@ func pluginRegEntryValid(e *pluginRegEntry) bool {
 // surfaces a truncation notice instead of an unbounded dump.
 func probePluginManifest(ctx context.Context, exe, wantName string) (pluginCommandManifest, error) {
 	cmd := exec.CommandContext(ctx, exe, "manifest", "--json")
-	cmd.Env = pluginDispatchEnv()
+	cmd.Env = plugin.PluginEnv()
 	// F1 (security review): the deadline must bound the WHOLE probe, not
 	// just the direct child. A pipe-inheriting grandchild (a daemonized
 	// sidecar, a backgrounded subshell) holds the probe's stdout/stderr
@@ -633,23 +633,6 @@ const truncatedStderrSuffix = "[stderr truncated]"
 // pluginMaxManifestSize, but the warning itself must stay small — a
 // hostile plugin must not control the CLI's warning output size.
 const maxProbeStderrMessage = 200
-
-// pluginDispatchEnv is the bounded environment whitelist granted to a
-// plugin subprocess — the CLI-side mirror of the eka-core runner's
-// pluginEnv contract (PATH, HOME, EKA_PLUGIN_DIR, SystemRoot): an
-// explicit allow-list, never a denylist. Everything else — notably
-// credentials such as GH_TOKEN, SSH_AUTH_SOCK and cloud-provider
-// variables — is deliberately NOT inherited: a plugin binary must
-// never see the CLI user's secrets.
-func pluginDispatchEnv() []string {
-	env := []string{"PATH=" + os.Getenv("PATH")}
-	for _, key := range []string{"HOME", "EKA_PLUGIN_DIR", "SystemRoot"} {
-		if v := os.Getenv(key); v != "" {
-			env = append(env, key+"="+v)
-		}
-	}
-	return env
-}
 
 // pluginLimitedBuffer writes into an internal buffer up to
 // pluginMaxManifestSize bytes; further writes are counted as overflow
@@ -801,7 +784,7 @@ func dispatchPluginCommand(cmd *cobra.Command, exe, pluginName string, spec plug
 	}
 	execArgs := append(append([]string{}, spec.Args...), args...)
 	pc := exec.CommandContext(ctx, exe, execArgs...)
-	pc.Env = pluginDispatchEnv()
+	pc.Env = plugin.PluginEnv()
 	pc.Stdin = cmd.InOrStdin()
 	pc.Stdout = cmd.OutOrStdout()
 	pc.Stderr = cmd.ErrOrStderr()
