@@ -2,11 +2,11 @@
 # install.sh — Install the EKA CLI
 #
 # Usage:
-#   curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh
-#   curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh -s -- --version v0.1.0
-#   curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh -s -- --to ~/.local/bin
-#   curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh -s -- --completion zsh
-#   curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh -s -- --no-completion
+#   curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh -s -- --version v0.1.0
+#   curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh -s -- --to ~/.local/bin
+#   curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh -s -- --completion zsh
+#   curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh -s -- --no-completion
 #
 # Downloads the latest (or specified) EKA release binary for the current
 # OS and architecture from the GitHub Release asset registry, verifies

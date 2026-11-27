@@ -61,8 +61,11 @@ import (
 // updateRequestTimeout, the asset download gets updateDownloadTimeout
 // (generous: the largest release asset at a slow link).
 var (
-	updateAPIURL       = "https://api.github.com/repos/maleolabs/eka-cli/releases/latest"
-	updateDownloadBase = "https://github.com/maleolabs/eka-cli/v2/releases/latest/download"
+	updateAPIURL = "https://api.github.com/repos/maleolabs/eka-cli/releases/latest"
+	// The repository path is maleolabs/eka-cli — NOT .../eka-cli/v2. The
+	// /v2 is the Go module path suffix, not part of the GitHub URL; a
+	// /v2 segment 404s every release fetch.
+	updateDownloadBase = "https://github.com/maleolabs/eka-cli/releases/latest/download"
 	updateClient       = &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: updateConnectTimeout}).DialContext,

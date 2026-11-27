@@ -690,3 +690,18 @@ func TestUpdateMetadataTimeoutRefuses(t *testing.T) {
 		t.Errorf("a stalled metadata endpoint must refuse with the resolution error, got %q", errText)
 	}
 }
+
+// TestUpdateProductionEndpoints: the production endpoints must point at
+// the real repository path (maleolabs/eka-cli). The release asset URL
+// once carried a spurious /v2 segment (the Go module path suffix,
+// mistaken for a repo path), which 404'd every `eka update`; this pins
+// the exact strings the tests above never assert (they swap in an
+// httptest server, masking a wrong production base).
+func TestUpdateProductionEndpoints(t *testing.T) {
+	if want := "https://api.github.com/repos/maleolabs/eka-cli/releases/latest"; updateAPIURL != want {
+		t.Errorf("updateAPIURL = %q, want %q", updateAPIURL, want)
+	}
+	if want := "https://github.com/maleolabs/eka-cli/releases/latest/download"; updateDownloadBase != want {
+		t.Errorf("updateDownloadBase = %q, want %q", updateDownloadBase, want)
+	}
+}
