@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-cli/v2/bootstrap"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/metadata"
 )
 
 // cmd tests for `eka agents-md`: the generated, drift-checked AGENTS.md

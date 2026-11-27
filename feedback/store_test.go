@@ -205,7 +205,7 @@ func TestMarkPublished(t *testing.T) {
 	if err := st.Save(f); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.MarkPublished(f.ID, 7, "https://github.com/maleolabs/eka-cli/issues/7"); err != nil {
+	if err := st.MarkPublished(f.ID, 7, "https://github.com/maleolabs/eka-cli/v2/issues/7"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.Load(f.ID)
@@ -213,7 +213,7 @@ func TestMarkPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Status != StatusPublished || got.IssueNumber != 7 ||
-		got.IssueURL != "https://github.com/maleolabs/eka-cli/issues/7" {
+		got.IssueURL != "https://github.com/maleolabs/eka-cli/v2/issues/7" {
 		t.Errorf("published record = %+v, want status published + issue fields", got)
 	}
 	// The body survives the rewrite.

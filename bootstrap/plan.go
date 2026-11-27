@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	standardembed "github.com/maleolabs/eka-cli"
-	"github.com/maleolabs/eka-core/metadata"
+	standardembed "github.com/maleolabs/eka-cli/v2"
+	"github.com/maleolabs/eka-core/v2/metadata"
 )
 
 // This file implements Stage 2 of the bootstrap model: Bootstrap Planning.

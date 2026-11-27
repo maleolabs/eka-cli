@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-cli/v2/bootstrap"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // cmd tests for `eka verify`: the repository-scope verification gate

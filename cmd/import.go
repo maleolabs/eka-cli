@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/metadata"
 	"github.com/spf13/cobra"
 )
 

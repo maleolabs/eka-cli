@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // This file tests the `eka relate` command at CLI level: exit codes,

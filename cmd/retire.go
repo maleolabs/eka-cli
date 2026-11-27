@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/metadata"
-	"github.com/maleolabs/eka-core/runtime"
-	"github.com/maleolabs/eka-core/store"
-	"github.com/maleolabs/eka-core/view"
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/metadata"
+	"github.com/maleolabs/eka-core/v2/runtime"
+	"github.com/maleolabs/eka-core/v2/store"
+	"github.com/maleolabs/eka-core/v2/view"
+	"github.com/maleolabs/eka-core/v2/workspace"
 	"github.com/spf13/cobra"
 )
 

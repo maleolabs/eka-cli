@@ -58,7 +58,7 @@ jobs:
 
       - name: Build Linux binary
         run: |
-          go build -ldflags="-X github.com/maleolabs/eka-cli/cmd.version=ci-test" -o eka-linux-amd64 ./cmd/eka
+          go build -ldflags="-X github.com/maleolabs/eka-cli/v2/cmd.version=ci-test" -o eka-linux-amd64 ./cmd/eka
 
       - name: Stage fake release
         run: |
@@ -177,7 +177,7 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
-          go build -ldflags="-X github.com/maleolabs/eka-cli/cmd.version=ci-test" -o eka-windows-amd64.exe ./cmd/eka
+          go build -ldflags="-X github.com/maleolabs/eka-cli/v2/cmd.version=ci-test" -o eka-windows-amd64.exe ./cmd/eka
 
       - name: Stage fake release
         shell: bash

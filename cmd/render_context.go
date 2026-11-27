@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/contexts"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/contexts"
 )
 
 // This file implements the Context projection renderer: the human

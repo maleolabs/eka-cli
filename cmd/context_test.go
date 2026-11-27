@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/runtime"
 )
 
 // This file tests the `eka context` command: the Context Engine

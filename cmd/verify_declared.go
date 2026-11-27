@@ -5,10 +5,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/maleolabs/eka-core/contexts"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/pathglob"
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/contexts"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/pathglob"
+	"github.com/maleolabs/eka-core/v2/runtime"
 )
 
 // This file implements stage B of sto:verify-changed-gate — the EKA Standard

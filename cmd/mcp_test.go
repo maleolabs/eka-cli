@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
 )
 
 func mcpKey(s string) tea.KeyMsg {

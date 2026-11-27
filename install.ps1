@@ -2,11 +2,11 @@
 install.ps1 — Install the EKA CLI (Windows)
 
 Usage:
-  irm https://github.com/maleolabs/eka-cli/releases/latest/download/install.ps1 | iex
+  irm https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.ps1 | iex
 
   # Specific version or custom directory (Invoke-Expression takes no
   # script parameters — interpolate them into the script text):
-  $s = irm https://github.com/maleolabs/eka-cli/releases/latest/download/install.ps1
+  $s = irm https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.ps1
   iex "$s -Version v0.2.0"
   iex "$s -To 'C:\tools\bin'"
   iex "$s -NoCompletion"

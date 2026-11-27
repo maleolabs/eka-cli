@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/view"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/view"
 )
 
 // This file implements the Document projection renderer: the detail

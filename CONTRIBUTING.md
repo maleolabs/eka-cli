@@ -181,7 +181,7 @@ Checklist — include explicitly in every consumer release work item:
    it first.
 2. **Imported-constant / asset check** — verify the consumer will build against
    the published upstream, not a stale pin:
-   - `go list -m github.com/maleolabs/eka-core` shows `vX.Y.Z` (not
+   - `go list -m github.com/maleolabs/eka-core/v2` shows `vX.Y.Z` (not
      `v0.0.0-...` pseudo-version).
    - `eka version --json` axes or the vendored `EKA` file (via
      `standardembed`) matches the upstream version you expect.
@@ -195,7 +195,7 @@ explicitly:
 
 ```sh
 # from the consumer repo (e.g. eka-cli bumping to eka-core v1.2.3)
-go get github.com/maleolabs/eka-core@v1.2.3
+go get github.com/maleolabs/eka-core/v2@v1.2.3
 go mod tidy
 go vet ./...
 git add go.mod go.sum
@@ -203,7 +203,7 @@ git commit -m "chore: bump eka-core to v1.2.3"
 ```
 
 For a coordinated wave, repeat for each downstream repo before tagging it
-(`eka-mcp` similarly runs `go get github.com/maleolabs/eka-cli@v...` /
+(`eka-mcp` similarly runs `go get github.com/maleolabs/eka-cli/v2@v...` /
 `eka-core@v...` as needed). The bump commit lands on `develop` before the
 tag is cut, so the tagged build and every `go get` consumer resolve the
 same published module.
@@ -219,7 +219,7 @@ same published module.
   `gh release view` distinguish stable from trial builds and sets the
   `prerelease` flag in the workflow.
 - **No major bump without `/v2` path.** Publishing `v2.0.0` requires changing
-  the module path to `github.com/maleolabs/eka-cli/v2` (and all imports).
+  the module path to `github.com/maleolabs/eka-cli/v2/v2` (and all imports).
   Do not publish `v2` on the `v1` path.
 
 > Note: the canonical `eka-core` release docs live in the `eka-core`

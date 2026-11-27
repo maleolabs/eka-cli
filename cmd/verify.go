@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/contexts"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-cli/v2/bootstrap"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/contexts"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/runtime"
 	"github.com/spf13/cobra"
 )
 

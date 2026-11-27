@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
 	"github.com/spf13/cobra"
 )
 

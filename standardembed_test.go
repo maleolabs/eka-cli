@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // standardembed_test.go covers the embedded EKA standard declaration:

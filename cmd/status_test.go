@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/runtime"
 )
 
 // TestStatusNoWorkspace: without a workspace.json, status prints an

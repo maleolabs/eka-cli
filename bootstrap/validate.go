@@ -1,7 +1,7 @@
 package bootstrap
 
 import (
-	"github.com/maleolabs/eka-core/conformance"
+	"github.com/maleolabs/eka-core/v2/conformance"
 )
 
 // This file implements Stage 5 of the bootstrap model: Validation. After

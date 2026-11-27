@@ -16,7 +16,7 @@ package main
 import (
 	"os"
 
-	"github.com/maleolabs/eka-cli/cmd"
+	"github.com/maleolabs/eka-cli/v2/cmd"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/runtime"
 )
 
 // seedGetRepo seeds a fresh workspace (EKA_HOME) with a copy of the

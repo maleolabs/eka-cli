@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-cli/v2/bootstrap"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // cmd tests for `eka agents-md --nested`: the path-scoped projection of the
