@@ -266,6 +266,10 @@ CLI's internal packages.
   this CLI implements — **EKA Standard 2.0** (RSF 2, Exchange 1, `eka-cko-v2`). The standard's two-component
   version axis is independent of the CLI's semver.
 
+- **Upgrading from 1.x** — EKA 2.0 deprecates the work-ownership model in place
+  (`mbr-`/`assigned-to` become read-only; no forced migration). See
+  [docs/upgrade-2.0.md](docs/upgrade-2.0.md).
+
 - **Release pipeline** — tag `vMAJOR.MINOR.PATCH` (RC suffix allowed, e.g.
   `v1.2.3-rc.1`) triggers `.github/workflows/release.yml`:
   semver regex check, `gh release view` duplicate guard, `anvil pipeline ci`
