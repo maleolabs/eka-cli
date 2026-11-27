@@ -85,7 +85,7 @@ claim about yours.
 ### Release binaries (recommended)
 
 Prebuilt binaries for Linux and macOS (amd64, arm64) are published on the
-[GitHub releases](https://github.com/maleolabs/eka-cli/v2/releases) page. The
+[GitHub releases](https://github.com/maleolabs/eka-cli/releases) page. The
 installers download the binary, verify its SHA-256 checksum against the
 release's `SHA256SUMS.txt` (fail-closed — an unverifiable binary is never
 installed), and place it on your `PATH`.
@@ -93,13 +93,13 @@ installed), and place it on your `PATH`.
 Linux / macOS:
 
 ```sh
-curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-Invoke-RestMethod https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.ps1 | Invoke-Expression
+Invoke-RestMethod https://github.com/maleolabs/eka-cli/releases/latest/download/install.ps1 | Invoke-Expression
 ```
 
 Options (install.sh): `--version vX.Y.Z`, `--to <dir>`, `--completion <shell>`,
