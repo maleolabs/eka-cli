@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
 )
 
 // TestRenderUsageMatchesCobraUsage locks the CLI help renderer against

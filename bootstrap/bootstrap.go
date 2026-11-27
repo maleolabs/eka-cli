@@ -41,8 +41,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/metadata"
 	"golang.org/x/term"
 )
 

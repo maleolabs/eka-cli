@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/feedback"
+	"github.com/maleolabs/eka-cli/v2/feedback"
 )
 
 // This file tests `eka feedback` at CLI level (ADR-026): the draft is
@@ -285,7 +285,7 @@ func TestFeedbackPublishSuccess(t *testing.T) {
 	id := feedbackDraftID(t, dir)
 
 	srv, apiURL := fakeIssueServer(t, http.StatusCreated,
-		`{"number": 7, "html_url": "https://github.com/maleolabs/eka-cli/issues/7"}`)
+		`{"number": 7, "html_url": "https://github.com/maleolabs/eka-cli/v2/issues/7"}`)
 	feedback.SetIssueAPIURL(apiURL)
 	feedback.SetIssueToken("test-token")
 	t.Cleanup(func() { feedback.SetIssueToken(""); _ = srv })
@@ -294,7 +294,7 @@ func TestFeedbackPublishSuccess(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("feedback publish: exit = %d, stderr %q", code, errText)
 	}
-	if !strings.Contains(out, "✓ Published: #7 https://github.com/maleolabs/eka-cli/issues/7") {
+	if !strings.Contains(out, "✓ Published: #7 https://github.com/maleolabs/eka-cli/v2/issues/7") {
 		t.Errorf("stdout = %q, want the deterministic publish report", out)
 	}
 	// The file was rewritten with the issue record.
@@ -304,7 +304,7 @@ func TestFeedbackPublishSuccess(t *testing.T) {
 	}
 	for _, want := range []string{
 		"status: published",
-		"issue_url: https://github.com/maleolabs/eka-cli/issues/7",
+		"issue_url: https://github.com/maleolabs/eka-cli/v2/issues/7",
 		"issue_number: 7",
 	} {
 		if !strings.Contains(string(data), want) {
@@ -326,7 +326,7 @@ func TestFeedbackPublishSuccessJSON(t *testing.T) {
 	id := feedbackDraftID(t, dir)
 
 	srv, apiURL := fakeIssueServer(t, http.StatusCreated,
-		`{"number": 12, "html_url": "https://github.com/maleolabs/eka-cli/issues/12"}`)
+		`{"number": 12, "html_url": "https://github.com/maleolabs/eka-cli/v2/issues/12"}`)
 	feedback.SetIssueAPIURL(apiURL)
 	feedback.SetIssueToken("test-token")
 	t.Cleanup(func() { feedback.SetIssueToken(""); _ = srv })
@@ -341,7 +341,7 @@ func TestFeedbackPublishSuccessJSON(t *testing.T) {
 	}
 	if doc["schema"] != "eka-feedback-publish-v1" || doc["ok"] != true ||
 		doc["id"] != id || doc["issueNumber"] != float64(12) ||
-		doc["issueUrl"] != "https://github.com/maleolabs/eka-cli/issues/12" {
+		doc["issueUrl"] != "https://github.com/maleolabs/eka-cli/v2/issues/12" {
 		t.Errorf("--json = %v, want the pinned eka-feedback-publish-v1 document", doc)
 	}
 }

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/maleolabs/eka-core/contexts"
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-core/v2/contexts"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // This file implements the path-scoped projection of the constraint index

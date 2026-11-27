@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/view"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/view"
 )
 
 // This file holds the small shared helpers of the view renderer layer:

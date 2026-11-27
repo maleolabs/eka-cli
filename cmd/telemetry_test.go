@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // cmd tests for `eka telemetry` (Wi-A emit + Wi-B list). Fixtures build

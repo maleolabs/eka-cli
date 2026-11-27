@@ -13,8 +13,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/metadata"
 )
 
 // Execute() unit tests: argument handling, output contract and exit

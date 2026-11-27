@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/codegraph"
+	"github.com/maleolabs/eka-core/v2/codegraph"
 )
 
 func TestCodeDiscoverValidation(t *testing.T) {

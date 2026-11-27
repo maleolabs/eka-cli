@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/machine"
-	"github.com/maleolabs/eka-core/metadata"
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/machine"
+	"github.com/maleolabs/eka-core/v2/metadata"
+	"github.com/maleolabs/eka-core/v2/runtime"
 	"github.com/spf13/cobra"
 )
 

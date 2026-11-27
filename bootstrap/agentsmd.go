@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/maleolabs/eka-core/contexts"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-core/v2/contexts"
+	"github.com/maleolabs/eka-core/v2/metadata"
 )
 
 // This file implements the AGENTS.md workflow-context management of

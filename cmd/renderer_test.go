@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/view"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/view"
 )
 
 // rendererTestContext builds the plain style + an empty graph used by

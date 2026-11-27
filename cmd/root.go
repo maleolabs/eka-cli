@@ -10,7 +10,7 @@
 // exchange engine, get delegates to the machine interface (machine/),
 // feedback delegates to the standalone feedback module (feedback/),
 // plugin delegates to the plugin contract + registry
-// (github.com/maleolabs/eka-core/plugin), and
+// (github.com/maleolabs/eka-core/v2/plugin), and
 // every runtime command (sync, view, watch, project, status, integrity)
 // delegates to the Runtime Kernel services (the runtime package) — the
 // CLI is a CLIENT of the Runtime.
@@ -77,7 +77,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
 	"github.com/spf13/cobra"
 )
 

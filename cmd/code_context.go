@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/maleolabs/eka-core/codegraph"
+	"github.com/maleolabs/eka-core/v2/codegraph"
 	"github.com/spf13/cobra"
 )
 

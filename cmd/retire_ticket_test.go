@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // This file tests `eka retire tkt:<id>` at CLI level (Opsi A bagian 2):

@@ -15,7 +15,7 @@ import (
 // issueToken is the GitHub fine-grained PAT bundled into the binary at
 // build time (ADR-026 §Decision 3) via
 //
-//	go build -ldflags "-X github.com/maleolabs/eka-cli/feedback.issueToken=<token>"
+//	go build -ldflags "-X github.com/maleolabs/eka-cli/v2/feedback.issueToken=<token>"
 //
 // It stays empty ("") on dev/test/CI builds, and publish then refuses
 // deterministically with a release-binary hint — the ADR-024

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/runtime"
 )
 
 // viewFixtureAbs resolves the absolute path of a view test fixture.

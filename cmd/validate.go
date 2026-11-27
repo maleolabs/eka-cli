@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/runtime"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/runtime"
 	"github.com/spf13/cobra"
 )
 

@@ -4,17 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 
-	standardembed "github.com/maleolabs/eka-cli"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/machine"
-	"github.com/maleolabs/eka-core/metadata"
+	standardembed "github.com/maleolabs/eka-cli/v2"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/machine"
+	"github.com/maleolabs/eka-core/v2/metadata"
 	"github.com/spf13/cobra"
 )
 
 // version is the CLI build version. It defaults to "dev" and is
 // overridable at build time:
 //
-//	go build -ldflags "-X github.com/maleolabs/eka-cli/cmd.version=v1.2.3" ./cmd/eka
+//	go build -ldflags "-X github.com/maleolabs/eka-cli/v2/cmd.version=v1.2.3" ./cmd/eka
 //
 // The version identifies the CLI implementation, never the standard.
 var version = "dev"

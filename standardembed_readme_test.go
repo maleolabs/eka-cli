@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // readmeVersionClaims extracts the version axes stated on the README's
@@ -56,7 +56,7 @@ func TestReadmeStatesEmbeddedStandardVersion(t *testing.T) {
 // version disagrees with the version go.mod actually requires.
 func TestReadmeStatesRequiredEkaCoreVersion(t *testing.T) {
 	claims := parseReadmeClaims(t)
-	want := requiredModuleVersion(t, "github.com/maleolabs/eka-core")
+	want := requiredModuleVersion(t, "github.com/maleolabs/eka-core/v2")
 	if claims.ekaCore != want {
 		t.Errorf("README advertises eka-core v%s, go.mod requires v%s", claims.ekaCore, want)
 	}

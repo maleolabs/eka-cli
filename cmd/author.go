@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"github.com/maleolabs/eka-cli/cmd/ui"
-	"github.com/maleolabs/eka-core/conformance"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
+	"github.com/maleolabs/eka-core/v2/conformance"
 )
 
 // This file implements the shared author-identity presentation helpers

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	standardembed "github.com/maleolabs/eka-cli"
-	"github.com/maleolabs/eka-core/conformance"
-	"github.com/maleolabs/eka-core/metadata"
-	"github.com/maleolabs/eka-core/runtime"
+	standardembed "github.com/maleolabs/eka-cli/v2"
+	"github.com/maleolabs/eka-core/v2/conformance"
+	"github.com/maleolabs/eka-core/v2/metadata"
+	"github.com/maleolabs/eka-core/v2/runtime"
 	"github.com/spf13/cobra"
 )
 

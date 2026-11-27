@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/maleolabs/eka-core/contexts"
+	"github.com/maleolabs/eka-core/v2/contexts"
 )
 
 // This file implements the per-host projection shims of M2: the rule files

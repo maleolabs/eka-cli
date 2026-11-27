@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/metadata"
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/metadata"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // This file tests the draft-publish authoring commands at CLI level:

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/store"
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/store"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // seedIntegrityWorkspace creates a workspace with one consistent

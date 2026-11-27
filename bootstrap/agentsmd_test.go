@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/contexts"
-	"github.com/maleolabs/eka-core/exchange"
+	"github.com/maleolabs/eka-core/v2/contexts"
+	"github.com/maleolabs/eka-core/v2/exchange"
 )
 
 // testBlock builds the managed block for a test, discarding the omitted

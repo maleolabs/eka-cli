@@ -84,7 +84,7 @@ func savedDraft(t *testing.T) (*Store, string) {
 func TestPublishSuccess(t *testing.T) {
 	var gotTitle, gotBody string
 	srv := fakeIssuesServer(t, http.StatusCreated,
-		`{"number": 7, "html_url": "https://github.com/maleolabs/eka-cli/issues/7"}`,
+		`{"number": 7, "html_url": "https://github.com/maleolabs/eka-cli/v2/issues/7"}`,
 		func(_ *http.Request, payload map[string]any) {
 			gotTitle, _ = payload["title"].(string)
 			gotBody, _ = payload["body"].(string)
@@ -103,7 +103,7 @@ func TestPublishSuccess(t *testing.T) {
 		t.Errorf("issue body must be the rendered report:\n%s", gotBody)
 	}
 	if published.Status != StatusPublished || published.IssueNumber != 7 ||
-		published.IssueURL != "https://github.com/maleolabs/eka-cli/issues/7" {
+		published.IssueURL != "https://github.com/maleolabs/eka-cli/v2/issues/7" {
 		t.Errorf("published feedback = %+v, want status published + issue fields", published)
 	}
 	// The local file was rewritten with the issue record.

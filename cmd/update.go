@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
-	"github.com/maleolabs/eka-cli/cmd/ui"
+	"github.com/maleolabs/eka-cli/v2/cmd/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +62,7 @@ import (
 // (generous: the largest release asset at a slow link).
 var (
 	updateAPIURL       = "https://api.github.com/repos/maleolabs/eka-cli/releases/latest"
-	updateDownloadBase = "https://github.com/maleolabs/eka-cli/releases/latest/download"
+	updateDownloadBase = "https://github.com/maleolabs/eka-cli/v2/releases/latest/download"
 	updateClient       = &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: updateConnectTimeout}).DialContext,

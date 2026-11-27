@@ -29,7 +29,7 @@ skip() { SKIPPED=$((SKIPPED + 1)); printf 'skip  %s\n' "$1"; }
 # The eka-core version one go.mod requires: the line that decides which core
 # the released binary is built against.
 core_pin() {
-  sed -n 's|^[[:space:]]*github.com/maleolabs/eka-core[[:space:]]\{1,\}\(v[0-9][0-9.]*\)$|\1|p' "$1" | head -1
+  sed -n 's|^[[:space:]]*github.com/maleolabs/eka-core/v2[[:space:]]\{1,\}\(v[0-9][0-9.]*\)$|\1|p' "$1" | head -1
 }
 
 # The standard states its corpus version in prose and tables, never as a
@@ -47,7 +47,7 @@ if [ -d "$SIBLINGS/eka-core" ]; then
     fi
     PIN=$(core_pin "$SIBLINGS/$MODULE/go.mod")
     if [ -z "$PIN" ]; then
-      fail "$MODULE: go.mod requires no github.com/maleolabs/eka-core version"
+      fail "$MODULE: go.mod requires no github.com/maleolabs/eka-core/v2 version"
     elif [ -n "$(git -C "$SIBLINGS/eka-core" tag --list "$PIN" 2>/dev/null)" ]; then
       pass "$MODULE: eka-core $PIN is a tag in ../eka-core"
     else

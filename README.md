@@ -2,12 +2,12 @@
 
 **eka-cli** is the official command-line interface for the EKA engineering
 knowledge standard. It is a consumer of
-[`eka-core`](https://github.com/maleolabs/eka-core) — the CLI contains no
+[`eka-core`](https://github.com/maleolabs/eka-core/v2) — the CLI contains no
 domain logic of its own; every command delegates to an eka-core engine. It is
 the official interface for bootstrapping, validating, exchanging, and running
 the EKA Knowledge Runtime.
 
-Module path: `github.com/maleolabs/eka-cli` · CLI `v1.27.2` · EKA Standard `1.7` · `eka-core v1.14.0`
+Module path: `github.com/maleolabs/eka-cli/v2` · CLI `v2.0.0` · EKA Standard `2.0` · `eka-core v2.0.1`
 
 ## Demo
 
@@ -85,7 +85,7 @@ claim about yours.
 ### Release binaries (recommended)
 
 Prebuilt binaries for Linux and macOS (amd64, arm64) are published on the
-[GitHub releases](https://github.com/maleolabs/eka-cli/releases) page. The
+[GitHub releases](https://github.com/maleolabs/eka-cli/v2/releases) page. The
 installers download the binary, verify its SHA-256 checksum against the
 release's `SHA256SUMS.txt` (fail-closed — an unverifiable binary is never
 installed), and place it on your `PATH`.
@@ -93,13 +93,13 @@ installed), and place it on your `PATH`.
 Linux / macOS:
 
 ```sh
-curl -fsSL https://github.com/maleolabs/eka-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-Invoke-RestMethod https://github.com/maleolabs/eka-cli/releases/latest/download/install.ps1 | Invoke-Expression
+Invoke-RestMethod https://github.com/maleolabs/eka-cli/v2/releases/latest/download/install.ps1 | Invoke-Expression
 ```
 
 Options (install.sh): `--version vX.Y.Z`, `--to <dir>`, `--completion <shell>`,
@@ -108,7 +108,7 @@ Options (install.sh): `--version vX.Y.Z`, `--to <dir>`, `--completion <shell>`,
 ### From source
 
 ```sh
-go install github.com/maleolabs/eka-cli/cmd/eka@latest
+go install github.com/maleolabs/eka-cli/v2/cmd/eka@latest
 ```
 
 ## Basic usage
@@ -248,7 +248,7 @@ with checksum verification, no interactive prompt. **Third-party** plugins
 require explicit **consent** before they are installed or executed — the user
 must approve the plugin before the CLI will act on it.
 
-Plugins import the contract types from `github.com/maleolabs/eka-core/plugin`
+Plugins import the contract types from `github.com/maleolabs/eka-core/v2/plugin`
 (`Manifest`, `Artifact`, `InstallOptions`, `InstallResult`,
 `ContractVersion`) to implement their executable side; they never import the
 CLI's internal packages.
@@ -259,12 +259,16 @@ CLI's internal packages.
   and is overridden at build time:
 
   ```sh
-  go build -ldflags "-X github.com/maleolabs/eka-cli/cmd.version=v1.2.3" ./cmd/eka
+  go build -ldflags "-X github.com/maleolabs/eka-cli/v2/cmd.version=v1.2.3" ./cmd/eka
   ```
 
 - `eka version` prints the CLI build version and the **EKA standard version**
-  this CLI implements — **EKA Standard 1.7** (RSF 2, Exchange 1, `eka-cko-v2`). The standard's two-component
+  this CLI implements — **EKA Standard 2.0** (RSF 2, Exchange 1, `eka-cko-v2`). The standard's two-component
   version axis is independent of the CLI's semver.
+
+- **Upgrading from 1.x** — EKA 2.0 deprecates the work-ownership model in place
+  (`mbr-`/`assigned-to` become read-only; no forced migration). See
+  [docs/upgrade-2.0.md](docs/upgrade-2.0.md).
 
 - **Release pipeline** — tag `vMAJOR.MINOR.PATCH` (RC suffix allowed, e.g.
   `v1.2.3-rc.1`) triggers `.github/workflows/release.yml`:

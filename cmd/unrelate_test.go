@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // This file tests `eka unrelate` at CLI level (Opsi A bagian 2): the

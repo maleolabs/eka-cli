@@ -14,8 +14,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/maleolabs/eka-core/metadata"
-	"github.com/maleolabs/eka-core/workspace"
+	"github.com/maleolabs/eka-core/v2/metadata"
+	"github.com/maleolabs/eka-core/v2/workspace"
 )
 
 // This file tests `eka transition` at CLI level (ADR-019 D2, revised):

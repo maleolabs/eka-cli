@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	standardembed "github.com/maleolabs/eka-cli"
-	"github.com/maleolabs/eka-core/exchange"
-	"github.com/maleolabs/eka-core/machine"
-	"github.com/maleolabs/eka-core/metadata"
+	standardembed "github.com/maleolabs/eka-cli/v2"
+	"github.com/maleolabs/eka-core/v2/exchange"
+	"github.com/maleolabs/eka-core/v2/machine"
+	"github.com/maleolabs/eka-core/v2/metadata"
 )
 
 // version_test.go covers the `eka version` contract (sto:version-clarity):

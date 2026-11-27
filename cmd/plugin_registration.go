@@ -73,7 +73,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maleolabs/eka-core/plugin"
+	"github.com/maleolabs/eka-core/v2/plugin"
 	"github.com/spf13/cobra"
 )
 

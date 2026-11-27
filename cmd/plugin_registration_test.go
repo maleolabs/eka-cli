@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maleolabs/eka-core/plugin"
+	"github.com/maleolabs/eka-core/v2/plugin"
 )
 
 // testOrigPath is the PATH before TestMain pinned it. gitIdentityEnv

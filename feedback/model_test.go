@@ -104,7 +104,7 @@ eka_version: 0.6.9
 os: linux/amd64
 command: eka sync
 status: published
-issue_url: https://github.com/maleolabs/eka-cli/issues/7
+issue_url: https://github.com/maleolabs/eka-cli/v2/issues/7
 issue_number: 7
 created: 2026-08-12
 ---
@@ -115,7 +115,7 @@ created: 2026-08-12
 		t.Fatal(err)
 	}
 	if f.Status != StatusPublished || f.IssueNumber != 7 ||
-		f.IssueURL != "https://github.com/maleolabs/eka-cli/issues/7" {
+		f.IssueURL != "https://github.com/maleolabs/eka-cli/v2/issues/7" {
 		t.Errorf("parsed published record = %+v, want status published + issue fields", f)
 	}
 	if f.Body != "## Steps to reproduce\n" {

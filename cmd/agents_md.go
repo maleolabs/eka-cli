@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/maleolabs/eka-cli/bootstrap"
-	"github.com/maleolabs/eka-core/metadata"
+	"github.com/maleolabs/eka-cli/v2/bootstrap"
+	"github.com/maleolabs/eka-core/v2/metadata"
 	"github.com/spf13/cobra"
 )
 
